@@ -53,7 +53,6 @@ try:
 except ImportError:
     def _print_completions_sample(prompts, completions, rewards, step):  # type: ignore[misc]
         pass
-from accelerate.utils import gather_object
 _GRPOConfigBase = GRPOConfig
 
 # ---------------------------------------------------------------------------
@@ -264,8 +263,8 @@ class DiffuGRPOTrainer(GRPOTrainer):
         if temperature == 0.0:
             return logits
         logits = logits.to(dtype)
-        noise = torch.rand_like(logits, dtype=dtype)
-        return logits.exp() / ((-torch.log(noise)) ** temperature)
+        gumbel = -torch.log(-torch.log(torch.rand_like(logits, dtype=dtype)))
+        return logits + temperature * gumbel
 
     @staticmethod
     def _get_num_transfer_tokens(
@@ -428,7 +427,10 @@ class DiffuGRPOTrainer(GRPOTrainer):
         """Apply stochastic masking to a token sequence.
 
         Prompt tokens are masked with probability ``p_mask_prompt``;
-        completion tokens are always masked.
+        completion tokens are always masked (p_mask=1.0), matching the d1
+        reference implementation (diffu-grpo/diffu_grpo_trainer.py).
+        The log-prob computation uses p_mask to correctly weight the GRPO
+        gradient contribution of each token.
 
         Args:
             batch:         Token ids ``[B, L]``.
@@ -728,8 +730,9 @@ class DiffuGRPOTrainer(GRPOTrainer):
         if is_conversational(inputs[0]):
             completions = []
             for prompt, completion in zip(prompts, completions_text):
+                prompt_copy = list(prompt)
                 bootstrap = (
-                    prompt.pop()["content"] if prompt[-1]["role"] == "assistant" else ""
+                    prompt_copy.pop()["content"] if prompt_copy[-1]["role"] == "assistant" else ""
                 )
                 completions.append([{"role": "assistant", "content": bootstrap + completion}])
         else:

@@ -59,7 +59,7 @@ class TestFastMaskedDiffusionLoss:
 
     @pytest.fixture(autouse=True)
     def _import(self):
-        from unsloth.kernels.masked_diffusion_loss import (
+        from unturtle import (
             fast_masked_diffusion_loss,
             masked_diffusion_loss_from_timesteps,
         )
@@ -185,7 +185,7 @@ class TestAlphaSchedulers:
 
     @pytest.fixture(autouse=True)
     def _import(self):
-        from unsloth.diffusion.schedulers import (
+        from unturtle.diffusion import (
             LinearAlphaScheduler,
             CosineAlphaScheduler,
             make_alpha_scheduler,
@@ -247,8 +247,8 @@ class TestMaskedDiffusionDataCollator:
 
     @pytest.fixture(autouse=True)
     def _import(self):
-        from unsloth.diffusion.collator import MaskedDiffusionDataCollator
-        from unsloth.diffusion.schedulers import LinearAlphaScheduler
+        from unturtle.diffusion import MaskedDiffusionDataCollator
+        from unturtle.diffusion import LinearAlphaScheduler
         self.MaskedDiffusionDataCollator = MaskedDiffusionDataCollator
         self.LinearAlphaScheduler = LinearAlphaScheduler
 

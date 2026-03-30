@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-DiffusionTrainer – Unsloth trainer for masked diffusion language models.
+DiffusionTrainer – Unturtle trainer for masked diffusion language models.
 
 Extends :class:`~unsloth.trainer.UnslothTrainer` (which in turn extends TRL's
 ``SFTTrainer``) with:
@@ -90,7 +90,7 @@ class DiffusionTrainingArguments(UnslothTrainingArguments):
 
 
 class DiffusionTrainer(UnslothTrainer):
-    """Unsloth trainer for masked diffusion language models.
+    """Unturtle trainer for masked diffusion language models.
 
     Wraps the Triton-optimised ``fast_masked_diffusion_loss`` and wires in
     :class:`~.collator.MaskedDiffusionDataCollator` automatically.
@@ -170,12 +170,12 @@ class DiffusionTrainer(UnslothTrainer):
           ``diffusion_mask`` – bool tensor, True at masked positions
           ``timesteps``      – sampled ``t``, shape ``(B,)``
         """
+        labels: torch.Tensor = inputs.pop("labels")  # [B, L]
         diffusion_mask: torch.Tensor = inputs.pop("diffusion_mask")
         timesteps: torch.Tensor = inputs.pop("timesteps")
 
         outputs = model(**inputs)
         logits: torch.Tensor = outputs.logits  # [B, L, V]
-        labels: torch.Tensor = inputs["labels"]  # [B, L]
 
         loss_weights = self._build_loss_weights(timesteps, logits, diffusion_mask)
 
