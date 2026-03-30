@@ -1472,8 +1472,8 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
 
         if not model:
             model_config = create_model_config_from_pretrained_config(config)
-            # Initialize model (always on CPU to start with so we don't run out of GPU memory).
-            model_config.init_device = "cuda"
+            # Initialize model on CPU first; move to GPU after loading weights.
+            model_config.init_device = "cpu"
             self.model = LLaDAModel(model_config, init_params=init_params)
         else:
             self.model = model

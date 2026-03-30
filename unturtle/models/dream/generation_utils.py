@@ -412,6 +412,11 @@ class DreamGenerationMixin:
             
             mask_index = (x == mask_token_id)
             logits = self(x, attention_mask, tok_idx).logits
+            # Intentional right-shift from the original Dream implementation:
+            # Dream's training uses a shifted-logits objective where logit[i]
+            # is trained to predict the token *before* position i (see Dream
+            # paper / official repo). This shift is required for correct
+            # sampling even though Dream uses bidirectional attention.
             logits = torch.cat([logits[:,:1], logits[:, :-1]], dim=1)
             # this allows user-defined logits control of the intermediate steps
             logits = generation_logits_hook_func(i, x, logits)
