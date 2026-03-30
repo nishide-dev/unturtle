@@ -108,16 +108,17 @@ class MaskedDiffusionDataCollator:
                 maskable = torch.ones(B, L, dtype=torch.bool)
 
         # --- sample diffusion timestep per sequence ---
+        device = input_ids.device
         t: torch.Tensor = self.time_epsilon + (
             1.0 - self.time_epsilon
-        ) * torch.rand(B)  # [B], in (eps, 1]
+        ) * torch.rand(B, device=device)  # [B], in (eps, 1]
 
         # --- compute per-token masking probability p_mask = 1 - alpha(t) ---
         alpha_t: torch.Tensor = self.scheduler.alpha(t)  # [B]
         p_mask: torch.Tensor = (1.0 - alpha_t).unsqueeze(1).expand(B, L)  # [B, L]
 
         # --- stochastic masking (Bernoulli) ---
-        rand = torch.rand(B, L)
+        rand = torch.rand(B, L, device=device)
         diffusion_mask: torch.Tensor = (rand < p_mask) & maskable  # [B, L] bool
 
         # --- apply noising ---
