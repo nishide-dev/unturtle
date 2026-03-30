@@ -13,7 +13,7 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from unsloth.kernels.masked_diffusion_loss import (
+from unturtle import (
     fast_masked_diffusion_loss,
     masked_diffusion_loss_from_timesteps,
 )

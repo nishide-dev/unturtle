@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-DiffusionTrainer – Unsloth trainer for masked diffusion language models.
+DiffusionTrainer – Unturtle trainer for masked diffusion language models.
 
 Extends :class:`~unsloth.trainer.UnslothTrainer` (which in turn extends TRL's
 ``SFTTrainer``) with:
@@ -90,7 +90,7 @@ class DiffusionTrainingArguments(UnslothTrainingArguments):
 
 
 class DiffusionTrainer(UnslothTrainer):
-    """Unsloth trainer for masked diffusion language models.
+    """Unturtle trainer for masked diffusion language models.
 
     Wraps the Triton-optimised ``fast_masked_diffusion_loss`` and wires in
     :class:`~.collator.MaskedDiffusionDataCollator` automatically.
