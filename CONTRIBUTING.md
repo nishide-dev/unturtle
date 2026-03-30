@@ -1,29 +1,53 @@
-# 🦥 Contributing to Unsloth
+# Contributing to Unturtle
 
-Thank you for not only using Unsloth but also for being interested in helping out! We value all contributions, whether they come in the form of code, ideas, support for others or just by simply spreading the word of Unsloth! 💕
+Unturtle is a fork of [unslothai/unsloth](https://github.com/unslothai/unsloth) focused on
+**Diffusion Language Model (dLLM)** training with Triton-optimized kernels.
 
-- **[Support the Community](https://github.com/unslothai/unsloth/issues)**: Answer questions, review pull requests, or assist others in discussions.
-- **Fix Bugs**: Identify and resolve issues with the existing codebase.
-- **Submit Ideas**: Request new features or share enhancements you'd like to see.
-- **Develop Features**: Implement new functionality or improve existing tools which can be done via PRs.
-- **[Improve Documentation](https://docs.unsloth.ai/)**: Help by creating guides, FAQs, or enhancing clarity.
+## Ways to Contribute
 
-One of the best ways to support us is by spreading the word about Unsloth! Share how it’s powering your amazing projects in blog posts or social media, and inspire others to explore its potential. Even a simple star on our repo goes a long way in showing your support and helping the community grow. 🌟
+- **Report bugs** — open an issue with a minimal reproduction
+- **Propose features** — dLLM algorithms (LLaDA, MDLM, BD3LM, d1), new schedulers, RL stages
+- **Submit PRs** — see the workflow below
+- **Improve docs** — `dev/` design documents, `CLAUDE.md`
 
-## Submitting Issues
-If you find a bug or have a feature idea, we’d love to hear from you! Here’s how to make your submission stand out:
+## Development Setup
 
-### Reporting Bugs
-1. **Search First**: Check if the issue has already been reported using GitHub’s search bar under Issues.
-2. **Details Matter**: Is this on Google Colab, Kaggle, or on another platform service? Are you using Unsloth's official notebook? Include your OS, Python version, and other relevant details. For bugs, a concise code snippet that reproduces the issue is incredibly helpful.
-3. **Be Thorough**: Attach screenshots, traceback logs, or any additional information that might speed up resolution.
+See [CLAUDE.md](CLAUDE.md) for the full setup guide (Python 3.12, uv, CUDA 12.4).
 
-## Spread the Word
-Your support extends beyond code:
-- Spread the word by writing about Unsloth in blogs or social media.
-- Share how Unsloth powers your projects.
-- Star our repository to show your appreciation.
+```bash
+uv venv .venv --python 3.12 && source .venv/bin/activate
+uv pip install torch --index-url https://download.pytorch.org/whl/cu124
+uv pip install "setuptools==80.9.0" && uv pip install -e ".[huggingface]"
+uv pip install pytest ruff
+```
 
-Finally, please be mindful of our [Code of Conduct](https://github.com/unslothai/unsloth/blob/main/CODE_OF_CONDUCT.md) to ensure a welcoming and inclusive environment for everyone.
+## PR Workflow
 
-Thank you so much for reading and we hope you have lots of fun using Unsloth! 🦥
+1. Open an Issue first (`[Phase N] <verb> <target>`)
+2. Branch: `<type>/<issue#>-<short-description>`
+3. Write tests first (see `tests/diffusion/`)
+4. Run `pytest tests/ -v` — all tests must pass
+5. For Triton kernel changes: paste numerical test output in the PR comment
+6. Submit PR — 1 PR per Issue, Squash and merge
+
+## Commit Format
+
+```
+<emoji> <type>(<scope>): <description> (#<issue>)
+```
+
+Examples:
+```
+✨ feat(kernel): add fast_masked_diffusion_loss (#42)
+🐛 fix(collator): fix Bernoulli mask rate (#55)
+⚡ perf(kernel): chunk loss for vocab>65K (#61)
+```
+
+Full emoji/type table and PR rules: [CLAUDE.md § Git / Issue / PR](CLAUDE.md)
+
+## Key Constraint
+
+**Do not modify existing AR-LLM functionality.** All dLLM additions are new files only.
+Upstream unsloth changes are merged via `git fetch upstream && git merge upstream/main`.
+
+Please follow our [Code of Conduct](CODE_OF_CONDUCT.md).

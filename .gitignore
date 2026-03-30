@@ -1,3 +1,6 @@
+# Reference repositories (cloned for local development, not committed)
+dev/repos/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -205,7 +208,7 @@ tmp/
 auth.db
 
 # Local working docs
-**/CLAUDE.md
+# CLAUDE.md is tracked in unturtle (removed upstream unsloth exclusion)
 **/claude.md
 **/AGENT.md
 **/agent.md
@@ -216,3 +219,4 @@ setup_leo.sh
 server.pid
 *.log
 package-lock.json
+dev/*.md

@@ -10,31 +10,10 @@ updates:
         patterns: ["*"]
 
   - package-ecosystem: "pip"
-    directories:
-      - "/"
-      - "/studio/backend/plugins/data-designer-unstructured-seed"
-      - "/studio/backend/requirements"
-      - "/unsloth/kernels/moe"
+    directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
     groups:
       pip:
         patterns: ["*"]
-
-  - package-ecosystem: "bun"
-    directory: "/studio/frontend"
-    schedule:
-      interval: "weekly"
-    groups:
-      bun-frontend:
-        patterns: ["*"]
-
-  - package-ecosystem: "npm"
-    directory: "/studio/backend/core/data_recipe/oxc-validator"
-    schedule:
-      interval: "weekly"
-    groups:
-      npm-oxc-validator:
-        patterns: ["*"]
-...

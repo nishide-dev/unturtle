@@ -3,7 +3,7 @@ requires = ["setuptools==80.9.0", "setuptools-scm==9.2.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "unsloth"
+name = "unturtle"
 dynamic = ["version"]
 description = "2-5X faster training, reinforcement learning & finetuning"
 readme = "README.md"
@@ -33,6 +33,7 @@ dependencies = [
 
 [project.scripts]
 unsloth = "unsloth_cli:app"
+unturtle = "unsloth_cli:app"
 
 [tool.setuptools.dynamic]
 version = {attr = "unsloth.models._utils.__version__"}
