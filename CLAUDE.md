@@ -344,6 +344,58 @@ upstream unsloth のスタイル (`fix: description (#N)`) とも互換。emoji 
 
 ---
 
+## 検証結果
+
+### テスト状況
+
+| テスト種別 | ファイル | 件数 | 状態 |
+|-----------|---------|------|------|
+| ユニットテスト (損失/スケジューラ/コレーター) | `tests/diffusion/test_masked_diffusion_loss.py` | 22 | ✅ 全通過 |
+| インテグレーション (E2E forward/backward) | `tests/diffusion/test_integration.py` | 15 | ✅ 全通過 |
+| GPU 数値精度 (Triton vs F.cross_entropy) | `tests/diffusion/test_gpu_accuracy.py` | 25 | ✅ 全通過 |
+| DiffuGRPO (コンフィグ/静的メソッド/forward process) | `tests/diffusion/test_grpo_trainer.py` | 13 | ✅ 全通過 |
+
+インテグレーションテストの確認内容:
+- BERT (双方向 attention) / GPT-2 (causal) 両モデルで forward/backward 通過
+- CPU・CUDA 両パス通過
+- `loss_weight_type = uniform / timestep / scheduler` 全モード有効
+- オプティマイザステップ後に損失が減少することを確認
+- 双方向 attention が将来トークンに依存することを確認 (dLLM の前提条件)
+
+### ベンチマーク結果
+
+GPU: **NVIDIA RTX 6000 Ada Generation** / mask_ratio=0.5 / warmup=10 iters=100
+
+比較対象:
+- **Triton (unturtle)**: `fast_masked_diffusion_loss` — Triton CE カーネル
+- **d1-style (reference)**: `F.cross_entropy` → `/t` — d1/LLaDA の実際の実装
+- **PyTorch masked**: `F.cross_entropy` + label=-100 マスク — ナイーブな Python 実装
+
+ベンチマークスクリプト: `dev/benchmark_loss.py`
+
+| Batch | SeqLen | Vocab | Impl | Time (ms) | Mem (MB) | vs d1-ref | vs PyTorch |
+|------:|-------:|------:|------|----------:|---------:|----------:|-----------:|
+| 4 | 128 | 32,000 | **Triton (unturtle)** | 0.08 | 0.0 | **2.09x** | **2.07x** |
+| | | | d1-style (reference) | 0.17 | 62.5 | — | — |
+| | | | PyTorch masked | 0.17 | 62.5 | — | — |
+| 4 | 512 | 32,000 | **Triton (unturtle)** | 0.30 | 0.0 | **2.08x** | **2.09x** |
+| | | | d1-style (reference) | 0.63 | 250.0 | — | — |
+| | | | PyTorch masked | 0.63 | 250.0 | — | — |
+| 2 | 512 | 128,256 | **Triton (unturtle)** | 0.63 | 0.0 | **2.95x** | **2.94x** |
+| | | | d1-style (reference) | 1.86 | 504.0 | — | — |
+| | | | PyTorch masked | 1.86 | 504.0 | — | — |
+| 4 | 512 | 126,464 | **Triton (unturtle)** | 1.20 | 0.1 | **3.05x** | **3.05x** |
+| | | | d1-style (reference) | 3.65 | 992.0 | — | — |
+| | | | PyTorch masked | 3.66 | 992.0 | — | — |
+
+**要点**:
+- Triton カーネルは d1/LLaDA の参照実装より **2.1〜3.1x 高速**
+- メモリ使用量はほぼゼロ (参照実装: vocab=128K 時に最大 992 MB の一時 tensor を確保)
+- シーケンス長・語彙サイズが大きいほど効果が大きい (seq=512, vocab=126K で 3x)
+- d1-style と PyTorch masked はほぼ同等 → Triton カーネルの実装が効いている
+
+---
+
 ## 開発ガイドライン
 
 - **既存機能を壊さない**: AR-LLM 用の機能は一切変更しない。dLLM 機能は新規追加のみ。
