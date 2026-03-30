@@ -20,10 +20,6 @@ import torch
 # ---------------------------------------------------------------------------
 
 
-def test_import_from_unsloth_diffusion():
-    from unsloth.diffusion import DiffuGRPOTrainer, DiffuGRPOConfig  # noqa: F401
-
-
 def test_import_from_unturtle_diffusion():
     from unturtle.diffusion import DiffuGRPOTrainer, DiffuGRPOConfig  # noqa: F401
 
@@ -39,7 +35,7 @@ def test_import_from_unturtle():
 
 class TestDiffuGRPOConfig:
     def test_default_fields(self):
-        from unsloth.diffusion import DiffuGRPOConfig
+        from unturtle.diffusion import DiffuGRPOConfig
 
         # Check field defaults directly via dataclasses to avoid TRL __post_init__ validation.
         import dataclasses
@@ -55,7 +51,7 @@ class TestDiffuGRPOConfig:
         assert defaults["generation_batch_size"] == 4
 
     def test_custom_fields(self):
-        from unsloth.diffusion import DiffuGRPOConfig
+        from unturtle.diffusion import DiffuGRPOConfig
 
         # Use dataclasses.fields to check field *defaults* without triggering
         # TRL __post_init__ validation (generation_batch_size / num_generations rules).
@@ -95,7 +91,7 @@ class TestDiffuGRPOStaticMethods:
 
     def test_add_gumbel_noise_zero_temperature(self):
         """Temperature=0 should return logits unchanged."""
-        from unsloth.diffusion.grpo_trainer import DiffuGRPOTrainer
+        from unturtle.diffusion import DiffuGRPOTrainer
 
         logits = torch.randn(2, 10, 100)
         out = DiffuGRPOTrainer._add_gumbel_noise(logits, temperature=0.0, dtype=torch.float32)
@@ -103,7 +99,7 @@ class TestDiffuGRPOStaticMethods:
 
     def test_add_gumbel_noise_nonzero_temperature(self):
         """Temperature>0 should return a different tensor (almost surely)."""
-        from unsloth.diffusion.grpo_trainer import DiffuGRPOTrainer
+        from unturtle.diffusion import DiffuGRPOTrainer
 
         torch.manual_seed(42)
         logits = torch.randn(2, 10, 100)
@@ -112,7 +108,7 @@ class TestDiffuGRPOStaticMethods:
 
     def test_get_num_transfer_tokens_shape(self):
         """Output shape should be [B, steps]."""
-        from unsloth.diffusion.grpo_trainer import DiffuGRPOTrainer
+        from unturtle.diffusion import DiffuGRPOTrainer
 
         mask_index = torch.ones(3, 64, dtype=torch.bool)
         result = DiffuGRPOTrainer._get_num_transfer_tokens(mask_index, steps=8)
@@ -120,7 +116,7 @@ class TestDiffuGRPOStaticMethods:
 
     def test_get_num_transfer_tokens_sum(self):
         """Sum across steps should equal total masked tokens per sample."""
-        from unsloth.diffusion.grpo_trainer import DiffuGRPOTrainer
+        from unturtle.diffusion import DiffuGRPOTrainer
 
         # 13 masked tokens, 5 steps → [3,3,3,2,2]
         mask_index = torch.zeros(1, 20, dtype=torch.bool)
@@ -130,7 +126,7 @@ class TestDiffuGRPOStaticMethods:
 
     def test_get_num_transfer_tokens_even(self):
         """Evenly divisible case: all steps equal."""
-        from unsloth.diffusion.grpo_trainer import DiffuGRPOTrainer
+        from unturtle.diffusion import DiffuGRPOTrainer
 
         mask_index = torch.ones(1, 12, dtype=torch.bool)
         result = DiffuGRPOTrainer._get_num_transfer_tokens(mask_index, steps=4)
@@ -147,20 +143,20 @@ class TestForwardProcess:
 
     def _make_trainer(self):
         """Create a minimal DiffuGRPOTrainer-like namespace object."""
-        from unsloth.diffusion.grpo_trainer import DiffuGRPOConfig
+        from unturtle.diffusion import DiffuGRPOConfig
 
         class _Stub:
             args = DiffuGRPOConfig(output_dir="/tmp/stub", per_device_train_batch_size=1, num_generations=2, generation_batch_size=2, p_mask_prompt=0.5)
 
             def _forward_process(self, *a, **kw):
-                from unsloth.diffusion.grpo_trainer import DiffuGRPOTrainer
+                from unturtle.diffusion import DiffuGRPOTrainer
                 return DiffuGRPOTrainer._forward_process(self, *a, **kw)
 
         return _Stub()
 
     def test_completion_always_masked(self):
         """Completion tokens (prompt_index=False) must always be masked."""
-        from unsloth.diffusion.grpo_trainer import DiffuGRPOTrainer, DiffuGRPOConfig
+        from unturtle.diffusion import DiffuGRPOTrainer, DiffuGRPOConfig
 
         cfg = DiffuGRPOConfig(output_dir="/tmp/t", per_device_train_batch_size=1, num_generations=2, generation_batch_size=2, p_mask_prompt=0.0)
 
@@ -180,7 +176,7 @@ class TestForwardProcess:
         assert (noisy[:, :5] != 999).all(), "prompt tokens must be unmasked when p=0"
 
     def test_p_mask_shape(self):
-        from unsloth.diffusion.grpo_trainer import DiffuGRPOTrainer, DiffuGRPOConfig
+        from unturtle.diffusion import DiffuGRPOTrainer, DiffuGRPOConfig
 
         cfg = DiffuGRPOConfig(output_dir="/tmp/t", per_device_train_batch_size=1, num_generations=2, generation_batch_size=2, p_mask_prompt=0.3)
 
@@ -199,7 +195,7 @@ class TestForwardProcess:
 
     def test_seed_reproducibility(self):
         """Same seed → same noisy batch."""
-        from unsloth.diffusion.grpo_trainer import DiffuGRPOTrainer, DiffuGRPOConfig
+        from unturtle.diffusion import DiffuGRPOTrainer, DiffuGRPOConfig
 
         cfg = DiffuGRPOConfig(output_dir="/tmp/t", per_device_train_batch_size=1, num_generations=2, generation_batch_size=2, p_mask_prompt=0.5)
 

@@ -31,7 +31,7 @@ from tokenizers import Tokenizer
 from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import Whitespace
 
-from unsloth.diffusion import (
+from unturtle.diffusion import (
     DiffusionTrainer,
     DiffusionTrainingArguments,
     LinearAlphaScheduler,
@@ -139,8 +139,8 @@ class TestDiffusionTrainerComputeLoss:
         outputs = model(input_ids=input_ids, labels=None)
         logits = outputs.logits  # [B, L, V]
 
-        from unsloth.diffusion.trainer import DiffusionTrainer as _T
-        from unsloth.kernels.masked_diffusion_loss import fast_masked_diffusion_loss
+        from unturtle.diffusion import DiffusionTrainer as _T
+        from unturtle import fast_masked_diffusion_loss
 
         loss = fast_masked_diffusion_loss(logits, labels, diffusion_mask)
         return loss
@@ -234,9 +234,9 @@ class TestLossWeightTypes:
 
     @pytest.mark.parametrize("weight_type", ["uniform", "timestep", "scheduler"])
     def test_weight_type_cpu(self, tokenizer, weight_type):
-        from unsloth.diffusion.trainer import DiffusionTrainer
-        from unsloth.kernels.masked_diffusion_loss import fast_masked_diffusion_loss
-        from unsloth.diffusion.schedulers import LinearAlphaScheduler
+        from unturtle.diffusion import DiffusionTrainer
+        from unturtle import fast_masked_diffusion_loss
+        from unturtle.diffusion import LinearAlphaScheduler
 
         model = _make_bert("cpu")
         batch = _make_batch(tokenizer, device="cpu")
