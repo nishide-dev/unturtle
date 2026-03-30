@@ -351,6 +351,14 @@ upstream unsloth のスタイル (`fix: description (#N)`) とも互換。emoji 
 **Triton カーネル変更時の追加要件**:
 - 数値テスト結果 (`pytest tests/` の出力) を PR コメントに貼ること
 
+**コードレビュー時の必須確認事項**:
+- `dev/repos/` の参照実装と照合すること。アルゴリズムの挙動について疑問がある場合は、
+  推測や論文の解釈だけで判断せず、必ず以下の実装を直接確認する:
+  - `dev/repos/d1/diffu-grpo/diffu_grpo_trainer.py` — Diffu-GRPO の参照実装
+  - `dev/repos/d1/SFT/sft_trainer.py` — d1 SFT の参照実装
+  - `dev/repos/dllm/dllm/core/trainers/mdlm.py` — MDLM/LLaDA の参照実装
+- 参照実装と異なる挙動を「バグ」と判定する前に、意図的な設計変更か否かを確認する
+
 **ドキュメント更新**:
 - `dev/` や `CLAUDE.md` の更新が必要な変更は同一 PR に含める
 
