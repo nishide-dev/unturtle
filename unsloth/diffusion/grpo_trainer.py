@@ -427,8 +427,10 @@ class DiffuGRPOTrainer(GRPOTrainer):
         """Apply stochastic masking to a token sequence.
 
         Prompt tokens are masked with probability ``p_mask_prompt``;
-        completion tokens are masked with a per-batch sampled timestep ``t``
-        drawn uniformly from (0, 1] (d1 paper §3.2).
+        completion tokens are always masked (p_mask=1.0), matching the d1
+        reference implementation (diffu-grpo/diffu_grpo_trainer.py).
+        The log-prob computation uses p_mask to correctly weight the GRPO
+        gradient contribution of each token.
 
         Args:
             batch:         Token ids ``[B, L]``.
@@ -444,15 +446,11 @@ class DiffuGRPOTrainer(GRPOTrainer):
             set_seed(seed)
 
         b, l = batch.shape
-        # Prompt masking probability (fixed hyper-parameter)
         t_p = torch.full((b,), self.args.p_mask_prompt, device=batch.device)
-        # Completion masking probability: sample timestep t ~ Uniform(0, 1] per sequence
-        t_c = torch.rand(b, device=batch.device).clamp(min=1e-6)
-
         rng = torch.rand((b, l), device=batch.device)
 
         is_mask_prompt = prompt_index.unsqueeze(0) & (rng < t_p.unsqueeze(1))
-        is_mask_completion = (~prompt_index.unsqueeze(0)) & (rng < t_c.unsqueeze(1))
+        is_mask_completion = ~prompt_index.unsqueeze(0)
         is_mask = is_mask_prompt | is_mask_completion
 
         noisy_batch = torch.where(is_mask, torch.tensor(mask_id, device=batch.device), batch)
@@ -460,7 +458,7 @@ class DiffuGRPOTrainer(GRPOTrainer):
         p_mask = torch.where(
             prompt_index.unsqueeze(0),
             t_p.unsqueeze(1).expand(b, l),
-            t_c.unsqueeze(1).expand(b, l),
+            torch.ones(b, l, device=batch.device),
         )
         return noisy_batch, p_mask
 

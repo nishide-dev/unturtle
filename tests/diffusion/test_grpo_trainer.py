@@ -154,12 +154,11 @@ class TestForwardProcess:
 
         return _Stub()
 
-    def test_completion_stochastically_masked(self):
-        """Completion tokens (prompt_index=False) are masked with sampled timestep t ~ U(0,1].
+    def test_completion_always_masked(self):
+        """Completion tokens (prompt_index=False) must always be masked (p_mask=1.0).
 
-        With a large batch we verify that: at least some completion tokens are
-        masked (t > 0 always), prompt tokens are never masked when p_mask_prompt=0,
-        and p_mask values for completion positions are in (0, 1].
+        This matches the d1 reference implementation where completion tokens
+        are fully masked so the model must predict them from scratch.
         """
         from unturtle.diffusion import DiffuGRPOTrainer, DiffuGRPOConfig
 
@@ -169,20 +168,18 @@ class TestForwardProcess:
             args = cfg
 
         stub = _Stub()
-        torch.manual_seed(0)
         batch = torch.arange(10).unsqueeze(0).expand(4, -1).clone()
         prompt_index = torch.zeros(10, dtype=torch.bool)
         prompt_index[:5] = True  # first 5 = prompt
 
         noisy, p_mask = DiffuGRPOTrainer._forward_process(stub, batch, prompt_index, mask_id=999)
 
+        # completion positions (5-9) must all be mask_id
+        assert (noisy[:, 5:] == 999).all(), "completion tokens must be masked"
         # with p_mask_prompt=0, prompt tokens must NOT be masked
         assert (noisy[:, :5] != 999).all(), "prompt tokens must be unmasked when p=0"
-        # completion p_mask values must be in (0, 1] (sampled timestep)
-        assert (p_mask[:, 5:] > 0).all(), "completion p_mask must be positive"
-        assert (p_mask[:, 5:] <= 1).all(), "completion p_mask must be <= 1"
-        # prompt p_mask must be 0 (p_mask_prompt=0.0)
-        assert (p_mask[:, :5] == 0.0).all(), "prompt p_mask must equal p_mask_prompt"
+        # completion p_mask must be 1.0
+        assert (p_mask[:, 5:] == 1.0).all(), "completion p_mask must be 1.0"
 
     def test_p_mask_shape(self):
         from unturtle.diffusion import DiffuGRPOTrainer, DiffuGRPOConfig
