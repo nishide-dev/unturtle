@@ -17,6 +17,10 @@ from .cross_entropy_loss import (
     post_patch_loss_function,
     patch_loss_functions,
 )
+from .masked_diffusion_loss import (
+    fast_masked_diffusion_loss,
+    masked_diffusion_loss_from_timesteps,
+)
 from .rms_layernorm import (
     fast_rms_layernorm,
     patch_rms_layernorm,

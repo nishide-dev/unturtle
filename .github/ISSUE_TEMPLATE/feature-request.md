@@ -1,21 +1,26 @@
 ---
 name: Feature Request
-about: New features, model support, ideas
-title: "[Feature]"
+about: New features, model support, dLLM algorithms, or ideas
+title: "[Feature] "
 labels: feature request
 assignees: ''
 
 ---
 
-For new models, have you tried:
+### Is this related to an existing problem?
+<!-- A clear description of what the problem is. -->
+
+### Proposed solution
+<!-- What would you like to happen? -->
+
+### For new dLLM model support, have you tried:
 ```python
-from unsloth import FastModel
-model, tokenizer = FastModel.from_pretrained(
-    "microsoft/Phi-4-multimodal-instruct",
-    trust_remote_code = True,
-)
-from transformers import AutoModelForSequenceClassification
-model, tokenizer = FastModel.from_pretrained(
-    auto_model = AutoModelForSequenceClassification,
-)
+from unturtle import FastModel
+model, tokenizer = FastModel.from_pretrained("your-model")
+
+# For diffusion LM training:
+from unturtle.diffusion import DiffusionTrainer, DiffusionTrainingArguments, LinearAlphaScheduler
 ```
+
+### Additional context
+<!-- Any references, papers, or related implementations (e.g. LLaDA, MDLM, d1). -->

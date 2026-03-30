@@ -317,6 +317,21 @@ from .trainer import *
 
 # Export dataprep utilities for CLI and downstream users
 from .dataprep.raw_text import RawTextDataLoader, TextPreprocessor
+
+# Diffusion Language Model (dLLM) support
+from .diffusion import (
+    BaseAlphaScheduler,
+    LinearAlphaScheduler,
+    CosineAlphaScheduler,
+    make_alpha_scheduler,
+    MaskedDiffusionDataCollator,
+    DiffusionTrainer,
+    DiffusionTrainingArguments,
+)
+from .kernels.masked_diffusion_loss import (
+    fast_masked_diffusion_loss,
+    masked_diffusion_loss_from_timesteps,
+)
 from unsloth_zoo.rl_environments import (
     check_python_modules,
     create_locked_down_function,
