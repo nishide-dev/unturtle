@@ -69,7 +69,7 @@ def _warn_once(msg: str) -> None:
         from transformers.utils import logging as hf_logging
 
         hf_logger = hf_logging.get_logger(__name__)
-        hf__warn_once(msg)
+        hf_logger.warning_once(msg)
     except Exception:  # noqa: BLE001
         _logger.warning(msg)
 

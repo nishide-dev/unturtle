@@ -327,6 +327,8 @@ from .diffusion import (
     MaskedDiffusionDataCollator,
     DiffusionTrainer,
     DiffusionTrainingArguments,
+    DiffuGRPOTrainer,
+    DiffuGRPOConfig,
 )
 from .kernels.masked_diffusion_loss import (
     fast_masked_diffusion_loss,
