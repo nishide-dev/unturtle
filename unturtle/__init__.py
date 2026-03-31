@@ -15,22 +15,18 @@
 """
 unturtle — the public-facing package name for this project.
 
-The internal implementation lives in ``unsloth/`` to keep upstream merges
-from unslothai/unsloth conflict-free.  This shim re-exports everything so
-that ``import unturtle`` works identically to ``import unsloth``.
+Phase B: dLLM-specific modules now live in ``unturtle/`` as the canonical
+source.  ``unsloth.diffusion`` and ``unsloth.kernels.masked_diffusion_loss``
+are compatibility shims that re-export from here.
 
-Migration path
---------------
-Phase A (current): ``unturtle`` is a thin re-export layer over ``unsloth``.
-Phase B (future):  dLLM-specific modules will be moved into ``unturtle/``
-                   proper as they diverge sufficiently from upstream.
+``from unsloth import *`` is kept for all upstream unsloth symbols.
 """
 
 from unsloth import *  # noqa: F401, F403
 from unsloth import __version__  # noqa: F401
 
-# Re-export dLLM additions explicitly so IDEs can resolve them
-from unsloth.diffusion import (  # noqa: F401
+# dLLM additions — canonical source is unturtle.*
+from unturtle.diffusion import (  # noqa: F401
     BaseAlphaScheduler,
     CosineAlphaScheduler,
     DiffusionTrainer,
@@ -41,7 +37,8 @@ from unsloth.diffusion import (  # noqa: F401
     MaskedDiffusionDataCollator,
     make_alpha_scheduler,
 )
-from unsloth.kernels.masked_diffusion_loss import (  # noqa: F401
+from unturtle.kernels.masked_diffusion_loss import (  # noqa: F401
     fast_masked_diffusion_loss,
     masked_diffusion_loss_from_timesteps,
 )
+from unturtle.fast_diffusion_model import FastDiffusionModel  # noqa: F401

@@ -12,22 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""unsloth.diffusion — compatibility shim.
+"""unturtle.kernels — Triton-optimised kernels for dLLM training.
 
-The canonical implementation has moved to ``unturtle.diffusion``.
-This module re-exports everything for backward compatibility:
-``from unsloth.diffusion import DiffusionTrainer`` continues to work.
+Canonical home for unturtle-specific kernels.  The underlying CE kernel
+(``Fast_CrossEntropyLoss``) remains in ``unsloth.kernels`` to stay in sync
+with upstream unslothai/unsloth.
+
+Public API::
+
+    from unturtle.kernels.masked_diffusion_loss import (
+        fast_masked_diffusion_loss,
+        masked_diffusion_loss_from_timesteps,
+    )
 """
 
-from unturtle.diffusion import *  # noqa: F401, F403
-from unturtle.diffusion import (  # noqa: F401
-    BaseAlphaScheduler,
-    CosineAlphaScheduler,
-    DiffusionTrainer,
-    DiffusionTrainingArguments,
-    DiffuGRPOTrainer,
-    DiffuGRPOConfig,
-    LinearAlphaScheduler,
-    MaskedDiffusionDataCollator,
-    make_alpha_scheduler,
+from .masked_diffusion_loss import (
+    fast_masked_diffusion_loss,
+    masked_diffusion_loss_from_timesteps,
 )
+
+__all__ = [
+    "fast_masked_diffusion_loss",
+    "masked_diffusion_loss_from_timesteps",
+]
