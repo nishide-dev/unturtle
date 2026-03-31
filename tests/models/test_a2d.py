@@ -1,7 +1,8 @@
 """Tests for A2D (AutoRegressive→Diffusion) model adapters.
 
 CPU-only tests covering config instantiation, model instantiation with
-random weights, forward pass shapes, and AutoConfig/AutoModel registration.
+random weights, forward pass shapes, AutoConfig/AutoModel registration,
+and bidirectional attention verification.
 No pretrained checkpoints are downloaded.
 """
 
@@ -153,3 +154,62 @@ class TestA2DQwen3:
         import transformers
         from unturtle.models.a2d import A2DQwen3Config  # ensure registration
         assert "a2d-qwen3" in transformers.models.auto.configuration_auto.CONFIG_MAPPING
+
+
+# ---------------------------------------------------------------------------
+# Bidirectional attention verification (all A2D variants)
+# ---------------------------------------------------------------------------
+
+
+class TestA2DBidirectional:
+    """Verify that A2D models attend to future tokens (non-causal).
+
+    The core property of A2D models is that the causal attention mask has been
+    replaced with a padding-only mask, making attention fully bidirectional.
+    We verify this by checking that the output at position 0 differs when only
+    the last token changes — a causal model would produce identical outputs.
+    """
+
+    @pytest.mark.parametrize("model_cls,config_cls,model_type", [
+        ("A2DLlamaLMHeadModel", "A2DLlamaConfig", "a2d-llama"),
+        ("A2DQwen2LMHeadModel", "A2DQwen2Config", "a2d-qwen2"),
+        ("A2DQwen3LMHeadModel", "A2DQwen3Config", "a2d-qwen3"),
+    ])
+    def test_attends_to_future_tokens(self, model_cls, config_cls, model_type):
+        import importlib
+        from unturtle.models import a2d as a2d_module
+
+        Config = getattr(a2d_module, config_cls)
+        Model = getattr(a2d_module, model_cls)
+
+        config = Config(
+            vocab_size=512,
+            hidden_size=64,
+            intermediate_size=128,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=4,
+            max_position_embeddings=64,
+        )
+        # Qwen3 requires head_dim
+        if model_type == "a2d-qwen3":
+            config.head_dim = config.hidden_size // config.num_attention_heads
+
+        model = Model(config)
+        model.eval()
+
+        B, L = 1, 8
+        ids_a = torch.randint(0, config.vocab_size, (B, L))
+        ids_b = ids_a.clone()
+        # Change only the last token
+        ids_b[0, -1] = (ids_a[0, -1] + 1) % config.vocab_size
+
+        with torch.no_grad():
+            out_a = model(input_ids=ids_a).logits
+            out_b = model(input_ids=ids_b).logits
+
+        # Position 0 should differ — model attends to position L-1
+        assert not torch.allclose(out_a[:, 0, :], out_b[:, 0, :]), (
+            f"{model_type}: position-0 output is identical after changing position {L-1}. "
+            "Model appears to be causal — check that A2DModel.forward uses a non-causal mask."
+        )
