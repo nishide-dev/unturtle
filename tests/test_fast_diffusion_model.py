@@ -280,3 +280,195 @@ class TestGetPeftModel:
         )
         assert orig_lora_A.shape == loaded_lora_A.shape
         assert torch.allclose(orig_lora_A, loaded_lora_A)
+
+
+# ---------------------------------------------------------------------------
+# Dream model patching
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def tiny_dream_config():
+    from unturtle.models.dream.configuration_dream import DreamConfig
+
+    return DreamConfig(
+        vocab_size=512,
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=4,
+        max_position_embeddings=64,
+        mask_token_id=1,
+        pad_token_id=0,
+    )
+
+
+@pytest.fixture
+def tiny_dream_model(tiny_dream_config):
+    from unturtle.models.dream.modeling_dream import DreamModel
+
+    model = DreamModel(tiny_dream_config)
+    model.eval()
+    return model
+
+
+class TestDreamPatching:
+    def test_dream_peft_o_proj_patched(self, tiny_dream_model):
+        """After get_peft_model, o_proj layers should have apply_o=apply_lora_o."""
+        from unsloth.kernels.fast_lora import apply_lora_o
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        peft_model = FastDiffusionModel.get_peft_model(
+            tiny_dream_model,
+            r=4,
+            target_modules=["o_proj", "gate_proj", "up_proj", "down_proj"],
+            lora_alpha=4,
+            lora_dropout=0,
+            use_gradient_checkpointing=False,
+        )
+        for layer in peft_model.base_model.model.model.layers:
+            assert layer.self_attn.apply_o is apply_lora_o, (
+                f"apply_o not patched: {layer.self_attn.apply_o}"
+            )
+
+    def test_dream_peft_qkv_skipped(self, tiny_dream_model):
+        """QKV should NOT be patched for Dream (bias=True on q/k/v_proj)."""
+        from unsloth.kernels.fast_lora import apply_lora_qkv
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        peft_model = FastDiffusionModel.get_peft_model(
+            tiny_dream_model,
+            r=4,
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+            lora_alpha=4,
+            lora_dropout=0,
+            use_gradient_checkpointing=False,
+        )
+        for layer in peft_model.base_model.model.model.layers:
+            # apply_qkv should NOT be apply_lora_qkv (bias=True guard applies)
+            assert getattr(layer.self_attn, "apply_qkv", None) is not apply_lora_qkv, (
+                "apply_qkv should NOT be apply_lora_qkv for Dream (bias=True)"
+            )
+
+    def test_dream_peft_forward_runs(self, tiny_dream_model):
+        """Forward pass through a PEFT-wrapped Dream model should not raise."""
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        peft_model = FastDiffusionModel.get_peft_model(
+            tiny_dream_model,
+            r=4,
+            target_modules=["o_proj"],
+            lora_alpha=4,
+            lora_dropout=0,
+            use_gradient_checkpointing=False,
+        )
+        peft_model.eval()
+
+        B, L = 2, 8
+        input_ids = torch.randint(0, tiny_dream_model.config.vocab_size, (B, L))
+        with torch.no_grad():
+            out = peft_model(input_ids=input_ids)
+        # DreamModel returns MaskedLMOutput with logits
+        assert out.logits.shape == (B, L, tiny_dream_model.config.vocab_size)
+
+
+# ---------------------------------------------------------------------------
+# LLaDA model patching
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def tiny_llada_config():
+    from unturtle.models.llada.configuration_llada import LLaDAConfig
+
+    return LLaDAConfig(
+        d_model=64,
+        n_heads=4,
+        n_layers=2,
+        mlp_hidden_size=128,
+        vocab_size=512,
+        embedding_size=512,
+        max_sequence_length=64,
+        block_type="llama",
+        activation_type="silu",  # LLaDALlamaBlock does gate*up with silu (not swiglu split)
+        rope=True,
+        include_bias=False,
+        include_qkv_bias=False,
+        weight_tying=False,
+    )
+
+
+@pytest.fixture
+def tiny_llada_model(tiny_llada_config):
+    from unturtle.models.llada.modeling_llada import LLaDAModelLM
+
+    model = LLaDAModelLM(tiny_llada_config)
+    model.eval()
+    return model
+
+
+class TestLLaDAPatching:
+    def test_llada_peft_attn_out_patched(self, tiny_llada_model):
+        """After get_peft_model, attn_out in LLaDALlamaBlocks should have apply_o=apply_lora_o."""
+        from unsloth.kernels.fast_lora import apply_lora_o
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        peft_model = FastDiffusionModel.get_peft_model(
+            tiny_llada_model,
+            r=4,
+            target_modules=["q_proj", "k_proj", "v_proj", "attn_out"],
+            lora_alpha=4,
+            lora_dropout=0,
+            use_gradient_checkpointing=False,
+        )
+        from unturtle.models.llada.modeling_llada import LLaDALlamaBlock
+
+        # LLaDAModelLM wraps LLaDAModel in self.model
+        blocks = peft_model.base_model.model.model.transformer.blocks
+        for block in blocks:
+            if isinstance(block, LLaDALlamaBlock):
+                assert block.apply_o is apply_lora_o, (
+                    f"apply_o not patched on LLaDALlamaBlock: {block.apply_o}"
+                )
+
+    def test_llada_peft_qkv_patched(self, tiny_llada_model):
+        """LLaDALlamaBlock q/k/v_proj without bias should get apply_qkv=apply_lora_qkv."""
+        from unsloth.kernels.fast_lora import apply_lora_qkv
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        peft_model = FastDiffusionModel.get_peft_model(
+            tiny_llada_model,
+            r=4,
+            target_modules=["q_proj", "k_proj", "v_proj", "attn_out"],
+            lora_alpha=4,
+            lora_dropout=0,
+            use_gradient_checkpointing=False,
+        )
+        from unturtle.models.llada.modeling_llada import LLaDALlamaBlock
+
+        # LLaDAModelLM wraps LLaDAModel in self.model
+        blocks = peft_model.base_model.model.model.transformer.blocks
+        for block in blocks:
+            if isinstance(block, LLaDALlamaBlock):
+                assert block.apply_qkv is apply_lora_qkv, (
+                    f"apply_qkv not patched on LLaDALlamaBlock: {block.apply_qkv}"
+                )
+
+    def test_llada_peft_forward_runs(self, tiny_llada_model):
+        """Forward pass through a PEFT-wrapped LLaDA model should not raise."""
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        peft_model = FastDiffusionModel.get_peft_model(
+            tiny_llada_model,
+            r=4,
+            target_modules=["q_proj", "k_proj", "v_proj", "attn_out"],
+            lora_alpha=4,
+            lora_dropout=0,
+            use_gradient_checkpointing=False,
+        )
+        peft_model.eval()
+
+        B, L = 2, 8
+        input_ids = torch.randint(0, tiny_llada_model.config.vocab_size, (B, L))
+        with torch.no_grad():
+            out = peft_model(input_ids=input_ids)
+        assert out.logits.shape == (B, L, tiny_llada_model.config.vocab_size)
