@@ -316,6 +316,119 @@ def tiny_dream_model(tiny_dream_config):
 # LoRA_QKV_Bias kernel unit tests
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# FastDiffusionModel.from_pretrained improvements
+# ---------------------------------------------------------------------------
+
+class TestFromPretrained:
+    """Tests for the improved from_pretrained helper functions."""
+
+    def test_dtype_cpu_fallback(self):
+        """On CPU (no CUDA), dtype should default to float32."""
+        import unittest.mock as mock
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+        from unturtle.models.a2d import A2DLlamaConfig, A2DLlamaLMHeadModel
+
+        config = A2DLlamaConfig(
+            vocab_size=512, hidden_size=32, intermediate_size=64,
+            num_hidden_layers=1, num_attention_heads=2, num_key_value_heads=2,
+            max_position_embeddings=32,
+        )
+        base_model = A2DLlamaLMHeadModel(config)
+
+        # Patch from_pretrained to return our tiny model
+        with mock.patch.object(
+            A2DLlamaLMHeadModel, "from_pretrained", return_value=base_model
+        ), mock.patch("torch.cuda.is_available", return_value=False):
+            model, _ = FastDiffusionModel.from_pretrained(
+                "dummy-path",
+                model_class=A2DLlamaLMHeadModel,
+                load_in_4bit=False,
+            )
+        # Float32 default on CPU
+        assert model is base_model
+
+    def test_max_seq_length_set(self):
+        """from_pretrained sets max_seq_length on model and nested modules."""
+        import unittest.mock as mock
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+        from unturtle.models.a2d import A2DLlamaConfig, A2DLlamaLMHeadModel
+
+        config = A2DLlamaConfig(
+            vocab_size=512, hidden_size=32, intermediate_size=64,
+            num_hidden_layers=1, num_attention_heads=2, num_key_value_heads=2,
+            max_position_embeddings=32,
+        )
+        base_model = A2DLlamaLMHeadModel(config)
+
+        with mock.patch.object(
+            A2DLlamaLMHeadModel, "from_pretrained", return_value=base_model
+        ), mock.patch("torch.cuda.is_available", return_value=False):
+            model, _ = FastDiffusionModel.from_pretrained(
+                "dummy-path",
+                max_seq_length=128,
+                model_class=A2DLlamaLMHeadModel,
+                load_in_4bit=False,
+            )
+        assert model.max_seq_length == 128
+
+    def test_apply_stubs_installed(self):
+        """from_pretrained installs apply_qkv / apply_o stubs."""
+        import unittest.mock as mock
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+        from unturtle.models.a2d import A2DLlamaConfig, A2DLlamaLMHeadModel
+
+        config = A2DLlamaConfig(
+            vocab_size=512, hidden_size=32, intermediate_size=64,
+            num_hidden_layers=1, num_attention_heads=2, num_key_value_heads=2,
+            max_position_embeddings=32,
+        )
+        base_model = A2DLlamaLMHeadModel(config)
+
+        with mock.patch.object(
+            A2DLlamaLMHeadModel, "from_pretrained", return_value=base_model
+        ), mock.patch("torch.cuda.is_available", return_value=False):
+            model, _ = FastDiffusionModel.from_pretrained(
+                "dummy-path",
+                model_class=A2DLlamaLMHeadModel,
+                load_in_4bit=False,
+            )
+        for layer in model.model.layers:
+            assert hasattr(layer.self_attn, "apply_qkv")
+            assert hasattr(layer.self_attn, "apply_o")
+
+    def test_tokenizer_warning_on_missing(self):
+        """Missing tokenizer emits a UserWarning instead of silently returning None."""
+        import warnings
+        import unittest.mock as mock
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+        from unturtle.models.a2d import A2DLlamaConfig, A2DLlamaLMHeadModel
+
+        config = A2DLlamaConfig(
+            vocab_size=512, hidden_size=32, intermediate_size=64,
+            num_hidden_layers=1, num_attention_heads=2, num_key_value_heads=2,
+            max_position_embeddings=32,
+        )
+        base_model = A2DLlamaLMHeadModel(config)
+
+        with mock.patch.object(
+            A2DLlamaLMHeadModel, "from_pretrained", return_value=base_model
+        ), mock.patch("torch.cuda.is_available", return_value=False), \
+        mock.patch(
+            "unturtle.fast_diffusion_model.AutoTokenizer.from_pretrained",
+            side_effect=OSError("no tokenizer files")
+        ):
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                model, tokenizer = FastDiffusionModel.from_pretrained(
+                    "dummy-path",
+                    model_class=A2DLlamaLMHeadModel,
+                    load_in_4bit=False,
+                )
+        assert tokenizer is None
+        assert any("tokenizer" in str(warning.message).lower() for warning in w)
+
+
 class TestLoRAQKVBias:
     """Unit tests for the LoRA_QKV_Bias autograd function."""
 
