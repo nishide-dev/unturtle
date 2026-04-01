@@ -39,6 +39,7 @@ from transformers.cache_utils import Cache
 
 from unsloth.kernels.rope_embedding import fast_rope_embedding
 from unsloth.utils.attention_dispatch import (
+    HAS_FLASH_ATTENTION,
     SDPA,
     AttentionConfig,
     AttentionContext,
@@ -46,6 +47,9 @@ from unsloth.utils.attention_dispatch import (
     select_attention_backend,
 )
 from unsloth.utils.packing import get_packed_info_from_kwargs
+
+if HAS_FLASH_ATTENTION:
+    from flash_attn import flash_attn_varlen_func
 
 
 def _rotate_half_rope(
@@ -67,6 +71,81 @@ def _rotate_half_rope(
     Q_out = Q * cos + _rotate_half(Q) * sin
     K_out = K * cos + _rotate_half(K) * sin
     return Q_out, K_out
+
+
+def _flash_varlen_packed(
+    Q: torch.Tensor,              # [B, n_heads, L, head_dim]
+    K: torch.Tensor,              # [B, n_kv_heads, L, head_dim]
+    V: torch.Tensor,              # [B, n_kv_heads, L, head_dim]
+    seq_lengths_list: list,       # list[Tensor] — seq_lengths_list[b] = int32 lengths for row b
+    n_heads: int,
+    n_kv_heads: int,
+    head_dim: int,
+) -> torch.Tensor:
+    """Compact Q/K/V to padding-free buffers, run flash_attn_varlen_func, scatter back.
+
+    Each row b in the batch has ``sum(seq_lengths_list[b])`` real tokens followed by
+    padding.  This function:
+      1. Strips padding from each row and concatenates into a flat compacted buffer.
+      2. Calls ``flash_attn_varlen_func`` with ``causal=False`` (bidirectional dLLM).
+      3. Scatters the output back into a zero-padded ``[B, L, n_heads * head_dim]`` tensor.
+
+    flash_attn handles GQA natively: Q has ``n_heads`` heads, K/V have ``n_kv_heads``.
+
+    Returns:
+        Tensor of shape ``[B, L, n_heads * head_dim]`` with zeros at padding positions.
+    """
+    bsz = Q.shape[0]
+    q_len = Q.shape[2]
+
+    # Compute real token count per row (tiny CPU ops — seq_lengths are small)
+    real_counts = [int(sl.sum().item()) for sl in seq_lengths_list]
+    total_tokens = sum(real_counts)
+
+    # Build per-sample cu_seqlens for flash_attn_varlen_func.
+    # Concatenate all per-row length tensors → flat [total_samples] vector.
+    # cu_seqlens indexes into the compacted buffer (sample-level boundaries).
+    flat_lengths = torch.cat(
+        [sl.to(device=Q.device, dtype=torch.int32) for sl in seq_lengths_list]
+    )  # [total_samples_across_all_rows]
+    cu_seqlens = torch.zeros(flat_lengths.numel() + 1, dtype=torch.int32, device=Q.device)
+    torch.cumsum(flat_lengths, dim=0, out=cu_seqlens[1:])
+    max_seqlen = int(flat_lengths.max().item())
+
+    # Compact: remove padding, concatenate real tokens from all rows.
+    # Q: [B, n_heads, L, head_dim] → transpose → [B, L, n_heads, head_dim] → slice + cat
+    Q_t = Q.transpose(1, 2)   # [B, L, n_heads, head_dim]
+    K_t = K.transpose(1, 2)   # [B, L, n_kv_heads, head_dim]
+    V_t = V.transpose(1, 2)   # [B, L, n_kv_heads, head_dim]
+
+    Q_compact = torch.cat([Q_t[b, :real_counts[b]] for b in range(bsz)], dim=0)
+    K_compact = torch.cat([K_t[b, :real_counts[b]] for b in range(bsz)], dim=0)
+    V_compact = torch.cat([V_t[b, :real_counts[b]] for b in range(bsz)], dim=0)
+    # shapes: [total_tokens, n_heads/n_kv_heads, head_dim]
+
+    # Flash varlen — bidirectional (causal=False), no dropout during fine-tuning.
+    attn_out = flash_attn_varlen_func(
+        Q_compact,
+        K_compact,
+        V_compact,
+        cu_seqlens,
+        cu_seqlens,
+        max_seqlen,
+        max_seqlen,
+        dropout_p=0.0,
+        causal=False,
+    )  # [total_tokens, n_heads, head_dim]
+
+    # Scatter back into zero-padded [B, L, n_heads * head_dim].
+    # new_zeros preserves dtype and device from Q.
+    out_full = Q.new_zeros(bsz, q_len, n_heads * head_dim)
+    offset = 0
+    for b in range(bsz):
+        rc = real_counts[b]
+        out_full[b, :rc] = attn_out[offset:offset + rc].reshape(rc, n_heads * head_dim)
+        offset += rc
+
+    return out_full
 
 
 def A2DAttention_fast_forward(
@@ -138,17 +217,26 @@ def A2DAttention_fast_forward(
     use_varlen = seq_info is not None and past_key_values is None
 
     if use_varlen:
-        block_mask = kwargs.get("block_attention_mask", None)
-        if block_mask is not None:
-            # SDPA with pre-built bidirectional block-diagonal mask from the collator.
-            effective_mask = block_mask
-            backend = SDPA
-        else:
-            # block_attention_mask not provided (flash_attn available path):
-            # fall back to standard non-packed SDPA to avoid causal mask from
-            # build_sdpa_packed_attention_mask() and to avoid uncompacted varlen tensors.
-            effective_mask = None
-            backend = SDPA
+        seq_lengths_list = kwargs.get("seq_lengths", None)
+        if HAS_FLASH_ATTENTION and seq_lengths_list is not None:
+            # Flash varlen path: compact padding tokens out, call flash_attn_varlen_func
+            # directly (bypasses run_attention which does uncompacted reshape).
+            A = _flash_varlen_packed(
+                Q, K, V,
+                seq_lengths_list=seq_lengths_list,
+                n_heads=n_heads,
+                n_kv_heads=n_kv_heads,
+                head_dim=head_dim,
+            )
+            # _flash_varlen_packed returns [B, L, n_heads * head_dim] already
+            attn_output = self.apply_o(self, A)
+            return attn_output, None
+
+        # SDPA fallback: flash not available or seq_lengths absent.
+        # Use block_attention_mask (bidirectional block-diagonal) from collator when present.
+        # Do NOT fall back to build_sdpa_packed_attention_mask() — it builds causal blocks.
+        effective_mask = kwargs.get("block_attention_mask", None)
+        backend = SDPA
     else:
         effective_mask = attention_mask
         backend = SDPA if attention_mask is not None else select_attention_backend(False)

@@ -281,3 +281,116 @@ class TestA2DPackedForward:
         assert lengths.tolist() == [8, 8]
         assert cu_seqlens.tolist() == [0, 8, 16]
         assert max_seqlen == 8
+
+
+# ---------------------------------------------------------------------------
+# Flash varlen compaction helper
+# ---------------------------------------------------------------------------
+
+
+class TestFlashVarlenCompaction:
+    """Tests for _flash_varlen_packed: compaction and scatter logic."""
+
+    def test_compaction_token_count_and_values(self):
+        """Compact slices have correct total count and preserve token values."""
+        B, n_heads, L, head_dim = 2, 4, 16, 8
+        # row0: 2 samples × 6 tokens = 12 real; row1: 1 sample × 10 tokens = 10 real
+        seq_lengths_list = [
+            torch.tensor([6, 6], dtype=torch.int32),
+            torch.tensor([10], dtype=torch.int32),
+        ]
+        real_counts = [12, 10]
+        total_tokens = 22
+
+        Q_t = torch.randn(B, L, n_heads, head_dim)
+        compact = torch.cat([Q_t[b, :real_counts[b]] for b in range(B)], dim=0)
+
+        assert compact.shape[0] == total_tokens
+        assert torch.allclose(compact[:12], Q_t[0, :12])
+        assert torch.allclose(compact[12:], Q_t[1, :10])
+
+    def test_scatter_is_inverse_of_compact(self):
+        """Scatter back into padded buffer is lossless; padding positions remain zero."""
+        B, n_heads, L, head_dim = 2, 4, 16, 8
+        real_counts = [12, 10]
+        total_tokens = 22
+
+        fake_out = torch.randn(total_tokens, n_heads, head_dim)
+        out_full = torch.zeros(B, L, n_heads * head_dim)
+
+        offset = 0
+        for b in range(B):
+            rc = real_counts[b]
+            out_full[b, :rc] = fake_out[offset:offset + rc].reshape(rc, n_heads * head_dim)
+            offset += rc
+
+        assert torch.all(out_full[0, 12:] == 0), "Row 0 padding must be zero"
+        assert torch.all(out_full[1, 10:] == 0), "Row 1 padding must be zero"
+
+        offset = 0
+        for b in range(B):
+            rc = real_counts[b]
+            expected = fake_out[offset:offset + rc].reshape(rc, n_heads * head_dim)
+            assert torch.allclose(out_full[b, :rc], expected), f"Row {b} values mismatch"
+            offset += rc
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for Flash Attention"
+    )
+    def test_flash_varlen_packed_gpu_shape_and_bidirectionality(self):
+        """Flash varlen output has correct shape; bidirectionality is preserved."""
+        try:
+            from flash_attn import flash_attn_varlen_func  # noqa: F401
+        except ImportError:
+            pytest.skip("flash_attn not installed")
+
+        from unturtle.models.a2d._fast_forward import _flash_varlen_packed
+
+        B, n_heads, L, head_dim = 2, 4, 16, 8
+        n_kv_heads = n_heads
+        device = "cuda"
+
+        seq_lengths_list = [
+            torch.tensor([6, 6], dtype=torch.int32),   # row0: 12 real, 4 padding
+            torch.tensor([10], dtype=torch.int32),     # row1: 10 real, 6 padding
+        ]
+
+        torch.manual_seed(42)
+        Q = torch.randn(B, n_heads, L, head_dim, device=device, dtype=torch.bfloat16)
+        K = torch.randn(B, n_kv_heads, L, head_dim, device=device, dtype=torch.bfloat16)
+        V = torch.randn(B, n_kv_heads, L, head_dim, device=device, dtype=torch.bfloat16)
+
+        out = _flash_varlen_packed(
+            Q, K, V,
+            seq_lengths_list=seq_lengths_list,
+            n_heads=n_heads,
+            n_kv_heads=n_kv_heads,
+            head_dim=head_dim,
+        )
+
+        assert out.shape == (B, L, n_heads * head_dim)
+        assert torch.all(out[0, 12:] == 0), "Row 0 padding must be zero"
+        assert torch.all(out[1, 10:] == 0), "Row 1 padding must be zero"
+
+        # Bidirectionality test: change V at position 5 (last token of sample0, positions 0-5).
+        # Since causal=False, position 0 (same sample) attends to position 5 — output should change.
+        # Position 6 (start of sample1, positions 6-11) must NOT change — cross-sample blocked.
+        V_fwd = V.clone()
+        V_fwd[0, :, 5, :] = torch.randn(n_kv_heads, head_dim, device=device, dtype=torch.bfloat16)
+        out_fwd = _flash_varlen_packed(
+            Q, K, V_fwd,
+            seq_lengths_list=seq_lengths_list,
+            n_heads=n_heads,
+            n_kv_heads=n_kv_heads,
+            head_dim=head_dim,
+        )
+        # Position 0 (sample0) attends to position 5 (same sample) → output changes
+        assert not torch.allclose(out[0, 0].float(), out_fwd[0, 0].float(), atol=1e-3), (
+            "Position 0 should change when V at position 5 (same sample) changes — "
+            "bidirectional attention not working"
+        )
+        # Position 6 (sample1) does NOT attend to position 5 (sample0) → output unchanged
+        assert torch.allclose(out[0, 6].float(), out_fwd[0, 6].float(), atol=1e-3), (
+            "Position 6 (sample1) should NOT change when V at position 5 (sample0) changes — "
+            "cross-sample attention should be blocked by cu_seqlens"
+        )
