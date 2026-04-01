@@ -43,7 +43,8 @@ tests/
 ├── models/                   # A2D / LLaDA / Dream model tests (39 tests)
 │   └── test_a2d.py           # includes packed forward + flash varlen compaction (23 tests)
 ├── test_fast_diffusion_model.py  # LoRA patching + save/load (23 tests)
-└── test_e2e_integration.py   # full pipeline CPU + GPU slow tests (4 tests)
+├── test_e2e_integration.py   # fast CPU E2E tests (2 tests)
+└── test_e2e_real_checkpoint.py  # slow GPU + real-checkpoint E2E tests (4 tests)
 dev/
 ├── repos/                    # reference implementations (gitignore'd, clone manually)
 │   ├── d1/                   # dllm-reasoning/d1
@@ -61,10 +62,10 @@ dev/
 # Activate virtualenv first
 source .venv/bin/activate
 
-# Fast CPU tests (required to pass before every PR merge)
-python -m pytest tests/diffusion/ tests/models/ tests/test_fast_diffusion_model.py tests/test_e2e_integration.py -v
+# Fast tests only (required to pass before every PR merge)
+python -m pytest tests/diffusion/ tests/models/ tests/test_fast_diffusion_model.py tests/test_e2e_integration.py -m "not slow" -v
 
-# Full suite including E2E (slow GPU tests require CUDA + real HF checkpoints)
+# Full suite including slow E2E (GPU + real HF checkpoints required)
 python -m pytest tests/ -v
 
 # Race-condition check (if modifying shared state)
