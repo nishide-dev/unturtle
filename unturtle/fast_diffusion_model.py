@@ -385,6 +385,81 @@ def _no_lora_mag(proj: Any) -> bool:
     return len(getattr(proj, "lora_magnitude_vector", []) or []) == 0
 
 
+def _load_model_auto(model_name: str, load_kwargs: dict, trust_remote_code: bool) -> Any:
+    """Try to load a model via AutoModel, AutoModelForMaskedLM, AutoModelForCausalLM.
+
+    Registers unturtle model types so AutoConfig resolves them before trying.
+    Falls back through the chain and raises if all attempts fail.
+    """
+    import unturtle.models  # noqa: F401 — registers A2D AutoConfig entries
+
+    from transformers import AutoModel, AutoModelForCausalLM, AutoModelForMaskedLM
+
+    loaders = [
+        ("AutoModel", AutoModel),
+        ("AutoModelForMaskedLM", AutoModelForMaskedLM),
+        ("AutoModelForCausalLM", AutoModelForCausalLM),
+    ]
+    last_exc: Exception | None = None
+    for name, loader_cls in loaders:
+        try:
+            return loader_cls.from_pretrained(model_name, **load_kwargs)
+        except Exception as exc:  # noqa: BLE001
+            _logger.debug("FastDiffusionModel: %s failed: %s", name, exc)
+            last_exc = exc
+
+    raise RuntimeError(
+        f"FastDiffusionModel: could not load {model_name!r} via any AutoModel variant. "
+        f"Pass model_class= explicitly.\nLast error: {last_exc}"
+    ) from last_exc
+
+
+def _load_tokenizer(
+    model_name: str, trust_remote_code: bool, token: Optional[str]
+) -> Any:
+    """Load tokenizer; warn instead of silently returning None."""
+    try:
+        tok_kwargs: dict[str, Any] = {"trust_remote_code": trust_remote_code}
+        if token is not None:
+            tok_kwargs["token"] = token
+        return AutoTokenizer.from_pretrained(model_name, **tok_kwargs)
+    except Exception as exc:  # noqa: BLE001
+        import warnings
+
+        warnings.warn(
+            f"FastDiffusionModel: tokenizer not found for {model_name!r}: {exc}\n"
+            "Pass a tokenizer manually or verify the model path.",
+            stacklevel=3,
+        )
+        return None
+
+
+def _extend_rope_if_possible(model: Any, max_seq_length: int) -> None:
+    """Extend RoPE embeddings to cover ``max_seq_length`` if the model supports it.
+
+    Iterates through all modules looking for a ``rotary_emb`` or
+    ``rotary_embedding`` attribute that exposes ``extend_rope_embedding``.
+    This mirrors unsloth's ``extend_model_function``.
+    """
+    for module in model.modules():
+        for rope_attr in ("rotary_emb", "rotary_embedding"):
+            rope = getattr(module, rope_attr, None)
+            if rope is None:
+                continue
+            if hasattr(rope, "extend_rope_embedding"):
+                try:
+                    rope.extend_rope_embedding(max_seq_length)
+                    _logger.debug(
+                        "FastDiffusionModel: extended RoPE to %d via %s",
+                        max_seq_length,
+                        type(rope).__name__,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    _logger.debug(
+                        "FastDiffusionModel: RoPE extension failed: %s", exc
+                    )
+
+
 def _propagate_max_seq_length(model: Any, max_seq_length: int) -> None:
     """Set max_seq_length on every nested model attribute (mirrors unsloth)."""
     internal = model
@@ -412,6 +487,7 @@ class FastDiffusionModel:
         load_in_4bit: bool = True,
         model_class: Any = None,
         trust_remote_code: bool = True,
+        token: Optional[str] = None,
         **kwargs: Any,
     ) -> tuple[Any, Any]:
         """Load a dLLM model (optionally 4-bit quantised).
@@ -422,31 +498,48 @@ class FastDiffusionModel:
         Args:
             model_name:         HuggingFace model id or local path.
             max_seq_length:     Maximum sequence length.
-            dtype:              Torch dtype (None → bfloat16 when supported).
+            dtype:              Torch dtype.  Defaults to bfloat16 on CUDA GPUs
+                                that support it, float16 on other CUDA GPUs, and
+                                float32 on CPU.
             load_in_4bit:       Enable 4-bit NF4 quantisation via bitsandbytes.
+                                Silently disabled when running on CPU or when
+                                bitsandbytes is not installed.
             model_class:        Explicit model class override (e.g.
                                 ``A2DLlamaLMHeadModel``).  When *None* the class
-                                is resolved via ``AutoModel``.
+                                is resolved via a fallback chain:
+                                ``AutoModel`` → ``AutoModelForMaskedLM`` →
+                                ``AutoModelForCausalLM``.
             trust_remote_code:  Passed to ``from_pretrained``.
+            token:              HuggingFace Hub auth token.
             **kwargs:           Forwarded to ``from_pretrained``.
 
         Returns:
-            ``(model, tokenizer)`` tuple.
+            ``(model, tokenizer)`` tuple.  ``tokenizer`` may be ``None`` with
+            a warning if no tokenizer files are found.
         """
+        # --- dtype auto-detection ---
         if dtype is None:
-            dtype = (
-                torch.bfloat16
-                if torch.cuda.is_bf16_supported()
-                else torch.float16
-            )
+            if torch.cuda.is_available():
+                dtype = (
+                    torch.bfloat16
+                    if torch.cuda.is_bf16_supported()
+                    else torch.float16
+                )
+            else:
+                dtype = torch.float32
+
+        is_on_cpu = not torch.cuda.is_available()
 
         load_kwargs: dict[str, Any] = dict(
             torch_dtype=dtype,
             trust_remote_code=trust_remote_code,
             **kwargs,
         )
+        if token is not None:
+            load_kwargs["token"] = token
 
-        if load_in_4bit:
+        # --- 4-bit quantisation (CUDA only) ---
+        if load_in_4bit and not is_on_cpu:
             try:
                 from transformers import BitsAndBytesConfig
 
@@ -461,31 +554,26 @@ class FastDiffusionModel:
                 _warn_once(
                     "bitsandbytes not installed — falling back to full-precision loading."
                 )
+        elif load_in_4bit and is_on_cpu:
+            _warn_once(
+                "FastDiffusionModel: load_in_4bit=True requires CUDA — "
+                "falling back to full-precision loading on CPU."
+            )
 
-        # Resolve model class
+        # --- Resolve model class ---
         if model_class is None:
-            # Import A2D models so AutoModel registry picks them up
-            import unturtle.models  # noqa: F401 — registers AutoConfig entries
-
-            from transformers import AutoModelForMaskedLM
-
-            model = AutoModelForMaskedLM.from_pretrained(model_name, **load_kwargs)
+            model = _load_model_auto(model_name, load_kwargs, trust_remote_code)
         else:
             model = model_class.from_pretrained(model_name, **load_kwargs)
 
-        # Set apply_qkv / apply_o stubs on each attention layer so the
-        # dispatch protocol works before PEFT is applied.
+        # --- Apply stubs and sequence length ---
         _install_apply_stubs(model)
-
         model.max_seq_length = max_seq_length
         _propagate_max_seq_length(model, max_seq_length)
+        _extend_rope_if_possible(model, max_seq_length)
 
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(
-                model_name, trust_remote_code=trust_remote_code
-            )
-        except Exception:  # noqa: BLE001
-            tokenizer = None
+        # --- Tokenizer ---
+        tokenizer = _load_tokenizer(model_name, trust_remote_code, token)
 
         return model, tokenizer
 
