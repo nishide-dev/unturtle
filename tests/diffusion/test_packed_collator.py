@@ -72,7 +72,8 @@ class TestPackedShape:
         samples = _make_samples(4, 8)
         batch = collator(samples)
         for key in ("input_ids", "labels", "attention_mask", "diffusion_mask",
-                    "position_ids", "cu_seqlens", "seq_lengths", "timesteps"):
+                    "position_ids", "cu_seqlens", "seq_lengths", "timesteps",
+                    "sample_timesteps"):
             assert key in batch, f"Missing key: {key}"
 
     def test_input_ids_shape(self, collator):
@@ -131,6 +132,25 @@ class TestPackedShape:
         batch = collator(samples)
         for sl in batch["seq_lengths"]:
             assert sl.sum().item() <= 32
+
+    def test_timesteps_dense_shape(self, collator):
+        """timesteps must be a 1-D [B] float tensor compatible with DiffusionTrainer."""
+        samples = _make_samples(4, 8)
+        batch = collator(samples)
+        ts = batch["timesteps"]
+        assert ts.ndim == 1, f"timesteps must be 1-D, got shape {ts.shape}"
+        assert ts.shape[0] == batch["input_ids"].shape[0], "timesteps B != input_ids B"
+        assert ts.dtype == torch.float32
+
+    def test_sample_timesteps_per_sample_granularity(self, collator):
+        """sample_timesteps must contain one t value per packed sample, not per row."""
+        samples = _make_samples(4, 8)  # 4 * 8 = 32 = max_seq_length (one per row)
+        batch = collator(samples)
+        for b, st in enumerate(batch["sample_timesteps"]):
+            n_seqs = len(batch["seq_lengths"][b])
+            assert len(st) == n_seqs, (
+                f"sample_timesteps[{b}] has {len(st)} entries but {n_seqs} packed samples"
+            )
 
 
 # ---------------------------------------------------------------------------
