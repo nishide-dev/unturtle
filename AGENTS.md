@@ -59,7 +59,7 @@ dev/
 source .venv/bin/activate
 
 # Fast CPU tests (required to pass before every PR merge)
-python -m pytest tests/diffusion/ tests/models/ tests/test_fast_diffusion_model.py -v
+python -m pytest tests/diffusion/ tests/models/ tests/test_fast_diffusion_model.py tests/test_e2e_integration.py -v
 
 # Full suite including E2E (slow GPU tests require CUDA + real HF checkpoints)
 python -m pytest tests/ -v

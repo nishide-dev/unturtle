@@ -36,7 +36,6 @@ Run all including slow/GPU tests::
 from __future__ import annotations
 
 import os
-import pathlib
 import warnings
 
 import pytest
@@ -163,21 +162,42 @@ class TestE2EFastDiffusionTrainer:
             report_to="none",
         )
 
-        trainer = DiffusionTrainer(
-            model=peft_model,
-            args=training_args,
-            train_dataset=dataset,
-            data_collator=collator,
-            processing_class=tokenizer,
-        )
+        # Capture per-step losses to verify the pipeline actually learns
+        losses: list[float] = []
+        original_log = DiffusionTrainer.log
 
-        result = trainer.train()
+        def capturing_log(self_inner, logs, start_time=None, **kw):
+            if "loss" in logs:
+                losses.append(float(logs["loss"]))
+            original_log(self_inner, logs, start_time=start_time, **kw)
 
-        # Loss should be finite
+        DiffusionTrainer.log = capturing_log
+        try:
+            trainer = DiffusionTrainer(
+                model=peft_model,
+                args=training_args,
+                train_dataset=dataset,
+                data_collator=collator,
+                processing_class=tokenizer,
+            )
+            result = trainer.train()
+        finally:
+            DiffusionTrainer.log = original_log
+
+        # Loss must be finite and the training loop must have logged at least once
         assert result.training_loss is not None
         assert torch.isfinite(torch.tensor(result.training_loss)), (
             f"Training loss is not finite: {result.training_loss}"
         )
+        # Verify the loss logging path was exercised (gradient steps are running)
+        assert len(losses) >= 1, (
+            "No loss values were logged — training loop may not have run"
+        )
+        # All logged losses must be finite (no NaN/Inf explosion)
+        for step_loss in losses:
+            assert torch.isfinite(torch.tensor(step_loss)), (
+                f"Step loss is not finite: {step_loss} in {losses}"
+            )
 
     def test_adapter_save_reload_forward_matches(self, tiny_a2d_config, tmp_path):
         """Save LoRA adapter, reload, and verify forward output matches."""
@@ -251,6 +271,10 @@ class TestE2ERealCheckpoint:
         pytest tests/test_e2e_integration.py -m slow -v
     """
 
+    # Default to the canonical LLaDA-8B checkpoint. Override with the env var
+    # to use a smaller/different model without editing the test file.
+    # Note: this is intentionally an 8B model — the slow test validates the
+    # full production pipeline rather than a toy setup.
     CHECKPOINT = os.environ.get("UNTURTLE_TEST_CHECKPOINT", "GSAI-ML/LLaDA-8B-Instruct")
 
     @pytest.fixture(autouse=True)
@@ -351,6 +375,7 @@ class TestE2ERealCheckpoint:
                 args=training_args,
                 train_dataset=dataset,
                 data_collator=collator,
+                processing_class=tokenizer,
             )
             trainer.train()
         finally:
