@@ -37,8 +37,11 @@ unturtle/                     # canonical public API (Phase B+)
 
 unsloth/                      # upstream + backward-compat shims
 tests/
-├── diffusion/                # loss / scheduler / collator / GRPO tests (75 tests)
-├── models/                   # A2D / LLaDA / Dream model tests (31 tests)
+├── diffusion/                # loss / scheduler / collator / GRPO tests (98 tests)
+│   ├── test_packed_collator.py   # PackedMaskedDiffusionDataCollator (23 tests)
+│   └── ...                       # other diffusion tests
+├── models/                   # A2D / LLaDA / Dream model tests (39 tests)
+│   └── test_a2d.py           # includes packed forward + flash varlen compaction (23 tests)
 ├── test_fast_diffusion_model.py  # LoRA patching + save/load (23 tests)
 └── test_e2e_integration.py   # full pipeline CPU + GPU slow tests (4 tests)
 dev/
@@ -100,6 +103,10 @@ python -m pytest tests/ -v  # (no -race for Python, but run on GPU if kernel cha
 
 4. **No unintended causal masking** — dLLM attention must remain bidirectional. Check that
    `is_causal=False` is preserved across any attention path changes.
+
+5. **Packed sequence path** — When `seq_info` is not None and `past_key_values` is None,
+   the varlen path must be taken. Verify `packed_seq_lengths` (not `cu_seqlens`) is in batch,
+   and that the Flash varlen CUDA guard (`Q.device.type == "cuda"`) is present.
 
 ### Review Criteria Priority
 
@@ -191,6 +198,10 @@ These rules apply to `_patch_a2d_peft`, `_patch_dream_peft`, `_patch_llada_peft`
 | LLaDA extra model nesting | `AttributeError: 'LLaDAModelLM' has no attribute 'transformer'` | Use two-path fallback (see layer hierarchy above) |
 | `lora_dropout > 0` | Triton kernels not applied, slow training | Use `lora_dropout=0` for Triton path |
 | SDPA auto-causal | Attention silently becomes causal when `q_len == k_len` | Set `sdpa_kwargs={"is_causal": False}` in AttentionConfig |
+| `packed_seq_lengths` vs `cu_seqlens` naming | `get_packed_info_from_kwargs()` returns `None`; packed path silently disabled | Key must be `"packed_seq_lengths"` (flat 1D int32); `"cu_seqlens"` is a different list-of-tensors field |
+| Flash varlen without CUDA guard | `flash_attn_varlen_func` crashes on CPU even when `HAS_FLASH_ATTENTION=True` | Check `Q.device.type == "cuda"` before calling flash varlen — `HAS_FLASH_ATTENTION` only means the package is installed |
+| Flash varlen compaction requires prefix-contiguous layout | Metadata mismatch / wrong attention output | `PackedMaskedDiffusionDataCollator` places real tokens at `[0:sum(seq_lengths[b])]` with padding at end — compaction slices `Q_t[b, :real_counts[b]]`; never use uncompacted `[B, L]` tensors directly with `flash_attn_varlen_func` |
+| `build_sdpa_packed_attention_mask()` is causal | Packed SDPA silently reintroduces causal masking for dLLM | Never use the upstream `build_sdpa_packed_attention_mask()` for A2D/packed path — it builds upper-triangular causal blocks; use `block_attention_mask` from collator or `effective_mask=None` |
 
 ---
 

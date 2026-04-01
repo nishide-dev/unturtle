@@ -17,6 +17,7 @@ from unturtle import (
     fast_masked_diffusion_loss,
     masked_diffusion_loss_from_timesteps,
 )
+from unturtle.kernels.fused_masked_diffusion_loss import fused_masked_diffusion_loss
 
 pytestmark = pytest.mark.skipif(
     not torch.cuda.is_available(), reason="CUDA required for GPU accuracy tests"
@@ -268,3 +269,58 @@ class TestNumericalStability:
 
         loss = fast_masked_diffusion_loss(logits, labels, mask)
         assert torch.isfinite(loss), f"Non-finite loss with FP16: {loss.item()}"
+
+
+# ---------------------------------------------------------------------------
+# B-5: Fused kernel equivalence (GPU)
+# ---------------------------------------------------------------------------
+
+
+class TestFusedKernelGPUEquivalence:
+    """Verify fused_masked_diffusion_loss matches fast_masked_diffusion_loss on GPU."""
+
+    @pytest.mark.parametrize("mask_ratio", [0.1, 0.5, 1.0])
+    def test_fused_matches_nonfused_uniform(self, mask_ratio):
+        """fused (no clone) equals non-fused for uniform weighting."""
+        logits, labels, mask = _make_inputs(mask_ratio=mask_ratio)
+        ref = fast_masked_diffusion_loss(logits, labels, mask)
+        got = fused_masked_diffusion_loss(logits, labels, mask)
+        assert torch.allclose(got, ref, atol=ATOL, rtol=RTOL), (
+            f"mask_ratio={mask_ratio}: ref={ref.item():.6f} got={got.item():.6f}"
+        )
+
+    def test_fused_matches_nonfused_weighted(self):
+        """fused equals non-fused with per-sequence loss_weights."""
+        logits, labels, mask = _make_inputs(B=4, L=32, V=256)
+        weights = torch.rand(4, device="cuda") + 0.1
+        ref = fast_masked_diffusion_loss(logits, labels, mask, loss_weights=weights)
+        got = fused_masked_diffusion_loss(logits, labels, mask, loss_weights=weights)
+        assert torch.allclose(got, ref, atol=ATOL, rtol=RTOL), (
+            f"weighted: ref={ref.item():.6f} got={got.item():.6f}"
+        )
+
+    def test_fused_large_vocab(self):
+        """Vocab > 65536 (chunked Triton path): fused still matches."""
+        logits, labels, mask = _make_inputs(B=2, L=16, V=65537)
+        ref = fast_masked_diffusion_loss(logits, labels, mask)
+        got = fused_masked_diffusion_loss(logits, labels, mask)
+        assert torch.allclose(got, ref, atol=ATOL, rtol=RTOL), (
+            f"large vocab: ref={ref.item():.6f} got={got.item():.6f}"
+        )
+
+    def test_fused_gradients_match(self):
+        """Gradients from fused kernel match non-fused."""
+        B, L, V = 4, 32, 256
+        torch.manual_seed(99)
+        logits_ref = torch.randn(B, L, V, device="cuda", requires_grad=True)
+        logits_fused = logits_ref.detach().clone().requires_grad_(True)
+        labels = torch.randint(0, V, (B, L), device="cuda")
+        mask = (torch.rand(B, L, device="cuda") < 0.5)
+        mask[:, 0] = True
+
+        fast_masked_diffusion_loss(logits_ref, labels, mask).backward()
+        fused_masked_diffusion_loss(logits_fused, labels, mask).backward()
+
+        assert torch.allclose(logits_ref.grad, logits_fused.grad, atol=1e-4, rtol=1e-4), (
+            f"Max grad diff: {(logits_ref.grad - logits_fused.grad).abs().max().item():.2e}"
+        )
