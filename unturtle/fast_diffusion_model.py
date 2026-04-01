@@ -79,6 +79,12 @@ _A2D_MODEL_TYPES = frozenset(
     ["a2d-llama", "a2d-qwen2", "a2d-qwen3", "llama", "qwen2", "qwen3"]
 )
 
+# Dream model_type (note: Dream uses "Dream" with capital D)
+_DREAM_MODEL_TYPES = frozenset(["dream", "Dream"])
+
+# LLaDA model_type
+_LLADA_MODEL_TYPES = frozenset(["llada"])
+
 
 # ---------------------------------------------------------------------------
 # Internal patching helpers
@@ -163,6 +169,191 @@ def _patch_a2d_peft(model: Any, lora_dropout: float, bias: Literal["none", "all"
         else:
             _warn_once(
                 "FastDiffusionModel: cannot patch O projection with Triton kernel."
+            )
+
+    return n_qkv, n_o, n_mlp
+
+
+def _patch_dream_peft(
+    model: Any, lora_dropout: float, bias: Literal["none", "all", "lora_only"]
+) -> tuple[int, int, int]:
+    """Patch Dream model with Triton LoRA kernels (o_proj + MLP only).
+
+    Dream's q/k/v_proj have ``bias=True``, so ``apply_lora_qkv`` cannot be
+    used (the bias guard would skip them).  We patch o_proj and MLP only and
+    emit a one-time warning about QKV.  QKV support requires a future
+    ``apply_lora_qkv_with_bias`` kernel (Issue #10).
+
+    Layer layout: ``model.base_model.model.model.layers``
+    (Dream wraps DreamBaseModel as ``self.model``, same depth as LLaMA).
+    """
+    n_qkv = n_o = n_mlp = 0
+
+    layers = model.base_model.model.model.layers
+
+    # Warn once that QKV is skipped for Dream
+    _warn_once(
+        "FastDiffusionModel (Dream): q/k/v_proj have bias=True — "
+        "Triton fused QKV kernel cannot be applied (see Issue #10). "
+        "LoRA on q/k/v_proj will use PEFT's default linear path."
+    )
+
+    for layer in layers:
+        self_attn = layer.self_attn if hasattr(layer, "self_attn") else None
+
+        if lora_dropout != 0 or bias != "none":
+            continue
+
+        if self_attn is None:
+            continue
+
+        # --- O projection (bias=False in Dream) ---
+        o_proj = self_attn.o_proj
+        if (
+            hasattr(o_proj, "lora_A")
+            and _no_bias(o_proj)
+            and _no_lora_mag(o_proj)
+        ):
+            self_attn.apply_o = apply_lora_o
+            n_o += 1
+
+        # --- MLP: Dream uses gate_proj/up_proj/down_proj (bias=False) ---
+        mlp = layer.mlp if hasattr(layer, "mlp") else None
+        if mlp is not None:
+            gate_proj = getattr(mlp, "gate_proj", None)
+            up_proj = getattr(mlp, "up_proj", None)
+            down_proj = getattr(mlp, "down_proj", None)
+            if (
+                gate_proj is not None
+                and up_proj is not None
+                and down_proj is not None
+                and hasattr(gate_proj, "lora_A")
+                and hasattr(up_proj, "lora_A")
+                and hasattr(down_proj, "lora_A")
+                and _no_bias(gate_proj)
+                and _no_bias(up_proj)
+                and _no_bias(down_proj)
+                and _no_lora_mag(gate_proj)
+                and _no_lora_mag(up_proj)
+                and _no_lora_mag(down_proj)
+            ):
+                mlp.forward = types.MethodType(apply_lora_mlp_swiglu, mlp)
+                n_mlp += 1
+
+    return n_qkv, n_o, n_mlp
+
+
+def _patch_llada_peft(
+    model: Any, lora_dropout: float, bias: Literal["none", "all", "lora_only"]
+) -> tuple[int, int, int]:
+    """Patch LLaDA model with Triton LoRA kernels.
+
+    LLaDA uses a non-standard layer hierarchy:
+      ``model.base_model.model.transformer.blocks`` (list of ``LLaDABlock``).
+
+    ``LLaDALlamaBlock`` has ``q_proj/k_proj/v_proj/attn_out/ff_proj/up_proj``.
+    Other block types (``LLaDASequentialBlock``) use ``att_proj`` (fused QKV)
+    and are not supported by the split QKV kernel — they are skipped with a
+    warning.
+    """
+    from unturtle.models.llada.modeling_llada import LLaDALlamaBlock
+
+    n_qkv = n_o = n_mlp = 0
+
+    # LLaDAModelLM wraps LLaDAModel in self.model, so the path differs:
+    # PeftModel → base_model → model (LLaDAModelLM) → model (LLaDAModel) → transformer
+    inner = model.base_model.model
+    if hasattr(inner, "model") and hasattr(inner.model, "transformer"):
+        transformer = inner.model.transformer
+    elif hasattr(inner, "transformer"):
+        transformer = inner.transformer
+    else:
+        _warn_once(
+            "FastDiffusionModel (LLaDA): could not locate transformer — "
+            "cannot patch LoRA kernels. Is this a supported LLaDA checkpoint?"
+        )
+        return n_qkv, n_o, n_mlp
+
+    if not hasattr(transformer, "blocks"):
+        _warn_once(
+            "FastDiffusionModel (LLaDA): transformer.blocks not found — "
+            "cannot patch LoRA kernels. Is this a supported LLaDA checkpoint?"
+        )
+        return n_qkv, n_o, n_mlp
+
+    blocks = transformer.blocks
+
+    for block in blocks:
+        if not isinstance(block, LLaDALlamaBlock):
+            _warn_once(
+                f"FastDiffusionModel (LLaDA): skipping block type {type(block).__name__} "
+                "(only LLaDALlamaBlock is supported for Triton LoRA patching)."
+            )
+            continue
+
+        if lora_dropout != 0 or bias != "none":
+            continue
+
+        # LLaDALlamaBlock: q_proj / k_proj / v_proj (bias depends on config)
+        q_proj = getattr(block, "q_proj", None)
+        k_proj = getattr(block, "k_proj", None)
+        v_proj = getattr(block, "v_proj", None)
+        if (
+            q_proj is not None
+            and k_proj is not None
+            and v_proj is not None
+            and hasattr(q_proj, "lora_A")
+            and hasattr(k_proj, "lora_A")
+            and hasattr(v_proj, "lora_A")
+            and _no_bias(q_proj)
+            and _no_bias(k_proj)
+            and _no_bias(v_proj)
+            and _no_lora_mag(q_proj)
+            and _no_lora_mag(k_proj)
+            and _no_lora_mag(v_proj)
+        ):
+            block.apply_qkv = apply_lora_qkv
+            n_qkv += 1
+        else:
+            _warn_once(
+                "FastDiffusionModel (LLaDA): cannot patch QKV with Triton kernel "
+                "(LoRA not enabled or bias present — config.include_qkv_bias=True)."
+            )
+
+        # attn_out (o_proj equivalent)
+        attn_out = getattr(block, "attn_out", None)
+        if (
+            attn_out is not None
+            and hasattr(attn_out, "lora_A")
+            and _no_bias(attn_out)
+            and _no_lora_mag(attn_out)
+        ):
+            block.apply_o = apply_lora_o
+            n_o += 1
+        else:
+            _warn_once(
+                "FastDiffusionModel (LLaDA): cannot patch attn_out with Triton kernel."
+            )
+
+        # ff_proj / up_proj (gate/up equivalent, no down_proj in LLaDA SwiGLU variant)
+        ff_proj = getattr(block, "ff_proj", None)
+        up_proj = getattr(block, "up_proj", None)
+        if (
+            ff_proj is not None
+            and up_proj is not None
+            and hasattr(ff_proj, "lora_A")
+            and hasattr(up_proj, "lora_A")
+            and _no_bias(ff_proj)
+            and _no_bias(up_proj)
+            and _no_lora_mag(ff_proj)
+            and _no_lora_mag(up_proj)
+        ):
+            # LLaDA SwiGLU has no down_proj — MLP packing not applicable to
+            # apply_lora_mlp_swiglu (which requires gate/up/down). Skip silently.
+            _warn_once(
+                "FastDiffusionModel (LLaDA): LLaDALlamaBlock MLP uses ff_proj/up_proj "
+                "without down_proj — apply_lora_mlp_swiglu requires gate/up/down. "
+                "MLP LoRA will use PEFT default path."
             )
 
     return n_qkv, n_o, n_mlp
@@ -371,10 +562,32 @@ class FastDiffusionModel:
                 f"{n_qkv} QKV layers, {n_o} O layers and {n_mlp} MLP layers "
                 f"(bidirectional, causal=False)."
             )
+        elif model_type in _DREAM_MODEL_TYPES:
+            n_qkv, n_o, n_mlp = _patch_dream_peft(model, lora_dropout, bias)
+            n_layers = len(model.base_model.model.model.layers)
+            _warn_once(
+                f"FastDiffusionModel (Dream) patched {n_layers} layers with "
+                f"{n_o} O layers and {n_mlp} MLP layers "
+                "(QKV skipped: bias=True, see Issue #10)."
+            )
+        elif model_type in _LLADA_MODEL_TYPES:
+            n_qkv, n_o, n_mlp = _patch_llada_peft(model, lora_dropout, bias)
+            inner = model.base_model.model
+            _llada_transformer = (
+                inner.model.transformer
+                if hasattr(inner, "model") and hasattr(inner.model, "transformer")
+                else getattr(inner, "transformer", None)
+            )
+            n_blocks = len(_llada_transformer.blocks) if _llada_transformer is not None else 0
+            _warn_once(
+                f"FastDiffusionModel (LLaDA) patched {n_blocks} blocks with "
+                f"{n_qkv} QKV blocks and {n_o} O (attn_out) blocks."
+            )
         else:
             raise NotImplementedError(
                 f"FastDiffusionModel does not yet support model_type={model_type!r}. "
-                "Supported types: " + ", ".join(sorted(_A2D_MODEL_TYPES))
+                "Supported types: "
+                + ", ".join(sorted(_A2D_MODEL_TYPES | _DREAM_MODEL_TYPES | _LLADA_MODEL_TYPES))
             )
 
         # Propagate max_seq_length through the wrapped model hierarchy
