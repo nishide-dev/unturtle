@@ -136,29 +136,34 @@ class TestPeftAndTraining:
             use_gradient_checkpointing="unsloth",
         )
 
-        # Tiny 10-sample dataset: prompt + completion
+        mask_token_id = tokenizer.mask_token_id or getattr(model.config, "mask_token_id", None)
+        assert mask_token_id is not None, (
+            "Real-checkpoint E2E requires a mask token id. "
+            "Pass mask_token_id explicitly or use a checkpoint whose tokenizer/config defines one."
+        )
+
+        # Tiny 10-sample dataset: prompt + completion.
+        # Use add_special_tokens=False consistently for prompt/full tokenization so
+        # the prompt/completion boundary stays exact even with override checkpoints.
         prompts = ["The capital of France is"] * 10
         completions = [" Paris."] * 10
-        full_texts = [p + c for p, c in zip(prompts, completions)]
-
-        tokenized = tokenizer(
-            full_texts, padding=True, truncation=True, max_length=64,
-        )
         dataset = []
-        for i in range(len(full_texts)):
-            prompt_len = len(
-                tokenizer(prompts[i], add_special_tokens=False)["input_ids"]
-            )
-            input_ids = tokenized["input_ids"][i]
-            labels = [-100] * prompt_len + input_ids[prompt_len:]
+        for prompt, completion in zip(prompts, completions):
+            prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
+            completion_ids = tokenizer(completion, add_special_tokens=False)["input_ids"]
+            input_ids = (prompt_ids + completion_ids)[:64]
+            attention_mask = [1] * len(input_ids)
+            labels = [-100] * min(len(prompt_ids), len(input_ids)) + input_ids[len(prompt_ids):]
+            labels = labels[:len(input_ids)]
             dataset.append({
                 "input_ids": input_ids,
                 "labels": labels,
-                "attention_mask": tokenized["attention_mask"][i],
+                "attention_mask": attention_mask,
             })
 
         collator = MaskedDiffusionDataCollator(
             tokenizer=tokenizer,
+            mask_token_id=mask_token_id,
             completion_only=True,
         )
         training_args = DiffusionTrainingArguments(

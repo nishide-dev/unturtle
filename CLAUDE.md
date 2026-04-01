@@ -52,7 +52,7 @@ unturtle/
 │   │   ├── test_integration.py
 │   │   ├── test_gpu_accuracy.py
 │   │   └── test_grpo_trainer.py
-│   ├── models/                          # ✅ Phase 7: モデルテスト (31テスト)
+│   ├── models/                          # ✅ Phase 7: モデルテスト (39テスト)
 │   │   ├── test_a2d.py
 │   │   ├── test_llada.py
 │   │   └── test_dream.py
@@ -672,3 +672,32 @@ dLLM の双方向 attention には使えない。
 
 SDPA fallback では必ずコレーターが生成した `block_attention_mask` ([B, 1, L, L] bool) を使うこと。
 `block_attention_mask` は flash_attn が **利用できない** 場合のみコレーターが生成する (その場合は flash_attn を呼ばないので causal 問題は起きない)。
+
+### 12. 実 checkpoint E2E では `mask_token_id` を tokenizer ではなく model.config から補う必要があることがある
+
+`MaskedDiffusionDataCollator` は `tokenizer.mask_token_id` が `None` だと初期化時に失敗する。
+しかし実 checkpoint では、**model config には `mask_token_id` があるが tokenizer metadata には `mask_token` が定義されていない** ケースがある
+(例: `GSAI-ML/LLaDA-8B-Instruct`)。
+
+```python
+mask_token_id = tokenizer.mask_token_id or getattr(model.config, "mask_token_id", None)
+assert mask_token_id is not None
+
+collator = MaskedDiffusionDataCollator(
+    tokenizer=tokenizer,
+    mask_token_id=mask_token_id,
+    completion_only=True,
+)
+```
+
+加えて、completion-only ラベル境界を作るときは **prompt/full を同じ tokenization 設定で処理**すること。
+`tokenizer(prompt, add_special_tokens=False)` と `tokenizer(full_text)` を混在させると、checkpoint override 時に
+prompt/completion 境界がずれて `labels` の `-100` 範囲が壊れる可能性がある。
+
+```python
+prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
+completion_ids = tokenizer(completion, add_special_tokens=False)["input_ids"]
+input_ids = prompt_ids + completion_ids
+labels = [-100] * len(prompt_ids) + completion_ids
+```
+
