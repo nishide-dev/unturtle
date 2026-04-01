@@ -382,6 +382,56 @@ upstream unsloth のスタイル (`fix: description (#N)`) とも互換。emoji 
 
 ---
 
+## Codex (OpenAI) との連携
+
+### セットアップ
+
+プロジェクトルートに `AGENTS.md` を配置済み。Codex はこのファイルを自動的に読み込む。
+Claude Code 側のプラグインは `openai/codex-plugin-cc` を使用する:
+
+```bash
+# 初回確認
+/codex:setup
+# 認証
+! codex login
+```
+
+### 使用できるスキル一覧
+
+| スキル | 用途 | いつ使うか |
+|--------|------|-----------|
+| `/codex:review` | PR の非同期コードレビュー | PR を作成したとき、マージ前 |
+| `/codex:rescue` | バグ修正・調査の委譲 | 詰まったとき、複雑なデバッグ |
+| `/codex:setup` | Codex CLI の状態確認・認証 | 初回セットアップ・トラブル時 |
+
+### PR レビューフロー
+
+1. 実装 → コミット → PR 作成
+2. Codex にレビューを依頼:
+   ```
+   /codex:rescue
+   Please review PR #N on branch <branch> in /grouper/nishide.21066-1000003/projects/unturtle.
+   Focus on: reference implementation alignment (dev/repos/), CUDA guards, test coverage.
+   Report by priority: CRITICAL, HIGH, MEDIUM, LOW.
+   ```
+3. 指摘を修正してコミット・プッシュ
+4. 問題なければ Squash and merge
+
+### Codex へのプロンプトのコツ
+
+- 作業ディレクトリを明示: `working directory: /grouper/nishide.21066-1000003/projects/unturtle`
+- `git diff main...HEAD` でレビュー対象を特定させる
+- 参照実装チェックを明示的に依頼: `compare against dev/repos/d1/ and dev/repos/dllm/`
+- 優先度付きレポートを要求: `Report issues by priority: CRITICAL, HIGH, MEDIUM, LOW`
+- バックグラウンド実行は `--background` フラグで (長時間タスク向け)
+
+### PATH に注意
+
+Codex CLI は `~/.local/share/pnpm/codex` にインストールされている。
+セッション開始時に `source ~/.bashrc` で PATH を通すこと。
+
+---
+
 ## 検証結果
 
 ### テスト状況
