@@ -55,6 +55,7 @@ from unsloth.kernels.fast_lora import (
     apply_lora_o,
     apply_lora_qkv,
 )
+from unturtle.kernels.fast_lora import apply_lora_qkv_with_bias
 from unsloth.models._utils import prepare_model_for_kbit_training
 from unsloth.save import patch_saving_functions
 
@@ -177,12 +178,12 @@ def _patch_a2d_peft(model: Any, lora_dropout: float, bias: Literal["none", "all"
 def _patch_dream_peft(
     model: Any, lora_dropout: float, bias: Literal["none", "all", "lora_only"]
 ) -> tuple[int, int, int]:
-    """Patch Dream model with Triton LoRA kernels (o_proj + MLP only).
+    """Patch Dream model with Triton LoRA kernels.
 
-    Dream's q/k/v_proj have ``bias=True``, so ``apply_lora_qkv`` cannot be
-    used (the bias guard would skip them).  We patch o_proj and MLP only and
-    emit a one-time warning about QKV.  QKV support requires a future
-    ``apply_lora_qkv_with_bias`` kernel (Issue #10).
+    Dream's q/k/v_proj have ``bias=True``, so the standard ``apply_lora_qkv``
+    is replaced with ``apply_lora_qkv_with_bias`` (``LoRA_QKV_Bias`` kernel).
+    o_proj (bias=False) uses the standard ``apply_lora_o``.
+    MLP (gate/up/down, all bias=False) uses ``apply_lora_mlp_swiglu``.
 
     Layer layout: ``model.base_model.model.model.layers``
     (Dream wraps DreamBaseModel as ``self.model``, same depth as LLaMA).
@@ -190,13 +191,6 @@ def _patch_dream_peft(
     n_qkv = n_o = n_mlp = 0
 
     layers = model.base_model.model.model.layers
-
-    # Warn once that QKV is skipped for Dream
-    _warn_once(
-        "FastDiffusionModel (Dream): q/k/v_proj have bias=True — "
-        "Triton fused QKV kernel cannot be applied (see Issue #10). "
-        "LoRA on q/k/v_proj will use PEFT's default linear path."
-    )
 
     for layer in layers:
         self_attn = layer.self_attn if hasattr(layer, "self_attn") else None
@@ -207,10 +201,34 @@ def _patch_dream_peft(
         if self_attn is None:
             continue
 
-        # --- O projection (bias=False in Dream) ---
-        o_proj = self_attn.o_proj
+        # --- QKV: Dream has bias=True → use apply_lora_qkv_with_bias ---
+        q_proj = getattr(self_attn, "q_proj", None)
+        k_proj = getattr(self_attn, "k_proj", None)
+        v_proj = getattr(self_attn, "v_proj", None)
         if (
-            hasattr(o_proj, "lora_A")
+            q_proj is not None
+            and k_proj is not None
+            and v_proj is not None
+            and hasattr(q_proj, "lora_A")
+            and hasattr(k_proj, "lora_A")
+            and hasattr(v_proj, "lora_A")
+            and _no_lora_mag(q_proj)
+            and _no_lora_mag(k_proj)
+            and _no_lora_mag(v_proj)
+        ):
+            self_attn.apply_qkv = apply_lora_qkv_with_bias
+            n_qkv += 1
+        else:
+            _warn_once(
+                "FastDiffusionModel (Dream): cannot patch QKV with Triton kernel "
+                "(LoRA adapters not enabled or lora_magnitude_vector present)."
+            )
+
+        # --- O projection (bias=False in Dream) ---
+        o_proj = getattr(self_attn, "o_proj", None)
+        if (
+            o_proj is not None
+            and hasattr(o_proj, "lora_A")
             and _no_bias(o_proj)
             and _no_lora_mag(o_proj)
         ):
@@ -567,8 +585,7 @@ class FastDiffusionModel:
             n_layers = len(model.base_model.model.model.layers)
             _warn_once(
                 f"FastDiffusionModel (Dream) patched {n_layers} layers with "
-                f"{n_o} O layers and {n_mlp} MLP layers "
-                "(QKV skipped: bias=True, see Issue #10)."
+                f"{n_qkv} QKV layers (bias kernel), {n_o} O layers and {n_mlp} MLP layers."
             )
         elif model_type in _LLADA_MODEL_TYPES:
             n_qkv, n_o, n_mlp = _patch_llada_peft(model, lora_dropout, bias)

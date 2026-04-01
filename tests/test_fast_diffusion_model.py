@@ -312,6 +312,97 @@ def tiny_dream_model(tiny_dream_config):
     return model
 
 
+# ---------------------------------------------------------------------------
+# LoRA_QKV_Bias kernel unit tests
+# ---------------------------------------------------------------------------
+
+class TestLoRAQKVBias:
+    """Unit tests for the LoRA_QKV_Bias autograd function."""
+
+    def test_output_shapes(self):
+        """LoRA_QKV_Bias.apply returns three tensors with correct shapes."""
+        from unturtle.kernels.fast_lora import LoRA_QKV_Bias
+
+        B, L, D, R = 2, 8, 32, 4
+        X = torch.randn(B, L, D, requires_grad=True)
+        # Simulate (W, W_quant=None, A, B, S, bias) for Q, K, V
+        QW = torch.randn(D, D)
+        KW = torch.randn(D, D)
+        VW = torch.randn(D, D)
+        QA = torch.randn(R, D)
+        QB = torch.randn(D, R)
+        KA = torch.randn(R, D)
+        KB = torch.randn(D, R)
+        VA = torch.randn(R, D)
+        VB = torch.randn(D, R)
+        QBias = torch.randn(D)
+        KBias = torch.randn(D)
+        VBias = torch.randn(D)
+        scale = 1.0
+
+        Q, K, V = LoRA_QKV_Bias.apply(
+            X,
+            QW, None, QA, QB, scale, QBias,
+            KW, None, KA, KB, scale, KBias,
+            VW, None, VA, VB, scale, VBias,
+            False,
+        )
+        assert Q.shape == (B, L, D)
+        assert K.shape == (B, L, D)
+        assert V.shape == (B, L, D)
+
+    def test_bias_is_applied(self):
+        """Setting bias to a constant vector shifts all outputs by that vector."""
+        from unturtle.kernels.fast_lora import LoRA_QKV_Bias
+
+        B, L, D, R = 1, 4, 16, 2
+        X = torch.zeros(B, L, D)  # zero input → W*0 = 0
+        W = torch.eye(D)
+        A = torch.zeros(R, D)
+        Bmat = torch.zeros(D, R)
+        bias = torch.ones(D) * 5.0
+        scale = 1.0
+
+        Q, K, V = LoRA_QKV_Bias.apply(
+            X,
+            W, None, A, Bmat, scale, bias,
+            W, None, A, Bmat, scale, bias,
+            W, None, A, Bmat, scale, bias,
+            False,
+        )
+        # With zero input and eye weight: W@X=0, LoRA=0, so output = bias
+        assert torch.allclose(Q, torch.ones(B, L, D) * 5.0)
+        assert torch.allclose(K, torch.ones(B, L, D) * 5.0)
+        assert torch.allclose(V, torch.ones(B, L, D) * 5.0)
+
+    def test_backward_runs(self):
+        """Backward pass through LoRA_QKV_Bias should not raise."""
+        from unturtle.kernels.fast_lora import LoRA_QKV_Bias
+
+        B, L, D, R = 2, 4, 16, 2
+        X = torch.randn(B, L, D, requires_grad=True)
+        QW = torch.randn(D, D, requires_grad=False)
+        QA = torch.randn(R, D, requires_grad=True)
+        QB = torch.randn(D, R, requires_grad=True)
+        QBias = torch.randn(D, requires_grad=True)
+        scale = 1.0
+
+        Q, K, V = LoRA_QKV_Bias.apply(
+            X,
+            QW, None, QA, QB, scale, QBias,
+            QW, None, QA, QB, scale, QBias,
+            QW, None, QA, QB, scale, QBias,
+            False,
+        )
+        loss = (Q + K + V).sum()
+        loss.backward()
+
+        assert X.grad is not None
+        assert QA.grad is not None
+        assert QB.grad is not None
+        assert QBias.grad is not None
+
+
 class TestDreamPatching:
     def test_dream_peft_o_proj_patched(self, tiny_dream_model):
         """After get_peft_model, o_proj layers should have apply_o=apply_lora_o."""
@@ -331,10 +422,10 @@ class TestDreamPatching:
                 f"apply_o not patched: {layer.self_attn.apply_o}"
             )
 
-    def test_dream_peft_qkv_skipped(self, tiny_dream_model):
-        """QKV should NOT be patched for Dream (bias=True on q/k/v_proj)."""
-        from unsloth.kernels.fast_lora import apply_lora_qkv
+    def test_dream_peft_qkv_uses_bias_kernel(self, tiny_dream_model):
+        """Dream q/k/v_proj (bias=True) should use apply_lora_qkv_with_bias."""
         from unturtle.fast_diffusion_model import FastDiffusionModel
+        from unturtle.kernels.fast_lora import apply_lora_qkv_with_bias
 
         peft_model = FastDiffusionModel.get_peft_model(
             tiny_dream_model,
@@ -345,9 +436,8 @@ class TestDreamPatching:
             use_gradient_checkpointing=False,
         )
         for layer in peft_model.base_model.model.model.layers:
-            # apply_qkv should NOT be apply_lora_qkv (bias=True guard applies)
-            assert getattr(layer.self_attn, "apply_qkv", None) is not apply_lora_qkv, (
-                "apply_qkv should NOT be apply_lora_qkv for Dream (bias=True)"
+            assert layer.self_attn.apply_qkv is apply_lora_qkv_with_bias, (
+                f"apply_qkv not set to apply_lora_qkv_with_bias: {layer.self_attn.apply_qkv}"
             )
 
     def test_dream_peft_forward_runs(self, tiny_dream_model):

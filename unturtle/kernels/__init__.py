@@ -30,8 +30,14 @@ from .masked_diffusion_loss import (
     fast_masked_diffusion_loss,
     masked_diffusion_loss_from_timesteps,
 )
+from .fast_lora import (
+    LoRA_QKV_Bias,
+    apply_lora_qkv_with_bias,
+)
 
 __all__ = [
     "fast_masked_diffusion_loss",
     "masked_diffusion_loss_from_timesteps",
+    "LoRA_QKV_Bias",
+    "apply_lora_qkv_with_bias",
 ]
