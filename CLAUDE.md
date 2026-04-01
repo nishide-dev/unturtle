@@ -382,6 +382,56 @@ upstream unsloth のスタイル (`fix: description (#N)`) とも互換。emoji 
 
 ---
 
+## Codex (OpenAI) との連携
+
+### セットアップ
+
+プロジェクトルートに `AGENTS.md` を配置済み。Codex はこのファイルを自動的に読み込む。
+Claude Code 側のプラグインは `openai/codex-plugin-cc` を使用する:
+
+```bash
+# 初回確認
+/codex:setup
+# 認証
+! codex login
+```
+
+### 使用できるスキル一覧
+
+| スキル | 用途 | いつ使うか |
+|--------|------|-----------|
+| `/codex:review` | PR の非同期コードレビュー | PR を作成したとき、マージ前 |
+| `/codex:rescue` | バグ修正・調査の委譲 | 詰まったとき、複雑なデバッグ |
+| `/codex:setup` | Codex CLI の状態確認・認証 | 初回セットアップ・トラブル時 |
+
+### PR レビューフロー
+
+1. 実装 → コミット → PR 作成
+2. Codex にレビューを依頼:
+   ```
+   /codex:rescue
+   Please review PR #N on branch <branch> in /grouper/nishide.21066-1000003/projects/unturtle.
+   Focus on: reference implementation alignment (dev/repos/), CUDA guards, test coverage.
+   Report by priority: CRITICAL, HIGH, MEDIUM, LOW.
+   ```
+3. 指摘を修正してコミット・プッシュ
+4. 問題なければ Squash and merge
+
+### Codex へのプロンプトのコツ
+
+- 作業ディレクトリを明示: `working directory: /grouper/nishide.21066-1000003/projects/unturtle`
+- `git diff main...HEAD` でレビュー対象を特定させる
+- 参照実装チェックを明示的に依頼: `compare against dev/repos/d1/ and dev/repos/dllm/`
+- 優先度付きレポートを要求: `Report issues by priority: CRITICAL, HIGH, MEDIUM, LOW`
+- バックグラウンド実行は `--background` フラグで (長時間タスク向け)
+
+### PATH に注意
+
+Codex CLI は `~/.local/share/pnpm/codex` にインストールされている。
+セッション開始時に `source ~/.bashrc` で PATH を通すこと。
+
+---
+
 ## 検証結果
 
 ### テスト状況
@@ -395,7 +445,8 @@ upstream unsloth のスタイル (`fix: description (#N)`) とも互換。emoji 
 | A2D モデル (LLaMA/Qwen2/Qwen3 config・forward・AutoConfig登録) | `tests/models/test_a2d.py` | 15 | ✅ 全通過 |
 | LLaDA モデル (config・forward・backward) | `tests/models/test_llada.py` | 7 | ✅ 全通過 |
 | Dream モデル (config・forward・backward・generation utils) | `tests/models/test_dream.py` | 9 | ✅ 全通過 |
-| FastDiffusionModel (stubs/LoRA patch/bidirectional/save-load) | `tests/test_fast_diffusion_model.py` | 10 | ✅ 全通過 |
+| FastDiffusionModel (stubs/LoRA patch/bidirectional/save-load) | `tests/test_fast_diffusion_model.py` | 23 | ✅ 全通過 |
+| E2E パイプライン (CPU fast + GPU slow) | `tests/test_e2e_integration.py` | 4 | ✅ 全通過 (slow/GPU 2件は実 HF チェックポイントが必要) |
 
 インテグレーションテストの確認内容:
 - BERT (双方向 attention) / GPT-2 (causal) 両モデルで forward/backward 通過
@@ -444,3 +495,121 @@ GPU: **NVIDIA RTX 6000 Ada Generation** / mask_ratio=0.5 / warmup=10 iters=100
 - **Triton カーネルのテスト**: 数値正確性を `F.cross_entropy` との比較で必ず検証すること。
 - **互換性**: LoRA/QLoRA/4-bit 量子化は dLLM でも動作するよう維持する。
 - **ドキュメント更新**: フェーズ完了時に `dev/` の該当ファイルとこの `CLAUDE.md` を更新する。
+
+---
+
+## 開発中に発見したトリッキーな注意点
+
+### 1. Triton カーネルは `model.device == "cuda"` のときのみ適用する
+
+`_patch_a2d_peft` / `_patch_dream_peft` / `_patch_llada_peft` は、モデルパラメータが
+CUDA 上にある場合のみ Triton カーネルをパッチする。
+`torch.cuda.is_available()` ではなく `first_param.device.type == "cuda"` で判定すること。
+
+```python
+first_param = next(iter(model.parameters()), None)
+on_cuda = first_param is not None and first_param.device.type == "cuda"
+if not on_cuda:
+    return n_qkv, n_o, n_mlp  # Triton カーネルをスキップ
+```
+
+**理由**: `unsloth_zoo` は `UnslothSFTTrainer` 経由で学習時に activations を bf16 に変換する。
+モデルが float32 (CPU) のまま学習が始まると、bf16 activation × float32 LoRA weight の dtype
+ミスマッチが `matmul_lora` で発生する (`RuntimeError: BFloat16 != Float`)。
+
+### 2. `DiffusionTrainer` に `processing_class` を明示的に渡す
+
+`DiffusionTrainer` (= UnslothSFTTrainer) は `processing_class` が渡されないと
+`model.config.name_or_path` を使って HuggingFace Hub から `processor_config.json` を
+取得しようとする。テスト用のランダムモデルは `name_or_path = ""` でこの呼び出しが
+`OSError: Repo id must be alphanumeric` で失敗する。
+
+```python
+# NG: テスト用ランダムモデルでは name_or_path="" のため Hub 呼び出しが失敗
+trainer = DiffusionTrainer(model=peft_model, args=args, train_dataset=dataset)
+
+# OK: tokenizer を明示的に渡す
+trainer = DiffusionTrainer(model=peft_model, args=args, train_dataset=dataset,
+                            processing_class=tokenizer)
+```
+
+### 3. save/reload テストでは base model の weights を事前にスナップショットする
+
+`A2DLlamaLMHeadModel(cfg)` はランダム初期化なので、LoRA adapter を保存して別の
+インスタンスに再ロードしても base weights が異なり logits が一致しない。
+
+```python
+# PEFT ラップ前に base weights を保存しておく
+base_state_dict = {k: v.clone() for k, v in base_model.state_dict().items()}
+peft_model = FastDiffusionModel.get_peft_model(base_model, ...)
+
+# reload 時に同じ base weights を復元してから adapter を適用
+fresh_base = A2DLlamaLMHeadModel(cfg)
+fresh_base.load_state_dict(base_state_dict)
+reloaded = PeftModel.from_pretrained(fresh_base, adapter_dir)
+```
+
+### 4. LoRA の `lora_dropout` と `bias` が Triton カーネルを無効化する
+
+`lora_dropout != 0` または `bias != "none"` の場合、Triton LoRA カーネルは適用されない
+(PEFT デフォルトのフルパスにフォールバック)。このとき `_warn_once()` でログが出る。
+
+Dream モデルの `q/k/v_proj` は `bias=True` のため標準 `apply_lora_qkv` は使えず、
+専用の `apply_lora_qkv_with_bias` (`unturtle/kernels/fast_lora.py`) が必要。
+
+```
+[WARNING] FastDiffusionModel: cannot patch QKV with Triton kernel
+          (LoRA adapters not enabled or bias present — e.g. Dream q/k/v_proj).
+```
+
+### 5. GPU テストは `@pytest.mark.skipif(not cuda)` + `model.cuda()` で明示する
+
+Triton カーネルの適用を検証するテストはモデルを明示的に CUDA に移してから実行する:
+
+```python
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="Triton kernels require CUDA")
+def test_apply_qkv_patched_to_lora(self, tiny_model):
+    peft_model = FastDiffusionModel.get_peft_model(
+        tiny_model.cuda(),  # ← CUDA に移してからパッチ
+        r=4, target_modules=[...], lora_dropout=0,
+    )
+    for layer in peft_model.base_model.model.model.layers:
+        assert layer.self_attn.apply_qkv is apply_lora_qkv
+```
+
+### 6. `LoRA_QKV_Bias` の backward では `dBias = dOutput.sum(0)` を使う
+
+bias を含む LoRA カーネルのカスタム autograd 関数では、bias の勾配は
+`saved_tensors` から `dQ/dK/dV` を参照して `dQ.sum(0)` で求める:
+
+```python
+# unturtle/kernels/fast_lora.py: LoRA_QKV_Bias.backward
+dQ, dK, dV = ... # (通常の LoRA_QKV.backward と同じ)
+d_QBias = dQ.sum(0) if ctx.needs_input_grad[6] else None
+d_KBias = dK.sum(0) if ctx.needs_input_grad[12] else None
+d_VBias = dV.sum(0) if ctx.needs_input_grad[18] else None
+```
+
+### 7. `LLaDA` の PEFT パス解決に注意
+
+`LLaDAModelLM` は `LLaDAModel` を `self.model` に持つため、PEFT ラップ後のパスが
+1段深くなる:
+
+```
+PeftModel
+ └─ base_model (LoraModel)
+     └─ model (LLaDAModelLM)      ← LlaMA は ここが LlamaForCausalLM
+         └─ model (LLaDAModel)     ← LlaMA にはこの中間層がない
+             └─ transformer
+                 └─ blocks
+```
+
+`_patch_llada_peft` では両方のパスを試みるフォールバック付き解決が必要:
+
+```python
+inner = model.base_model.model
+if hasattr(inner, "model") and hasattr(inner.model, "transformer"):
+    transformer = inner.model.transformer
+elif hasattr(inner, "transformer"):
+    transformer = inner.transformer
+```
