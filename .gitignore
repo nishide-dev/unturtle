@@ -210,7 +210,7 @@ auth.db
 # Local working docs
 # CLAUDE.md is tracked in unturtle (removed upstream unsloth exclusion)
 **/claude.md
-**/AGENT.md
+# **/AGENT.md
 **/agent.md
 docs/canvas-lab-architecture.md
 log_rtx.txt

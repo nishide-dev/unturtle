@@ -35,6 +35,7 @@ from unturtle.diffusion import (  # noqa: F401
     DiffuGRPOConfig,
     LinearAlphaScheduler,
     MaskedDiffusionDataCollator,
+    PackedMaskedDiffusionDataCollator,
     make_alpha_scheduler,
 )
 from unturtle.kernels.masked_diffusion_loss import (  # noqa: F401

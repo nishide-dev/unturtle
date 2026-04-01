@@ -35,6 +35,7 @@ from .schedulers import (
     make_alpha_scheduler,
 )
 from .collator import MaskedDiffusionDataCollator
+from .packed_collator import PackedMaskedDiffusionDataCollator
 from .trainer import DiffusionTrainer, DiffusionTrainingArguments
 from .grpo_trainer import DiffuGRPOTrainer, DiffuGRPOConfig
 
@@ -44,6 +45,7 @@ __all__ = [
     "CosineAlphaScheduler",
     "make_alpha_scheduler",
     "MaskedDiffusionDataCollator",
+    "PackedMaskedDiffusionDataCollator",
     "DiffusionTrainer",
     "DiffusionTrainingArguments",
     "DiffuGRPOTrainer",
