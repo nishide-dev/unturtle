@@ -121,17 +121,34 @@ def A2DAttention_fast_forward(
         K, V = past_key_values.update(K, V, self.layer_idx, cache_kwargs)
 
     # Determine attention backend.
-    # When packing is active (seq_info present, no KV cache), the 4D attention_mask from
-    # A2DLlamaModel.forward is an all-ones padding mask — it is semantically irrelevant
-    # and would incorrectly force SDPA, bypassing the flash_varlen path.
-    # Give the varlen path priority over the presence of attention_mask.
-    # For the SDPA fallback (no flash_attn), use block_attention_mask from the collator
-    # if provided; otherwise run_attention will call build_sdpa_packed_attention_mask().
+    #
+    # Packed sequence handling (seq_info present, no KV cache):
+    #   The 4D attention_mask from A2DLlamaModel.forward is an all-ones padding mask for
+    #   packed inputs — it is semantically irrelevant and must not be passed to the kernel.
+    #
+    #   Flash varlen requires padding-free compacted Q/K/V (total_tokens, heads, dim).
+    #   The current batched tensors are [B, L] with padding, so feeding them to flash
+    #   varlen would produce metadata mismatches when any row is not fully packed.
+    #   Flash varlen support with proper compaction is deferred to a follow-up PR.
+    #
+    #   SDPA packed path: use block_attention_mask from the collator ([B, 1, L, L] bool).
+    #   Do NOT fall back to build_sdpa_packed_attention_mask() — that upstream helper
+    #   builds causal (upper-triangular) blocks, which is incorrect for bidirectional dLLM.
+    #   If block_attention_mask is absent (non-packed forward), use the standard mask path.
     use_varlen = seq_info is not None and past_key_values is None
 
     if use_varlen:
-        effective_mask = kwargs.get("block_attention_mask", None)
-        backend = select_attention_backend(use_varlen=True)
+        block_mask = kwargs.get("block_attention_mask", None)
+        if block_mask is not None:
+            # SDPA with pre-built bidirectional block-diagonal mask from the collator.
+            effective_mask = block_mask
+            backend = SDPA
+        else:
+            # block_attention_mask not provided (flash_attn available path):
+            # fall back to standard non-packed SDPA to avoid causal mask from
+            # build_sdpa_packed_attention_mask() and to avoid uncompacted varlen tensors.
+            effective_mask = None
+            backend = SDPA
     else:
         effective_mask = attention_mask
         backend = SDPA if attention_mask is not None else select_attention_backend(False)
