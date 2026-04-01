@@ -154,6 +154,39 @@ class TestPackedShape:
 
 
 # ---------------------------------------------------------------------------
+# packed_seq_lengths key
+# ---------------------------------------------------------------------------
+
+class TestPackedSeqLengths:
+    def test_key_present(self, collator):
+        """packed_seq_lengths must be present in the batch output."""
+        batch = collator(_make_samples(4, 8))
+        assert "packed_seq_lengths" in batch, "packed_seq_lengths key missing from batch"
+
+    def test_dtype_int32(self, collator):
+        """packed_seq_lengths must be int32 for Flash Attention varlen compatibility."""
+        batch = collator(_make_samples(4, 8))
+        assert batch["packed_seq_lengths"].dtype == torch.int32
+
+    def test_equals_cat_of_seq_lengths(self, collator):
+        """packed_seq_lengths must equal torch.cat(seq_lengths) — two consistent views."""
+        batch = collator(_make_samples(6, 5))
+        expected = torch.cat(batch["seq_lengths"])
+        assert torch.equal(batch["packed_seq_lengths"], expected)
+
+    def test_sum_equals_real_tokens(self, collator):
+        """Sum of packed_seq_lengths must equal total real (non-padding) tokens."""
+        samples = _make_samples(8, 4)
+        batch = collator(samples)
+        assert batch["packed_seq_lengths"].sum().item() == batch["attention_mask"].sum().item()
+
+    def test_all_positive(self, collator):
+        """All entries in packed_seq_lengths must be > 0 (no zero-length samples)."""
+        batch = collator(_make_samples(4, 8))
+        assert (batch["packed_seq_lengths"] > 0).all()
+
+
+# ---------------------------------------------------------------------------
 # Packing correctness
 # ---------------------------------------------------------------------------
 

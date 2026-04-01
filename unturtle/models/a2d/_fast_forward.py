@@ -120,9 +120,21 @@ def A2DAttention_fast_forward(
         cache_kwargs = {"cache_position": cache_position}
         K, V = past_key_values.update(K, V, self.layer_idx, cache_kwargs)
 
-    # Determine attention backend
+    # Determine attention backend.
+    # When packing is active (seq_info present, no KV cache), the 4D attention_mask from
+    # A2DLlamaModel.forward is an all-ones padding mask — it is semantically irrelevant
+    # and would incorrectly force SDPA, bypassing the flash_varlen path.
+    # Give the varlen path priority over the presence of attention_mask.
+    # For the SDPA fallback (no flash_attn), use block_attention_mask from the collator
+    # if provided; otherwise run_attention will call build_sdpa_packed_attention_mask().
     use_varlen = seq_info is not None and past_key_values is None
-    backend = SDPA if attention_mask is not None else select_attention_backend(use_varlen)
+
+    if use_varlen:
+        effective_mask = kwargs.get("block_attention_mask", None)
+        backend = select_attention_backend(use_varlen=True)
+    else:
+        effective_mask = attention_mask
+        backend = SDPA if attention_mask is not None else select_attention_backend(False)
 
     # Key difference from LlamaAttention: causal=False everywhere.
     # sdpa_kwargs prevents SDPA from auto-inferring causal when q_len == k_len.
@@ -142,7 +154,7 @@ def A2DAttention_fast_forward(
         head_dim=head_dim,
         requires_grad=hidden_states.requires_grad,
         seq_info=seq_info,
-        attention_mask=attention_mask,
+        attention_mask=effective_mask,
         causal_mask=None,
     )
 

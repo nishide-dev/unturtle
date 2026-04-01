@@ -213,3 +213,71 @@ class TestA2DBidirectional:
             f"{model_type}: position-0 output is identical after changing position {L-1}. "
             "Model appears to be causal — check that A2DModel.forward uses a non-causal mask."
         )
+
+
+# ---------------------------------------------------------------------------
+# Packed sequence integration
+# ---------------------------------------------------------------------------
+
+
+class TestA2DPackedForward:
+    """Verify that packed_seq_lengths propagates through A2DLlamaLMHeadModel forward."""
+
+    @pytest.fixture
+    def tiny_config(self):
+        from unturtle.models.a2d import A2DLlamaConfig
+        return A2DLlamaConfig(
+            vocab_size=200,
+            hidden_size=64,
+            intermediate_size=128,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=4,
+            max_position_embeddings=64,
+        )
+
+    def test_forward_with_packed_seq_lengths(self, tiny_config):
+        """Model forward must complete without error when packed_seq_lengths is passed."""
+        from unturtle.models.a2d import A2DLlamaLMHeadModel
+        from unturtle.fast_diffusion_model import _install_apply_stubs
+
+        model = A2DLlamaLMHeadModel(tiny_config)
+        _install_apply_stubs(model)
+        model.eval()
+
+        B, L = 2, 16
+        # Simulate two packed rows, each with 2 samples of length 8
+        input_ids = torch.randint(4, tiny_config.vocab_size, (B, L))
+        attention_mask = torch.ones(B, L, dtype=torch.long)
+        position_ids = torch.arange(L).unsqueeze(0).expand(B, -1)
+        # Each row contains 2 samples of length 8
+        packed_seq_lengths = torch.tensor([8, 8, 8, 8], dtype=torch.int32)
+
+        with torch.no_grad():
+            out = model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                packed_seq_lengths=packed_seq_lengths,
+            )
+
+        assert out.logits.shape == (B, L, tiny_config.vocab_size), (
+            f"Unexpected logits shape: {out.logits.shape}"
+        )
+
+    def test_get_packed_info_returns_non_none_when_key_present(self, tiny_config):
+        """get_packed_info_from_kwargs must return non-None when packed_seq_lengths is in kwargs."""
+        from unsloth.utils.packing import get_packed_info_from_kwargs
+
+        packed_seq_lengths = torch.tensor([8, 8], dtype=torch.int32)
+        kwargs = {"packed_seq_lengths": packed_seq_lengths}
+
+        result = get_packed_info_from_kwargs(kwargs, device=torch.device("cpu"))
+        assert result is not None, (
+            "get_packed_info_from_kwargs returned None — "
+            "packed_seq_lengths key is present but not recognized"
+        )
+        lengths, cu_seqlens, max_seqlen = result
+        assert lengths.tolist() == [8, 8]
+        assert cu_seqlens.tolist() == [0, 8, 16]
+        assert max_seqlen == 8

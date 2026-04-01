@@ -196,11 +196,12 @@ class PackedMaskedDiffusionDataCollator:
           ``labels``          – [B, max_seq_length] clean ids at masked pos, -100 else
           ``attention_mask``  – [B, max_seq_length] 1 at real tokens, 0 at pad
           ``diffusion_mask``  – [B, max_seq_length] bool, True at masked positions
-          ``timesteps``         – [B] mean ``t`` per row (DiffusionTrainer compatible)
-          ``cu_seqlens``        – [B, ?] int32 cumulative seq lengths (Flash Attn)
-          ``seq_lengths``       – [B, ?] int32 individual sample lengths
-          ``sample_timesteps``  – list[Tensor] per-sample ``t`` values per row
-          ``position_ids``      – [B, max_seq_length] 0-based position within sample
+          ``timesteps``           – [B] mean ``t`` per row (DiffusionTrainer compatible)
+          ``packed_seq_lengths``  – [total_samples] int32 flat sample lengths (Flash Attn varlen)
+          ``cu_seqlens``          – list[Tensor] per-batch int32 cumulative seq lengths
+          ``seq_lengths``         – list[Tensor] per-batch int32 individual sample lengths
+          ``sample_timesteps``    – list[Tensor] per-sample ``t`` values per row
+          ``position_ids``        – [B, max_seq_length] 0-based position within sample
         """
         # 1. Prepare each sample
         prepared: list[tuple[list[int], list[int], list[bool]]] = []
@@ -292,6 +293,11 @@ class PackedMaskedDiffusionDataCollator:
             [t.mean() for t in all_timesteps]
         )  # [B], float32
 
+        # Build flat packed_seq_lengths tensor for get_packed_info_from_kwargs().
+        # Concatenates all per-batch seq_lengths into a single 1-D int32 tensor.
+        # Example: B=2, row0=[6,6], row1=[12] → packed_seq_lengths=[6,6,12]
+        packed_seq_lengths = torch.cat(all_seq_lengths)  # [total_samples_in_batch], int32
+
         batch: dict[str, Any] = {
             "input_ids": out_input_ids,
             "labels": out_labels,
@@ -299,6 +305,7 @@ class PackedMaskedDiffusionDataCollator:
             "diffusion_mask": out_diffusion_mask,
             "position_ids": out_position_ids,
             "timesteps": dense_timesteps,          # [B] — DiffusionTrainer compatible
+            "packed_seq_lengths": packed_seq_lengths,  # [total_samples] — for A2DAttention_fast_forward
             "cu_seqlens": all_cu_seqlens,          # list[Tensor], one per batch elem
             "seq_lengths": all_seq_lengths,        # list[Tensor], one per batch elem
             "sample_timesteps": all_timesteps,     # list[Tensor] — per-sample granularity
