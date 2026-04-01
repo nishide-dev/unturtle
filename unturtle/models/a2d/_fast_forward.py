@@ -218,7 +218,7 @@ def A2DAttention_fast_forward(
 
     if use_varlen:
         seq_lengths_list = kwargs.get("seq_lengths", None)
-        if HAS_FLASH_ATTENTION and seq_lengths_list is not None:
+        if HAS_FLASH_ATTENTION and Q.device.type == "cuda" and seq_lengths_list is not None:
             # Flash varlen path: compact padding tokens out, call flash_attn_varlen_func
             # directly (bypasses run_attention which does uncompacted reshape).
             A = _flash_varlen_packed(
