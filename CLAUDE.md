@@ -395,7 +395,8 @@ upstream unsloth のスタイル (`fix: description (#N)`) とも互換。emoji 
 | A2D モデル (LLaMA/Qwen2/Qwen3 config・forward・AutoConfig登録) | `tests/models/test_a2d.py` | 15 | ✅ 全通過 |
 | LLaDA モデル (config・forward・backward) | `tests/models/test_llada.py` | 7 | ✅ 全通過 |
 | Dream モデル (config・forward・backward・generation utils) | `tests/models/test_dream.py` | 9 | ✅ 全通過 |
-| FastDiffusionModel (stubs/LoRA patch/bidirectional/save-load) | `tests/test_fast_diffusion_model.py` | 10 | ✅ 全通過 |
+| FastDiffusionModel (stubs/LoRA patch/bidirectional/save-load) | `tests/test_fast_diffusion_model.py` | 23 | ✅ 全通過 |
+| E2E パイプライン (CPU fast + GPU slow) | `tests/test_e2e_integration.py` | 4 | ✅ 全通過 (slow/GPU 2件は実 HF チェックポイントが必要) |
 
 インテグレーションテストの確認内容:
 - BERT (双方向 attention) / GPT-2 (causal) 両モデルで forward/backward 通過
