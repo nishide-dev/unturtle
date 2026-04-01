@@ -342,3 +342,82 @@ class TestMaskedDiffusionDataCollator:
 
         with pytest.raises(ValueError, match="mask_token_id"):
             self.MaskedDiffusionDataCollator(tokenizer=NoMaskTok())
+
+
+# ---------------------------------------------------------------------------
+# fused_masked_diffusion_loss
+# ---------------------------------------------------------------------------
+
+
+class TestFusedMaskedDiffusionLoss:
+    """Verify fused_masked_diffusion_loss matches fast_masked_diffusion_loss exactly."""
+
+    @pytest.fixture(autouse=True)
+    def _import(self):
+        from unturtle.kernels.fused_masked_diffusion_loss import fused_masked_diffusion_loss
+        from unturtle import fast_masked_diffusion_loss
+        self.fused = fused_masked_diffusion_loss
+        self.reference = fast_masked_diffusion_loss
+
+    def _run(self, device: str, B=2, L=16, V=500):
+        torch.manual_seed(42)
+        logits = torch.randn(B, L, V, device=device)
+        labels = torch.randint(0, V, (B, L), device=device)
+        mask = (torch.rand(B, L) > 0.4).to(device)
+
+        ref = self.reference(logits, labels, mask)
+        got = self.fused(logits, labels, mask)
+        assert torch.allclose(ref, got, atol=1e-5), (
+            f"[{device}] uniform: ref={ref.item():.6f} got={got.item():.6f}"
+        )
+
+    def test_matches_fast_masked_cpu(self):
+        self._run("cpu")
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_matches_fast_masked_cuda(self):
+        self._run("cuda")
+
+    def test_no_clone_of_labels(self):
+        """labels tensor must not be mutated by fused_masked_diffusion_loss."""
+        B, L, V = 2, 8, 50
+        torch.manual_seed(0)
+        logits = torch.randn(B, L, V)
+        labels = torch.randint(0, V, (B, L))
+        labels_before = labels.clone()
+        mask = torch.rand(B, L) > 0.5
+
+        self.fused(logits, labels, mask)
+
+        assert torch.equal(labels, labels_before), (
+            "fused_masked_diffusion_loss must not mutate the labels tensor"
+        )
+
+    def test_timestep_weights_match(self):
+        """With per-sequence weights, fused result matches non-fused."""
+        torch.manual_seed(5)
+        B, L, V = 3, 12, 200
+        logits = torch.randn(B, L, V)
+        labels = torch.randint(0, V, (B, L))
+        mask = torch.rand(B, L) > 0.5
+        weights = torch.rand(B) + 0.1  # (B,) positive
+
+        ref = self.reference(logits, labels, mask, loss_weights=weights)
+        got = self.fused(logits, labels, mask, loss_weights=weights)
+        assert torch.allclose(ref, got, atol=1e-5), (
+            f"weights: ref={ref.item():.6f} got={got.item():.6f}"
+        )
+
+    def test_gradient_flows(self):
+        """Backward pass must produce non-zero finite gradients."""
+        B, L, V = 2, 6, 50
+        logits = torch.randn(B, L, V, requires_grad=True)
+        labels = torch.randint(0, V, (B, L))
+        mask = torch.rand(B, L) > 0.5
+
+        loss = self.fused(logits, labels, mask)
+        loss.backward()
+
+        assert logits.grad is not None
+        assert torch.isfinite(logits.grad).all(), "Non-finite gradients"
+        assert logits.grad.abs().sum() > 0, "All-zero gradients"

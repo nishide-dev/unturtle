@@ -30,8 +30,7 @@ References:
 """
 
 import torch
-import torch.nn.functional as F
-from unsloth.kernels.cross_entropy_loss import Fast_CrossEntropyLoss
+from unturtle.kernels.fused_masked_diffusion_loss import fused_masked_diffusion_loss
 
 
 def fast_masked_diffusion_loss(
@@ -72,46 +71,16 @@ def fast_masked_diffusion_loss(
     assert labels.shape == (B, L), f"labels shape mismatch: {labels.shape}"
     assert diffusion_mask.shape == (B, L), f"diffusion_mask shape mismatch: {diffusion_mask.shape}"
 
-    # --- mask unmasked positions so the kernel ignores them ---
-    # Clone to avoid mutating the caller's tensor.
-    masked_labels = labels.clone()
-    masked_labels[~diffusion_mask] = -100  # ignored by loss kernels
-
-    # --- run CE kernel (Triton on CUDA, PyTorch fallback on CPU) ---
-    if logits.device.type == "cuda":
-        per_token_loss = Fast_CrossEntropyLoss.apply(
-            logits.view(B * L, V),
-            masked_labels.view(-1),
-            logit_softcapping,
-            logit_scaling,
-        )  # shape: [B*L], float32
-    else:
-        per_token_loss = F.cross_entropy(
-            logits.view(B * L, V),
-            masked_labels.view(-1),
-            ignore_index=-100,
-            reduction="none",
-        ).float()  # shape: [B*L]
-
-    n_masked = diffusion_mask.sum().clamp_min(1)
-
-    if loss_weights is None:
-        # Uniform weighting (LLaDA / MDLM with loss_weight_type="uniform")
-        return per_token_loss.sum() / n_masked
-
-    # --- apply per-token weights ---
-    per_token_loss = per_token_loss.view(B, L)
-
-    if loss_weights.shape == (B,):
-        # Per-sequence weight (e.g. 1/t from d1): broadcast over sequence length
-        loss_weights = loss_weights.unsqueeze(1)  # [B, 1]
-
-    assert loss_weights.shape == (B, L) or loss_weights.shape == (B, 1), (
-        f"loss_weights must be (B,), (B,1) or (B,L), got {loss_weights.shape}"
+    # Delegate to fused_masked_diffusion_loss which eliminates the labels.clone()
+    # overhead via a single torch.where call (no separate scatter write).
+    return fused_masked_diffusion_loss(
+        logits=logits,
+        labels=labels,
+        diffusion_mask=diffusion_mask,
+        loss_weights=loss_weights,
+        logit_softcapping=logit_softcapping,
+        logit_scaling=logit_scaling,
     )
-
-    weighted = per_token_loss * loss_weights.to(per_token_loss.dtype)
-    return weighted.sum() / n_masked
 
 
 def masked_diffusion_loss_from_timesteps(

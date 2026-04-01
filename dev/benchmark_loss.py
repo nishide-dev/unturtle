@@ -30,7 +30,8 @@ from dataclasses import dataclass
 import torch
 import torch.nn.functional as F
 
-from unsloth.kernels.masked_diffusion_loss import fast_masked_diffusion_loss
+from unturtle.kernels.masked_diffusion_loss import fast_masked_diffusion_loss
+from unturtle.kernels.fused_masked_diffusion_loss import fused_masked_diffusion_loss
 
 
 # ---------------------------------------------------------------------------
@@ -181,12 +182,20 @@ def run_benchmarks() -> list[BenchResult]:
         )
         results.append(BenchResult("PyTorch masked", B, L, V, py_ms, py_mem, py_loss))
 
+        # --- Fused (unturtle Phase D4) ---
+        gc.collect(); torch.cuda.empty_cache()
+        fused_ms, fused_mem, fused_loss = _bench_fn(
+            fused_masked_diffusion_loss, logits, labels, mask, WARMUP, ITERS
+        )
+        results.append(BenchResult("Fused (unturtle D4)", B, L, V, fused_ms, fused_mem, fused_loss))
+
         print(
             f"[B={B:2d} L={L:4d} V={V:6d}]  "
             f"Triton {tri_ms:6.2f}ms  "
             f"d1-ref {d1_ms:6.2f}ms (x{d1_ms/tri_ms:.2f})  "
             f"PyTorch {py_ms:6.2f}ms (x{py_ms/tri_ms:.2f})  "
-            f"| mem Triton={tri_mem:.1f}MB d1={d1_mem:.1f}MB PyTorch={py_mem:.1f}MB"
+            f"Fused {fused_ms:6.2f}ms (x{fused_ms/tri_ms:.2f})  "
+            f"| mem Triton={tri_mem:.1f}MB d1={d1_mem:.1f}MB Fused={fused_mem:.1f}MB"
         )
 
     return results
@@ -201,6 +210,7 @@ def _md_table(results: list[BenchResult]) -> str:
     for tri in it:
         d1 = next(it)
         py = next(it)
+        fused = next(it)
         rows.append(
             f"| {tri.B} | {tri.L} | {tri.V:,} | **Triton (unturtle)** |"
             f" {tri.time_ms:7.2f} | {tri.mem_mb:6.1f} |"
@@ -214,6 +224,12 @@ def _md_table(results: list[BenchResult]) -> str:
         rows.append(
             f"| | | | PyTorch masked |"
             f" {py.time_ms:7.2f} | {py.mem_mb:6.1f} | — | — |"
+        )
+        rows.append(
+            f"| | | | **Fused (unturtle D4)** |"
+            f" {fused.time_ms:7.2f} | {fused.mem_mb:6.1f} |"
+            f" **{d1.time_ms/fused.time_ms:.2f}x** |"
+            f" **{py.time_ms/fused.time_ms:.2f}x** |"
         )
     return "\n".join(rows)
 
