@@ -1156,6 +1156,13 @@ homepage = "https://unsloth.ai"
 documentation = "https://unsloth.ai/docs"
 repository = "https://github.com/unslothai/unsloth"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow (require GPU or real HF checkpoints, deselect with '-m not slow')",
+    "gpu: marks tests that require a CUDA GPU",
+]
+
 [tool.ruff]
 target-version = "py311"
 force-exclude = true

@@ -103,11 +103,16 @@ def _patch_a2d_peft(model: Any, lora_dropout: float, bias: Literal["none", "all"
     # Standard path: PeftModel → base_model → model → model.layers
     layers = model.base_model.model.model.layers
 
-    for layer in layers:
-        # --- fast attention (bidirectional) ---
-        layer.self_attn.forward = types.MethodType(A2DAttention_fast_forward, layer.self_attn)
+    # Triton kernels and flash attention require the model to be on CUDA.
+    first_param = next(iter(model.parameters()), None)
+    on_cuda = first_param is not None and first_param.device.type == "cuda"
 
-        if lora_dropout != 0 or bias != "none":
+    for layer in layers:
+        # --- fast attention (bidirectional) — GPU only ---
+        if on_cuda:
+            layer.self_attn.forward = types.MethodType(A2DAttention_fast_forward, layer.self_attn)
+
+        if not on_cuda or lora_dropout != 0 or bias != "none":
             # Triton custom autograd does not support dropout or bias in LoRA
             continue
 
@@ -189,6 +194,11 @@ def _patch_dream_peft(
     (Dream wraps DreamBaseModel as ``self.model``, same depth as LLaMA).
     """
     n_qkv = n_o = n_mlp = 0
+
+    # Triton kernels require the model to be on CUDA.
+    first_param = next(iter(model.parameters()), None)
+    if first_param is None or first_param.device.type != "cuda":
+        return n_qkv, n_o, n_mlp
 
     layers = model.base_model.model.model.layers
 
@@ -277,6 +287,11 @@ def _patch_llada_peft(
     from unturtle.models.llada.modeling_llada import LLaDALlamaBlock
 
     n_qkv = n_o = n_mlp = 0
+
+    # Triton kernels require the model to be on CUDA.
+    first_param = next(iter(model.parameters()), None)
+    if first_param is None or first_param.device.type != "cuda":
+        return n_qkv, n_o, n_mlp
 
     # LLaDAModelLM wraps LLaDAModel in self.model, so the path differs:
     # PeftModel → base_model → model (LLaDAModelLM) → model (LLaDAModel) → transformer
@@ -630,6 +645,11 @@ class FastDiffusionModel:
             bias=bias,
             **kwargs,
         )
+
+        # Install apply_qkv / apply_o stubs before PEFT wrapping so that
+        # fast-forward functions can dispatch even when the model was not
+        # loaded via from_pretrained (e.g. tests using random-weight models).
+        _install_apply_stubs(model)
 
         model = prepare_model_for_kbit_training(
             model,
