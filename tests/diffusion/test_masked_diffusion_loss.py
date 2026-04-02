@@ -28,7 +28,11 @@ def _reference_masked_ce(
     diffusion_mask: torch.Tensor,
     loss_weights: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Pure-PyTorch reference implementation."""
+    """Pure-PyTorch reference implementation.
+
+    Normalizes by n_maskable = (labels != -100).sum(), matching the MDLM reference
+    (dev/repos/dllm/dllm/core/trainers/mdlm.py L202) and d1 SFT reference.
+    """
     B, L, V = logits.shape
     masked_labels = labels.clone()
     masked_labels[~diffusion_mask] = -100
@@ -40,15 +44,16 @@ def _reference_masked_ce(
         reduction="none",
     ).view(B, L)  # 0 at unmasked positions
 
-    n_masked = diffusion_mask.sum().clamp_min(1)
+    # Normalize by maskable tokens (labels != -100), not by actually masked tokens.
+    n_maskable = (labels != -100).sum().clamp_min(1)
 
     if loss_weights is None:
-        return per_token.sum() / n_masked
+        return per_token.sum() / n_maskable
 
     if loss_weights.dim() == 1:
         loss_weights = loss_weights.unsqueeze(1)
 
-    return (per_token * loss_weights).sum() / n_masked
+    return (per_token * loss_weights).sum() / n_maskable
 
 
 # ---------------------------------------------------------------------------

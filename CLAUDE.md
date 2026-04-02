@@ -744,22 +744,24 @@ if load_in_4bit and not is_on_cpu:
         load_kwargs["device_map"] = "auto"
 ```
 
-### 15. 損失の正規化分母: unturtle は `n_masked`、MDLM 参照実装は `n_maskable`
+### 15. 損失の正規化分母: `n_maskable` (MDLM/d1 参照実装に合わせる)
 
-`fused_masked_diffusion_loss` は損失を **実際にマスクされたトークン数 (`n_masked`)** で正規化する。
-MDLM 参照実装 (`dev/repos/dllm/dllm/core/trainers/mdlm.py`, `loss_norm_type="token"`) は
-**マスク可能なトークン数 (`n_maskable = labels != -100` の合計)** で正規化する。
+`fused_masked_diffusion_loss` は損失を **マスク可能なトークン数 (`n_maskable = labels != -100`)** で正規化する。
+これは MDLM 参照実装および d1 SFT と一致する。
 
 ```python
-# unturtle (fused_masked_diffusion_loss.py)
-n_masked = diffusion_mask.sum().clamp_min(1)   # 実際にマスクされたトークン
-loss = per_token_loss.sum() / n_masked
+# unturtle (fused_masked_diffusion_loss.py) — MDLM/d1 に合わせた実装
+n_maskable = (flat_labels != -100).sum().clamp_min(1)
+loss = per_token_loss.sum() / n_maskable
 
 # MDLM reference (mdlm.py L202)
-token_nll /= maskable_mask.sum().clamp_min(1)  # マスク可能なトークン (labels != -100)
+token_nll /= maskable_mask.sum().clamp_min(1)  # maskable_mask = labels != -100
+
+# d1 SFT reference (sft_trainer.py L25)
+loss = loss.sum() / (inputs["input_ids"].numel() - num_prompt_tokens)
 ```
 
-**設計意図**: `n_masked` で正規化すると mask_rate が変化しても損失スケールが安定し、
-learning rate のチューニングが容易になる。ただし低 mask_rate のとき MDLM 参照より損失値が
-数値的に大きくなる。LR を MDLM 参照実装から直接移植する場合は注意。
+**注意**: 以前は `n_masked = diffusion_mask.sum()` (実際にマスクされたトークン数) で割っていた。
+mask_rate=0.15 のとき旧実装は MDLM より約 6.7 倍大きい loss 値を出していた。
+`n_maskable` に変更したことで LR を参照実装からそのまま移植できるようになった。
 

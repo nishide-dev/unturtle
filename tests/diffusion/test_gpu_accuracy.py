@@ -51,14 +51,15 @@ def _reference_loss(
         reduction="none",
     ).view(B, L)
 
-    n_masked = diffusion_mask.sum().clamp_min(1)
+    # Normalize by n_maskable (labels != -100), matching MDLM/d1 reference.
+    n_maskable = (labels != -100).sum().clamp_min(1)
 
     if loss_weights is None:
-        return per_token.sum() / n_masked
+        return per_token.sum() / n_maskable
 
     if loss_weights.shape == (B,):
         loss_weights = loss_weights.unsqueeze(1)
-    return (per_token * loss_weights).sum() / n_masked
+    return (per_token * loss_weights).sum() / n_maskable
 
 
 # ---------------------------------------------------------------------------
