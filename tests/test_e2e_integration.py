@@ -12,30 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""End-to-end integration tests for FastDiffusionModel + DiffusionTrainer.
+"""Fast (CPU, no downloads) end-to-end integration tests for FastDiffusionModel + DiffusionTrainer.
 
-Two test tiers:
+Uses a tiny random-weight model to verify the full
+``get_peft_model → DiffusionTrainer`` pipeline runs and loss is finite.
+Always runs in CI — no GPU or HF download required.
 
-* **Fast (CPU, no downloads)**: tiny random-weight model, verifies the full
-  ``from_pretrained → get_peft_model → DiffusionTrainer`` pipeline runs and
-  loss decreases after a few gradient steps.  Always runs in CI.
+For slow E2E tests with real HuggingFace checkpoints, see::
 
-* **Slow (GPU + real checkpoint)**: downloads a small HF checkpoint and runs
-  the same pipeline on GPU.  Skipped by default; enable with
-  ``pytest -m slow`` or ``pytest -m gpu``.
-
-Run fast tests only (default)::
-
-    pytest tests/test_e2e_integration.py
-
-Run all including slow/GPU tests::
-
-    pytest tests/test_e2e_integration.py -m slow
+    tests/test_e2e_real_checkpoint.py  (run with ``pytest -m slow``)
 """
 
 from __future__ import annotations
 
-import os
 import warnings
 
 import pytest
@@ -248,140 +237,4 @@ class TestE2EFastDiffusionTrainer:
         assert logits_before.shape == logits_after.shape
         assert torch.allclose(logits_before, logits_after, atol=1e-5), (
             "Forward outputs diverged after save/reload of LoRA adapter."
-        )
-
-
-# ---------------------------------------------------------------------------
-# Slow E2E: real HF checkpoint (GPU required)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.slow
-@pytest.mark.gpu
-class TestE2ERealCheckpoint:
-    """E2E test with a real HuggingFace checkpoint.
-
-    Requires:
-    - A CUDA GPU
-    - ``HF_TOKEN`` env var (for gated models) or public model access
-    - Sufficient disk space for the checkpoint
-
-    Run with::
-
-        pytest tests/test_e2e_integration.py -m slow -v
-    """
-
-    # Default to the canonical LLaDA-8B checkpoint. Override with the env var
-    # to use a smaller/different model without editing the test file.
-    # Note: this is intentionally an 8B model — the slow test validates the
-    # full production pipeline rather than a toy setup.
-    CHECKPOINT = os.environ.get("UNTURTLE_TEST_CHECKPOINT", "GSAI-ML/LLaDA-8B-Instruct")
-
-    @pytest.fixture(autouse=True)
-    def require_cuda(self):
-        if not torch.cuda.is_available():
-            pytest.skip("CUDA GPU required for slow E2E test")
-
-    def test_from_pretrained_loads(self, tmp_path):
-        """FastDiffusionModel.from_pretrained loads a real checkpoint."""
-        from unturtle.fast_diffusion_model import FastDiffusionModel
-
-        model, tokenizer = FastDiffusionModel.from_pretrained(
-            self.CHECKPOINT,
-            max_seq_length=512,
-            load_in_4bit=True,
-            trust_remote_code=True,
-        )
-        assert model is not None
-        assert tokenizer is not None
-        assert model.max_seq_length == 512
-
-    def test_peft_and_loss_decreases(self, tmp_path):
-        """LoRA + DiffusionTrainer with a real checkpoint: loss should decrease."""
-        from unturtle.diffusion import (
-            DiffusionTrainer,
-            DiffusionTrainingArguments,
-            MaskedDiffusionDataCollator,
-        )
-        from unturtle.fast_diffusion_model import FastDiffusionModel
-
-        model, tokenizer = FastDiffusionModel.from_pretrained(
-            self.CHECKPOINT,
-            max_seq_length=256,
-            load_in_4bit=True,
-            trust_remote_code=True,
-        )
-        assert tokenizer is not None, "Tokenizer required for real checkpoint test"
-
-        peft_model = FastDiffusionModel.get_peft_model(
-            model,
-            r=8,
-            target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
-                            "gate_proj", "up_proj", "down_proj"],
-            lora_alpha=16,
-            lora_dropout=0,
-            use_gradient_checkpointing="unsloth",
-        )
-
-        # Tiny 10-sample dataset
-        prompts = ["The capital of France is"] * 10
-        completions = [" Paris."] * 10
-
-        full_texts = [p + c for p, c in zip(prompts, completions)]
-        tokenized = tokenizer(full_texts, padding=True, truncation=True, max_length=64)
-
-        # Build labels: only completion tokens are maskable
-        dataset = []
-        for i in range(len(full_texts)):
-            prompt_len = len(tokenizer(prompts[i], add_special_tokens=False)["input_ids"])
-            input_ids = tokenized["input_ids"][i]
-            labels = [-100] * prompt_len + input_ids[prompt_len:]
-            dataset.append({
-                "input_ids": input_ids,
-                "labels": labels,
-                "attention_mask": tokenized["attention_mask"][i],
-            })
-
-        collator = MaskedDiffusionDataCollator(
-            tokenizer=tokenizer,
-            completion_only=True,
-        )
-
-        training_args = DiffusionTrainingArguments(
-            output_dir=str(tmp_path / "checkpoints"),
-            num_train_epochs=1,
-            max_steps=3,
-            per_device_train_batch_size=2,
-            logging_steps=1,
-            save_steps=100,
-            fp16=True,
-            dataloader_drop_last=True,
-            remove_unused_columns=False,
-            report_to="none",
-        )
-
-        losses = []
-        original_log = DiffusionTrainer.log
-
-        def capturing_log(self_inner, logs, **kw):
-            if "loss" in logs:
-                losses.append(logs["loss"])
-            original_log(self_inner, logs, **kw)
-
-        DiffusionTrainer.log = capturing_log
-        try:
-            trainer = DiffusionTrainer(
-                model=peft_model,
-                args=training_args,
-                train_dataset=dataset,
-                data_collator=collator,
-                processing_class=tokenizer,
-            )
-            trainer.train()
-        finally:
-            DiffusionTrainer.log = original_log
-
-        assert len(losses) >= 2, "Need at least 2 logged steps to compare loss"
-        assert losses[-1] < losses[0] or abs(losses[-1] - losses[0]) < 0.5, (
-            f"Loss did not decrease: {losses}"
         )

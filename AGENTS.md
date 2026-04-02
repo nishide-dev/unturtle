@@ -43,7 +43,8 @@ tests/
 ├── models/                   # A2D / LLaDA / Dream model tests (39 tests)
 │   └── test_a2d.py           # includes packed forward + flash varlen compaction (23 tests)
 ├── test_fast_diffusion_model.py  # LoRA patching + save/load (23 tests)
-└── test_e2e_integration.py   # full pipeline CPU + GPU slow tests (4 tests)
+├── test_e2e_integration.py   # fast CPU E2E tests (2 tests)
+└── test_e2e_real_checkpoint.py  # slow GPU + real-checkpoint E2E tests (4 tests)
 dev/
 ├── repos/                    # reference implementations (gitignore'd, clone manually)
 │   ├── d1/                   # dllm-reasoning/d1
@@ -61,10 +62,10 @@ dev/
 # Activate virtualenv first
 source .venv/bin/activate
 
-# Fast CPU tests (required to pass before every PR merge)
-python -m pytest tests/diffusion/ tests/models/ tests/test_fast_diffusion_model.py tests/test_e2e_integration.py -v
+# Fast tests only (required to pass before every PR merge)
+python -m pytest tests/diffusion/ tests/models/ tests/test_fast_diffusion_model.py tests/test_e2e_integration.py -m "not slow" -v
 
-# Full suite including E2E (slow GPU tests require CUDA + real HF checkpoints)
+# Full suite including slow E2E (GPU + real HF checkpoints required)
 python -m pytest tests/ -v
 
 # Race-condition check (if modifying shared state)
@@ -202,6 +203,8 @@ These rules apply to `_patch_a2d_peft`, `_patch_dream_peft`, `_patch_llada_peft`
 | Flash varlen without CUDA guard | `flash_attn_varlen_func` crashes on CPU even when `HAS_FLASH_ATTENTION=True` | Check `Q.device.type == "cuda"` before calling flash varlen — `HAS_FLASH_ATTENTION` only means the package is installed |
 | Flash varlen compaction requires prefix-contiguous layout | Metadata mismatch / wrong attention output | `PackedMaskedDiffusionDataCollator` places real tokens at `[0:sum(seq_lengths[b])]` with padding at end — compaction slices `Q_t[b, :real_counts[b]]`; never use uncompacted `[B, L]` tensors directly with `flash_attn_varlen_func` |
 | `build_sdpa_packed_attention_mask()` is causal | Packed SDPA silently reintroduces causal masking for dLLM | Never use the upstream `build_sdpa_packed_attention_mask()` for A2D/packed path — it builds upper-triangular causal blocks; use `block_attention_mask` from collator or `effective_mask=None` |
+| real-checkpoint tokenizer may lack `mask_token_id` | `MaskedDiffusionDataCollator` init fails even though the model supports masking | Use `tokenizer.mask_token_id or model.config.mask_token_id` and pass `mask_token_id=` explicitly in slow E2E tests |
+| prompt/full tokenization mismatch in completion-only datasets | prompt tokens become maskable or completion boundary shifts for override checkpoints | Build prompt/completion ids with the same tokenizer settings (e.g. both `add_special_tokens=False`) and concatenate them explicitly |
 
 ---
 
