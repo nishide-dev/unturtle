@@ -110,6 +110,14 @@ def fused_masked_diffusion_loss(
             reduction="none",
         ).float()  # [B*L]
 
+    # Normalize by the number of *actually masked* tokens (n_masked), not maskable tokens (n_maskable).
+    # MDLM reference (dev/repos/dllm/dllm/core/trainers/mdlm.py, loss_norm_type="token") normalizes
+    # by maskable_mask.sum() (i.e. labels != -100). unturtle normalizes by diffusion_mask.sum()
+    # (tokens that were masked for this training step).
+    #
+    # Design rationale: normalizing by n_masked makes the loss scale consistent regardless of
+    # mask_rate, which simplifies hyperparameter tuning when mask_rate varies during training.
+    # Trade-off: at low mask rates the loss is numerically larger than the MDLM reference.
     n_masked = diffusion_mask.sum().clamp_min(1)
 
     if loss_weights is None:

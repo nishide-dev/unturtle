@@ -170,12 +170,14 @@ diffusion_mask = (rand < p_mask) & maskable
 mkdir -p dev/repos
 git clone https://github.com/dllm-reasoning/d1.git dev/repos/d1
 git clone https://github.com/zhziszz/dllm.git dev/repos/dllm
+git clone --depth=1 https://github.com/huggingface/transformers.git dev/repos/transformers
 ```
 
 | ディレクトリ | リポジトリ | 参照すべきファイル |
 |-------------|-----------|-----------------|
 | `dev/repos/d1/` | [dllm-reasoning/d1](https://github.com/dllm-reasoning/d1) | `SFT/sft_trainer.py`, `diffu-grpo/diffu_grpo_trainer.py` |
 | `dev/repos/dllm/` | [zhziszz/dllm](https://github.com/zhziszz/dllm) | `dllm/core/trainers/mdlm.py`, `dllm/core/schedulers/alpha.py` |
+| `dev/repos/transformers/` | [huggingface/transformers](https://github.com/huggingface/transformers) | `src/transformers/modeling_utils.py` (post_init, tie_weights, get_keys_to_not_convert), `src/transformers/integrations/bitsandbytes.py` |
 
 詳細は `dev/06_references.md` を参照。
 
@@ -352,10 +354,25 @@ upstream unsloth のスタイル (`fix: description (#N)`) とも互換。emoji 
 
 **PR ワークフロー**:
 1. 作業中は **Draft PR** で open (`🚧 wip` コミットを積む)
-2. 完成したら **Ready for Review** に変更してレビュアーをアサイン
+2. 完成したら、**必ず Codex にレビューを依頼してから** Ready for Review に変更する (下記参照)
 3. 1 PR = 1 Issue を原則とする
 4. マージ前に `main` との差分を解消 (rebase or merge)
 5. **Squash and merge** を標準とする (コミットタイトル = PR タイトル)
+
+**Codex レビュー手順** (マージ前に必須):
+```
+/codex:rescue
+Please review PR #N on branch <branch> in /grouper/nishide.21066-1000003/projects/unturtle.
+Run: git diff main...HEAD
+Focus on:
+1. Reference implementation alignment (dev/repos/d1/, dev/repos/dllm/, dev/repos/transformers/)
+2. transformers 5.x API compatibility (post_init, tie_weights(**kwargs), BnB quantizer)
+3. CUDA guards on all Triton/Flash paths (device.type == "cuda", not just HAS_FLASH_ATTENTION)
+4. Bidirectional attention: is_causal=False preserved everywhere
+5. Packed sequence: packed_seq_lengths naming, Flash varlen compaction correctness
+Report by priority: CRITICAL, HIGH, MEDIUM, LOW.
+```
+CRITICAL/HIGH 指摘は必ず修正してから merge すること。
 
 **Triton カーネル変更時の追加要件**:
 - 数値テスト結果 (`pytest tests/` の出力) を PR コメントに貼ること
@@ -366,6 +383,7 @@ upstream unsloth のスタイル (`fix: description (#N)`) とも互換。emoji 
   - `dev/repos/d1/diffu-grpo/diffu_grpo_trainer.py` — Diffu-GRPO の参照実装
   - `dev/repos/d1/SFT/sft_trainer.py` — d1 SFT の参照実装
   - `dev/repos/dllm/dllm/core/trainers/mdlm.py` — MDLM/LLaDA の参照実装
+  - `dev/repos/transformers/src/transformers/modeling_utils.py` — `post_init`, `tie_weights`, BnB quantizer との互換性
 - 参照実装と異なる挙動を「バグ」と判定する前に、意図的な設計変更か否かを確認する
 
 **ドキュメント更新**:
@@ -725,4 +743,23 @@ if load_in_4bit and not is_on_cpu:
     if "device_map" not in load_kwargs:
         load_kwargs["device_map"] = "auto"
 ```
+
+### 15. 損失の正規化分母: unturtle は `n_masked`、MDLM 参照実装は `n_maskable`
+
+`fused_masked_diffusion_loss` は損失を **実際にマスクされたトークン数 (`n_masked`)** で正規化する。
+MDLM 参照実装 (`dev/repos/dllm/dllm/core/trainers/mdlm.py`, `loss_norm_type="token"`) は
+**マスク可能なトークン数 (`n_maskable = labels != -100` の合計)** で正規化する。
+
+```python
+# unturtle (fused_masked_diffusion_loss.py)
+n_masked = diffusion_mask.sum().clamp_min(1)   # 実際にマスクされたトークン
+loss = per_token_loss.sum() / n_masked
+
+# MDLM reference (mdlm.py L202)
+token_nll /= maskable_mask.sum().clamp_min(1)  # マスク可能なトークン (labels != -100)
+```
+
+**設計意図**: `n_masked` で正規化すると mask_rate が変化しても損失スケールが安定し、
+learning rate のチューニングが容易になる。ただし低 mask_rate のとき MDLM 参照より損失値が
+数値的に大きくなる。LR を MDLM 参照実装から直接移植する場合は注意。
 
