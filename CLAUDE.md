@@ -701,3 +701,28 @@ input_ids = prompt_ids + completion_ids
 labels = [-100] * len(prompt_ids) + completion_ids
 ```
 
+### 13. `LLaDAModelLM` の HF 互換性: `post_init`, `tie_weights(**kwargs)`, `**kwargs` が必要
+
+transformers 5.x で BitsAndBytes 4-bit ロードをするためには `LLaDAModelLM` に以下が必要:
+
+1. **`__init__` 末尾で `self.post_init()` を呼ぶ** → `all_tied_weights_keys` を設定する (`get_keys_to_not_convert()` が参照)
+2. **`tie_weights(self, **kwargs)` を受け付ける** → transformers の `init_weights()` が `tie_weights(recompute_mapping=False)` と呼ぶため
+3. **`__init__(self, config, ..., **kwargs)` が `super().__init__(config, **kwargs)` に透過する** → BnB quantizer が config 以外のkwargを注入することがある
+
+Hub の `modeling_llada.py` は古く、これらを持たない。`FastDiffusionModel._load_model_auto` は
+`model_type="llada"` を unturtle ネイティブクラスに直接ルーティングすることで Hub コードを回避する。
+
+### 14. `load_in_4bit=True` では `device_map="auto"` が必要 (multi-GPU / GPU 0 占有時)
+
+`device_map` を省略すると 4-bit モデルが GPU 0 に全ロードされる。
+他プロセスが GPU 0 を占有していると OOM になり、ロード失敗が `except Exception` で握り潰され
+`AutoModel` フォールバックへ進む (その際 Hub の古いクラスが使われてさらに失敗)。
+
+`FastDiffusionModel.from_pretrained` は `load_in_4bit=True` 時に自動で `device_map="auto"` を設定する:
+```python
+if load_in_4bit and not is_on_cpu:
+    load_kwargs["quantization_config"] = bnb_config
+    if "device_map" not in load_kwargs:
+        load_kwargs["device_map"] = "auto"
+```
+

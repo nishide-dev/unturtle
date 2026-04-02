@@ -405,10 +405,49 @@ def _load_model_auto(model_name: str, load_kwargs: dict, trust_remote_code: bool
 
     Registers unturtle model types so AutoConfig resolves them before trying.
     Falls back through the chain and raises if all attempts fail.
-    """
-    import unturtle.models  # noqa: F401 — registers A2D AutoConfig entries
 
-    from transformers import AutoModel, AutoModelForCausalLM, AutoModelForMaskedLM
+    Strategy: peek at the model_type in AutoConfig, and if it matches an unturtle
+    native class (llada, dream, a2d_*), use that class directly — bypassing
+    trust_remote_code so the Hub's potentially older modeling code is never loaded.
+    This ensures fixes in unturtle model classes (e.g. _tied_weights_keys) take effect.
+    """
+    import unturtle.models  # noqa: F401 — registers A2D/LLaDA/Dream AutoConfig entries
+
+    from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoModelForMaskedLM
+
+    # Map model_type → unturtle model class (bypasses trust_remote_code Hub code).
+    _UNTURTLE_MODEL_CLASSES: dict[str, Any] = {}
+    try:
+        from unturtle.models.llada import LLaDAModelLM
+        _UNTURTLE_MODEL_CLASSES["llada"] = LLaDAModelLM
+    except ImportError:
+        pass
+    try:
+        from unturtle.models.dream import DreamModel
+        _UNTURTLE_MODEL_CLASSES["dream"] = DreamModel
+    except ImportError:
+        pass
+
+    # Peek at model_type without loading weights.
+    try:
+        peek_kwargs: dict[str, Any] = {}
+        if "token" in load_kwargs:
+            peek_kwargs["token"] = load_kwargs["token"]
+        config = AutoConfig.from_pretrained(
+            model_name, trust_remote_code=trust_remote_code, **peek_kwargs
+        )
+        model_type = getattr(config, "model_type", "")
+        if model_type in _UNTURTLE_MODEL_CLASSES:
+            native_cls = _UNTURTLE_MODEL_CLASSES[model_type]
+            _logger.debug(
+                "FastDiffusionModel: using native unturtle class %s for model_type=%r",
+                native_cls.__name__, model_type,
+            )
+            return native_cls.from_pretrained(model_name, **load_kwargs)
+    except torch.cuda.OutOfMemoryError:
+        raise  # OOM should propagate, not fall through to slower AutoModel loaders
+    except Exception as exc:  # noqa: BLE001
+        _logger.debug("FastDiffusionModel: native class lookup failed: %s", exc)
 
     loaders = [
         ("AutoModel", AutoModel),
@@ -565,6 +604,9 @@ class FastDiffusionModel:
                     bnb_4bit_use_double_quant=True,
                 )
                 load_kwargs["quantization_config"] = bnb_config
+                # device_map="auto" is required for multi-GPU or when GPU 0 is partially occupied.
+                if "device_map" not in load_kwargs:
+                    load_kwargs["device_map"] = "auto"
             except ImportError:
                 _warn_once(
                     "bitsandbytes not installed — falling back to full-precision loading."
