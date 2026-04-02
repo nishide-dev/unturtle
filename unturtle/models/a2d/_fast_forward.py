@@ -151,12 +151,9 @@ def _flash_varlen_packed(
 def A2DAttention_fast_forward(
     self,
     hidden_states: torch.Tensor,
-    attention_mask: Optional[torch.Tensor] = None,
-    position_ids: Optional[torch.LongTensor] = None,
-    past_key_values: Optional[Cache] = None,
-    use_cache: Optional[bool] = False,
-    cache_position: Optional[torch.LongTensor] = None,
     position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+    attention_mask: Optional[torch.Tensor] = None,
+    past_key_values: Optional[Cache] = None,
     **kwargs,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     """Bidirectional (non-causal) fast forward for A2D attention layers.
@@ -165,6 +162,12 @@ def A2DAttention_fast_forward(
     unsloth's Triton-fused LoRA kernels when they are patched in.
     Attention is fully bidirectional (``causal=False``).
     """
+    # Extract position_ids and cache_position from kwargs.
+    # transformers 5.x LlamaDecoderLayer passes them as named keyword args to
+    # self.self_attn(), which lands in **kwargs here since LlamaAttention.forward
+    # no longer declares them as explicit parameters.
+    position_ids: Optional[torch.LongTensor] = kwargs.get("position_ids", None)
+    cache_position: Optional[torch.LongTensor] = kwargs.get("cache_position", None)
     bsz, q_len, _ = hidden_states.size()
 
     n_heads = self.config.num_attention_heads
