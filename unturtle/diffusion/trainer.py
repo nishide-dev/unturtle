@@ -160,6 +160,7 @@ class DiffusionTrainer(UnslothTrainer):
         model: torch.nn.Module,
         inputs: dict[str, torch.Tensor | Any],
         return_outputs: bool = False,
+        num_items_in_batch: torch.Tensor | int | None = None,
         **kwargs: Any,
     ) -> torch.Tensor | tuple[torch.Tensor, Any]:
         """Compute the masked diffusion CE loss using the Triton kernel.

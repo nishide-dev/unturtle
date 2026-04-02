@@ -1590,3 +1590,6 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
     def tie_weights(self, **kwargs):
         if self.config.weight_tying:
             self.model.transformer.ff_out = self.model.transformer.wte
+        # Always call super() so transformers 5.x can run its recompute_mapping logic.
+        # This handles missing_keys and recompute_mapping kwargs passed by from_pretrained.
+        super().tie_weights(**kwargs)
