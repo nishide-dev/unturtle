@@ -1466,6 +1466,9 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
     base_model_prefix = "model"
     # _no_split_modules = ["LLaDABlock", "LLaDASequentialBlock", "LLaDALlamaBlock"]
     _no_split_modules = ["LLaDALlamaBlock"]
+    # Required by transformers >= 4.40 get_keys_to_not_convert() for 4-bit/8-bit loading.
+    # LLaDA has no tied weights so this is an empty list.
+    _tied_weights_keys: list[str] = []
 
     def __init__(self, config: LLaDAConfig, model: Optional[LLaDAModel] = None, init_params: bool = False):
         super().__init__(config)
