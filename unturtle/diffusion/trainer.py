@@ -187,6 +187,13 @@ class DiffusionTrainer(UnslothTrainer):
             loss_weights=loss_weights,
         )
 
+        # When num_items_in_batch is provided, normalize loss by it so that
+        # transformers' training_step does not also divide by gradient_accumulation_steps.
+        # (transformers 5.x training_step skips the /grad_accum normalization when
+        # compute_loss receives num_items_in_batch and num_items_in_batch is not None.)
+        if num_items_in_batch is not None:
+            loss = loss / num_items_in_batch
+
         return (loss, outputs) if return_outputs else loss
 
     # ------------------------------------------------------------------ #
