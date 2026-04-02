@@ -1486,10 +1486,12 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
         else:
             self.model = model
         # Required by transformers >= 4.40: sets self.all_tied_weights_keys used by quantizers.
-        # When init_params=True, LLaDAModel.__init__ already calls post_init() on itself.
-        # That is intentional: transformers' post_init() is designed to be called depth-first
-        # so each sub-model registers its tied weights, then the top-level model aggregates them.
-        # Calling post_init() again here on LLaDAModelLM (the top level) is correct and safe.
+        # When init_params=True, LLaDAModel.__init__ also calls post_init() on itself.
+        # This is safe because transformers constructs and registers submodules before the
+        # parent's post_init() runs — by the time LLaDAModelLM.post_init() executes here,
+        # LLaDAModel is already a child of self and its metadata is visible to named_children().
+        # The top-level post_init() then aggregates all_tied_weights_keys from children.
+        # (This is a Transformers design guarantee, not Python MRO behavior.)
         self.post_init()
 
     def forward(
