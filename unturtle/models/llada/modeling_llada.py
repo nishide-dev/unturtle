@@ -1053,6 +1053,10 @@ class LLaDAPreTrainedModel(PreTrainedModel):
         hf_config = config
         if not hasattr(hf_config, "to_dict"):
             hf_config = LLaDAConfig(**config.__dict__)
+        # Strip quantization-related kwargs that transformers may inject (e.g. load_in_4bit).
+        # PreTrainedModel.__init__ does not accept them directly.
+        for _k in ("load_in_4bit", "load_in_8bit", "quantization_config"):
+            model_kwargs.pop(_k, None)
         super().__init__(hf_config, *model_args, **model_kwargs)
 
     def _init_weights(self, module):
@@ -1470,8 +1474,8 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
     # LLaDA has no tied weights so this is an empty list.
     _tied_weights_keys: list[str] = []
 
-    def __init__(self, config: LLaDAConfig, model: Optional[LLaDAModel] = None, init_params: bool = False):
-        super().__init__(config)
+    def __init__(self, config: LLaDAConfig, model: Optional[LLaDAModel] = None, init_params: bool = False, **kwargs):
+        super().__init__(config, **kwargs)
 
         if not model:
             model_config = create_model_config_from_pretrained_config(config)
@@ -1480,6 +1484,8 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
             self.model = LLaDAModel(model_config, init_params=init_params)
         else:
             self.model = model
+        # Required by transformers >= 4.40: sets self.all_tied_weights_keys used by quantizers.
+        self.post_init()
 
     def forward(
         self,
@@ -1574,6 +1580,6 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
         else:
             self.model.transformer.ff_out = value
 
-    def tie_weights(self):
+    def tie_weights(self, **kwargs):
         if self.config.weight_tying:
             self.model.transformer.ff_out = self.model.transformer.wte

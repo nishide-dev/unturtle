@@ -173,7 +173,7 @@ class TestPeftAndTraining:
             per_device_train_batch_size=2,
             logging_steps=1,
             save_steps=100,
-            fp16=True,
+            bf16=True,
             dataloader_drop_last=True,
             remove_unused_columns=False,
             report_to="none",
@@ -182,10 +182,10 @@ class TestPeftAndTraining:
         losses: list[float] = []
         original_log = DiffusionTrainer.log
 
-        def _capturing_log(self_inner, logs, **kw):
+        def _capturing_log(self_inner, logs, *args, **kw):
             if "loss" in logs:
                 losses.append(float(logs["loss"]))
-            original_log(self_inner, logs, **kw)
+            original_log(self_inner, logs, *args, **kw)
 
         DiffusionTrainer.log = _capturing_log
         try:

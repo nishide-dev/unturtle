@@ -205,6 +205,8 @@ These rules apply to `_patch_a2d_peft`, `_patch_dream_peft`, `_patch_llada_peft`
 | `build_sdpa_packed_attention_mask()` is causal | Packed SDPA silently reintroduces causal masking for dLLM | Never use the upstream `build_sdpa_packed_attention_mask()` for A2D/packed path — it builds upper-triangular causal blocks; use `block_attention_mask` from collator or `effective_mask=None` |
 | real-checkpoint tokenizer may lack `mask_token_id` | `MaskedDiffusionDataCollator` init fails even though the model supports masking | Use `tokenizer.mask_token_id or model.config.mask_token_id` and pass `mask_token_id=` explicitly in slow E2E tests |
 | prompt/full tokenization mismatch in completion-only datasets | prompt tokens become maskable or completion boundary shifts for override checkpoints | Build prompt/completion ids with the same tokenizer settings (e.g. both `add_special_tokens=False`) and concatenate them explicitly |
+| `LLaDAModelLM` lacks `all_tied_weights_keys` (Hub class) | `AttributeError: 'LLaDAModelLM' has no attribute 'all_tied_weights_keys'` during 4-bit load | `FastDiffusionModel._load_model_auto` routes `model_type="llada"` to unturtle's own class; unturtle class calls `self.post_init()` and accepts `tie_weights(**kwargs)` |
+| `load_in_4bit` without `device_map` OOM on crowded GPU | OOM caught silently → falls through to Hub class → `all_tied_weights_keys` error | `FastDiffusionModel.from_pretrained` sets `device_map="auto"` automatically when `load_in_4bit=True` |
 
 ---
 
