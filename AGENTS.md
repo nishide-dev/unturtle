@@ -91,10 +91,14 @@ python -m pytest tests/ -v  # (no -race for Python, but run on GPU if kernel cha
    - `dev/repos/d1/SFT/sft_trainer.py` — d1 SFT reference
    - `dev/repos/d1/diffu-grpo/diffu_grpo_trainer.py` — Diffu-GRPO reference
    - `dev/repos/dllm/dllm/core/trainers/mdlm.py` — MDLM/LLaDA reference
+   - For transformers API compatibility (post_init, tie_weights, BnB quantizer, init_weights):
+     `dev/repos/transformers/src/transformers/modeling_utils.py`,
+     `dev/repos/transformers/src/transformers/integrations/bitsandbytes.py`
    - If `dev/repos/` is not cloned, run:
      ```bash
      git clone https://github.com/dllm-reasoning/d1.git dev/repos/d1
      git clone https://github.com/zhziszz/dllm.git dev/repos/dllm
+     git clone --depth=1 https://github.com/huggingface/transformers.git dev/repos/transformers
      ```
 
 2. **Behavioral differences from reference must be intentional** — Do not classify a

@@ -1471,8 +1471,9 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
     # _no_split_modules = ["LLaDABlock", "LLaDASequentialBlock", "LLaDALlamaBlock"]
     _no_split_modules = ["LLaDALlamaBlock"]
     # Required by transformers >= 4.40 get_keys_to_not_convert() for 4-bit/8-bit loading.
-    # LLaDA has no tied weights so this is an empty list.
-    _tied_weights_keys: list[str] = []
+    # LLaDA has no tied weights. transformers 5.x _get_tied_weight_keys() calls
+    # .keys() on this attribute (dict[str, str] | None), so must not be a list.
+    _tied_weights_keys: dict[str, str] = None
 
     def __init__(self, config: LLaDAConfig, model: Optional[LLaDAModel] = None, init_params: bool = False, **kwargs):
         super().__init__(config, **kwargs)
@@ -1485,6 +1486,12 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
         else:
             self.model = model
         # Required by transformers >= 4.40: sets self.all_tied_weights_keys used by quantizers.
+        # When init_params=True, LLaDAModel.__init__ also calls post_init() on itself.
+        # This is safe because transformers constructs and registers submodules before the
+        # parent's post_init() runs — by the time LLaDAModelLM.post_init() executes here,
+        # LLaDAModel is already a child of self and its metadata is visible to named_children().
+        # The top-level post_init() then aggregates all_tied_weights_keys from children.
+        # (This is a Transformers design guarantee, not Python MRO behavior.)
         self.post_init()
 
     def forward(
