@@ -101,6 +101,25 @@ from unturtle import FastDiffusionModel           # Phase C 追加
 - `A2DAttention_fast_forward` (bidirectional, causal=False) を injection
 - `TaskType.FEATURE_EXTRACTION` で PEFT ラップ (CAUSAL_LM guard 回避)
 
+### 将来目標: Phase Z — unsloth 完全移行
+
+**最終的なあるべき姿**: unturtle が unsloth に依存しない独立した dLLM フレームワークになること。
+現在 `unturtle/__init__.py` の `from unsloth import *` に依存している以下のコンポーネントを
+順次 unturtle 内で再実装・ベンダリングする:
+
+| コンポーネント | 現状 | Phase Z での対応 |
+|--------------|------|----------------|
+| `Fast_CrossEntropyLoss` (Triton CE) | `unsloth/kernels/cross_entropy_loss.py` | `unturtle/kernels/` に移植 |
+| `fast_rope_embedding` | `unsloth/kernels/rope_embedding.py` | `unturtle/kernels/` に移植 |
+| `apply_lora_qkv` / `apply_lora_o` | `unsloth/kernels/fast_lora.py` | `unturtle/kernels/fast_lora.py` に統合 |
+| `run_attention` / `select_attention_backend` | `unsloth/utils/attention_dispatch.py` | `unturtle/utils/` に移植 |
+| `get_packed_info_from_kwargs` | `unsloth/utils/packing.py` | `unturtle/utils/` に移植 |
+| `UnslothTrainer` / `UnslothTrainingArguments` | `unsloth/trainer.py` | `DiffusionTrainer` が直接 `SFTTrainer` を継承 |
+| `FastLanguageModel` (AR 用) | `unsloth/models/` | 不要 (dLLM では `FastDiffusionModel` のみ) |
+| Optimizers | `unsloth/optimizers.py` (未実装) | `unturtle/optimizers.py` に実装 |
+
+進捗はこのセクションと各ファイルの `# TODO(Phase Z):` コメントで追跡する。
+
 ---
 
 ## 実装ロードマップ
@@ -118,6 +137,12 @@ from unturtle import FastDiffusionModel           # Phase C 追加
 | Phase 7 | `unturtle/models/` + `tests/models/` | dLLM モデル実装 (A2D/LLaDA/Dream) + import rename | ✅ 完了 |
 | Phase B | `unturtle/diffusion/`, `unturtle/kernels/` | dLLM コード canonical 移行、shim 格下げ | ✅ 完了 |
 | Phase C | `unturtle/fast_diffusion_model.py`, `unturtle/models/a2d/_fast_forward.py` | FastDiffusionModel + 双方向 LoRA 適用 | ✅ 完了 |
+| Phase D | `unturtle/__init__.py`, `unturtle/models/__init__.py` | 公開 API 整備 (モデルクラス・optimizer re-export) | ✅ 完了 |
+| Phase E | `unturtle/fast_diffusion_model.py` | for_inference / for_training / save_pretrained_merged | 🔲 未着手 |
+| Phase F | `unturtle/models/a2d/generation_utils.py`, `unturtle/models/llada/generation_utils.py` | A2D / LLaDA 生成ユーティリティ | 🔲 未着手 |
+| Phase G | `unturtle/eval/` | 評価ハーネス | 🔲 未着手 |
+| Phase H | `tests/models/`, `unturtle/models/a2d/modeling_modernbert.py` | RoPE テスト + ModernBERT A2D | 🔲 未着手 |
+| Phase Z | `unturtle/` 全体 | unsloth 完全移行・依存除去 | 🔲 長期目標 |
 
 ---
 
