@@ -76,6 +76,9 @@ from unturtle.models import (  # noqa: F401
     A2DLlamaConfig,
     A2DLlamaModel,
     A2DLlamaLMHeadModel,
+    A2DModernBertConfig,
+    A2DModernBertModel,
+    A2DModernBertForMaskedLM,
     A2DQwen2Config,
     A2DQwen2Model,
     A2DQwen2LMHeadModel,
@@ -96,11 +99,20 @@ DreamForDiffusionLM = DreamModel  # noqa: F401
 # ---------------------------------------------------------------------------
 # Optimizers
 # Re-export unsloth optimizers when available so users can write
-#   from unturtle import UnslothAdamW
+#   from unturtle import QGaLoreAdamW8bit
 # instead of reaching into unsloth directly.
 # TODO(Phase Z): once unsloth dependency is removed, vendor or reimplement
 #   these optimizers inside unturtle.optimizers and update these imports.
 # ---------------------------------------------------------------------------
+try:
+    from unsloth.optimizers import (  # noqa: F401
+        GaLoreProjector,
+        QGaLoreAdamW8bit,
+    )
+except (ImportError, AttributeError):
+    pass  # Older unsloth versions that do not expose these symbols
+
+# UnslothAdamW family — available in newer unsloth releases
 try:
     from unsloth.optimizers import (  # noqa: F401
         UnslothAdamW,
@@ -108,4 +120,4 @@ try:
         UnslothAdamWScheduleFree,
     )
 except (ImportError, AttributeError):
-    pass  # Older unsloth versions that do not expose these symbols
+    pass
