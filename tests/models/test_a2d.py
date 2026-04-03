@@ -799,3 +799,95 @@ class TestA2DRoPE:
         torch.testing.assert_close(
             K_out_cuda.float().cpu(), K_expected, atol=1e-2, rtol=1e-2,
         )
+
+
+# ---------------------------------------------------------------------------
+# A2D-ModernBERT
+# ---------------------------------------------------------------------------
+
+
+def _tiny_modernbert_config():
+    """Return a minimal A2DModernBertConfig suitable for CPU tests.
+
+    ModernBertConfig defaults include token IDs (e.g. pad_token_id=50283) that
+    exceed our tiny vocab_size=1000, so we override them explicitly.
+    """
+    from unturtle.models.a2d import A2DModernBertConfig
+
+    return A2DModernBertConfig(
+        vocab_size=1000,
+        hidden_size=128,
+        intermediate_size=256,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        max_position_embeddings=128,
+        pad_token_id=0,
+        bos_token_id=1,
+        eos_token_id=2,
+        cls_token_id=1,
+        sep_token_id=2,
+    )
+
+
+class TestA2DModernBert:
+    @pytest.fixture
+    def config(self):
+        return _tiny_modernbert_config()
+
+    def test_config_model_type(self, config):
+        assert config.model_type == "a2d-modernbert"
+
+    def test_config_inherits_modernbert_config(self, config):
+        from transformers import ModernBertConfig
+        assert isinstance(config, ModernBertConfig)
+
+    def test_model_instantiation(self, config):
+        from unturtle.models.a2d import A2DModernBertForMaskedLM, A2DModernBertModel
+        model = A2DModernBertForMaskedLM(config)
+        assert model is not None
+        assert isinstance(model.model, A2DModernBertModel)
+        assert hasattr(model, "decoder")
+
+    def test_decoder_weight_tied_to_embeddings(self, config):
+        """decoder.weight must be tied to tok_embeddings.weight after model swap."""
+        from unturtle.models.a2d import A2DModernBertForMaskedLM
+        model = A2DModernBertForMaskedLM(config)
+        assert model.decoder.weight is model.model.embeddings.tok_embeddings.weight, (
+            "decoder.weight and tok_embeddings.weight are not the same tensor — "
+            "tie_weights() was not called after self.model replacement."
+        )
+
+    def test_forward_logits_shape(self, config):
+        from unturtle.models.a2d import A2DModernBertForMaskedLM
+        model = A2DModernBertForMaskedLM(config)
+        model.eval()
+        B, L = 2, 16
+        input_ids = torch.randint(3, config.vocab_size, (B, L))
+        with torch.no_grad():
+            out = model(input_ids=input_ids)
+        assert out.logits.shape == (B, L, config.vocab_size)
+
+    def test_autoconfig_registered(self):
+        import transformers
+        from unturtle.models.a2d import A2DModernBertConfig  # ensure registration
+        assert "a2d-modernbert" in transformers.models.auto.configuration_auto.CONFIG_MAPPING
+
+    def test_bidirectional_attention(self, config):
+        """ModernBERT is already bidirectional — position-0 output changes when last token changes."""
+        from unturtle.models.a2d import A2DModernBertForMaskedLM
+        model = A2DModernBertForMaskedLM(config)
+        model.eval()
+
+        B, L = 1, 8
+        ids_a = torch.randint(3, config.vocab_size, (B, L))
+        ids_b = ids_a.clone()
+        ids_b[0, -1] = (ids_a[0, -1] + 1) % config.vocab_size
+
+        with torch.no_grad():
+            out_a = model(input_ids=ids_a).logits
+            out_b = model(input_ids=ids_b).logits
+
+        assert not torch.allclose(out_a[:, 0, :], out_b[:, 0, :]), (
+            "a2d-modernbert: position-0 output is identical after changing position L-1. "
+            "Bidirectional attention is not working."
+        )

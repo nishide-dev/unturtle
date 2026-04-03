@@ -22,16 +22,19 @@ Supported base architectures:
   - LLaMA (Meta-Llama-3, Meta-Llama-3.1, …)
   - Qwen2 (Qwen/Qwen2.5-*)
   - Qwen3 (Qwen/Qwen3-*)
+  - ModernBERT (answerdotai/ModernBERT-*) — already bidirectional; adapter adds dLLM generation
 
 Usage::
 
     from unturtle.models.a2d import A2DLlamaConfig, A2DLlamaLMHeadModel
     from unturtle.models.a2d import A2DQwen2Config, A2DQwen2LMHeadModel
     from unturtle.models.a2d import A2DQwen3Config, A2DQwen3LMHeadModel
+    from unturtle.models.a2d import A2DModernBertConfig, A2DModernBertForMaskedLM
 """
 
 from .generation_utils import A2DGenerationConfig, A2DGenerationMixin
 from .modeling_llama import A2DLlamaConfig, A2DLlamaModel, A2DLlamaLMHeadModel
+from .modeling_modernbert import A2DModernBertConfig, A2DModernBertModel, A2DModernBertForMaskedLM
 from .modeling_qwen2 import A2DQwen2Config, A2DQwen2Model, A2DQwen2LMHeadModel
 from .modeling_qwen3 import A2DQwen3Config, A2DQwen3Model, A2DQwen3LMHeadModel
 
@@ -41,6 +44,9 @@ __all__ = [
     "A2DLlamaConfig",
     "A2DLlamaModel",
     "A2DLlamaLMHeadModel",
+    "A2DModernBertConfig",
+    "A2DModernBertModel",
+    "A2DModernBertForMaskedLM",
     "A2DQwen2Config",
     "A2DQwen2Model",
     "A2DQwen2LMHeadModel",
