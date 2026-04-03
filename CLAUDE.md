@@ -139,7 +139,7 @@ from unturtle import FastDiffusionModel           # Phase C 追加
 | Phase C | `unturtle/fast_diffusion_model.py`, `unturtle/models/a2d/_fast_forward.py` | FastDiffusionModel + 双方向 LoRA 適用 | ✅ 完了 |
 | Phase D | `unturtle/__init__.py`, `unturtle/models/__init__.py` | 公開 API 整備 (モデルクラス・optimizer re-export) | ✅ 完了 |
 | Phase E | `unturtle/fast_diffusion_model.py` | for_inference / for_training / save_pretrained_merged | ✅ 完了 |
-| Phase F | `unturtle/models/a2d/generation_utils.py`, `unturtle/models/llada/generation_utils.py` | A2D / LLaDA 生成ユーティリティ | 🔲 未着手 |
+| Phase F | `unturtle/models/diffusion_generation_utils.py`, `unturtle/models/a2d/generation_utils.py`, `unturtle/models/llada/generation_utils.py` | A2D / LLaDA 生成ユーティリティ (MDLM デノイジングループ) | ✅ 完了 |
 | Phase G | `unturtle/eval/` | 評価ハーネス | 🔲 未着手 |
 | Phase H | `tests/models/`, `unturtle/models/a2d/modeling_modernbert.py` | RoPE テスト + ModernBERT A2D | 🔲 未着手 |
 | Phase Z | `unturtle/` 全体 | unsloth 完全移行・依存除去 | 🔲 長期目標 |
