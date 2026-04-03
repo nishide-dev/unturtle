@@ -196,6 +196,7 @@ mkdir -p dev/repos
 git clone https://github.com/dllm-reasoning/d1.git dev/repos/d1
 git clone https://github.com/zhziszz/dllm.git dev/repos/dllm
 git clone --depth=1 https://github.com/huggingface/transformers.git dev/repos/transformers
+git clone --depth=1 https://github.com/NVlabs/Fast-dLLM.git dev/repos/fast-dllm
 ```
 
 | ディレクトリ | リポジトリ | 参照すべきファイル |
@@ -203,6 +204,7 @@ git clone --depth=1 https://github.com/huggingface/transformers.git dev/repos/tr
 | `dev/repos/d1/` | [dllm-reasoning/d1](https://github.com/dllm-reasoning/d1) | `SFT/sft_trainer.py`, `diffu-grpo/diffu_grpo_trainer.py` |
 | `dev/repos/dllm/` | [zhziszz/dllm](https://github.com/zhziszz/dllm) | `dllm/core/trainers/mdlm.py`, `dllm/core/schedulers/alpha.py` |
 | `dev/repos/transformers/` | [huggingface/transformers](https://github.com/huggingface/transformers) | `src/transformers/modeling_utils.py` (post_init, tie_weights, get_keys_to_not_convert), `src/transformers/integrations/bitsandbytes.py` |
+| `dev/repos/fast-dllm/` | [NVlabs/Fast-dLLM](https://github.com/NVlabs/Fast-dLLM) (Apache 2.0) | `dream/model/generation_utils_block.py` (ブロックデコード KV cache), `llada/model/modeling_llada.py` (`use_cache`/`replace_position` 実装), `v2/generation_functions.py` |
 
 詳細は `dev/06_references.md` を参照。
 
@@ -390,7 +392,7 @@ upstream unsloth のスタイル (`fix: description (#N)`) とも互換。emoji 
 Please review PR #N on branch <branch> in /grouper/nishide.21066-1000003/projects/unturtle.
 Run: git diff main...HEAD
 Focus on:
-1. Reference implementation alignment (dev/repos/d1/, dev/repos/dllm/, dev/repos/transformers/)
+1. Reference implementation alignment (dev/repos/d1/, dev/repos/dllm/, dev/repos/transformers/, dev/repos/fast-dllm/)
 2. transformers 5.x API compatibility (post_init, tie_weights(**kwargs), BnB quantizer)
 3. CUDA guards on all Triton/Flash paths (device.type == "cuda", not just HAS_FLASH_ATTENTION)
 4. Bidirectional attention: is_causal=False preserved everywhere
@@ -409,6 +411,7 @@ CRITICAL/HIGH 指摘は必ず修正してから merge すること。
   - `dev/repos/d1/SFT/sft_trainer.py` — d1 SFT の参照実装
   - `dev/repos/dllm/dllm/core/trainers/mdlm.py` — MDLM/LLaDA の参照実装
   - `dev/repos/transformers/src/transformers/modeling_utils.py` — `post_init`, `tie_weights`, BnB quantizer との互換性
+  - `dev/repos/fast-dllm/dream/model/generation_utils_block.py` — ブロックデコード KV cache の参照実装 (Phase J)
 - 参照実装と異なる挙動を「バグ」と判定する前に、意図的な設計変更か否かを確認する
 
 **ドキュメント更新**:
