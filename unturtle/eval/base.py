@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from typing import Any, Iterator
 
@@ -21,8 +22,8 @@ import torch
 from torch.utils.data import DataLoader
 
 
-class BaseEvaluator:
-    """Small common base for unturtle evaluation helpers."""
+class BaseEvaluator(ABC):
+    """Abstract base class for unturtle evaluation helpers."""
 
     def __init__(
         self,
@@ -69,5 +70,6 @@ class BaseEvaluator:
             if was_training:
                 self.model.train()
 
+    @abstractmethod
     def evaluate(self, *_args: Any, **_kwargs: Any) -> dict[str, float]:
-        raise NotImplementedError
+        ...
