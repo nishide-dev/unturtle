@@ -682,3 +682,126 @@ class TestLLaDAPatching:
         with torch.no_grad():
             out = peft_model(input_ids=input_ids)
         assert out.logits.shape == (B, L, tiny_llada_model.config.vocab_size)
+
+
+# ---------------------------------------------------------------------------
+# TestInferenceTrainingMethods — for_inference / for_training / inference_context
+# ---------------------------------------------------------------------------
+
+
+class TestInferenceTrainingMethods:
+    """Tests for FastDiffusionModel.for_inference, for_training, inference_context."""
+
+    def test_for_inference_sets_eval(self, tiny_model):
+        """for_inference puts model in eval mode."""
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        tiny_model.train()
+        assert tiny_model.training
+        FastDiffusionModel.for_inference(tiny_model)
+        assert not tiny_model.training
+
+    def test_for_inference_returns_model(self, tiny_model):
+        """for_inference returns the same model object."""
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        returned = FastDiffusionModel.for_inference(tiny_model)
+        assert returned is tiny_model
+
+    def test_for_training_sets_train(self, tiny_model):
+        """for_training puts model in training mode."""
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        tiny_model.eval()
+        assert not tiny_model.training
+        FastDiffusionModel.for_training(tiny_model, use_gradient_checkpointing=False)
+        assert tiny_model.training
+
+    def test_for_training_returns_model(self, tiny_model):
+        """for_training returns the same model object."""
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        returned = FastDiffusionModel.for_training(tiny_model, use_gradient_checkpointing=False)
+        assert returned is tiny_model
+
+    def test_inference_context_restores_train_mode(self, tiny_model):
+        """inference_context restores training mode on exit."""
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        tiny_model.train()
+        with FastDiffusionModel.inference_context(tiny_model):
+            assert not tiny_model.training  # eval inside context
+        assert tiny_model.training  # restored after exit
+
+    def test_inference_context_stays_eval_if_was_eval(self, tiny_model):
+        """inference_context does not flip to train if model was already in eval."""
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        tiny_model.eval()
+        with FastDiffusionModel.inference_context(tiny_model):
+            assert not tiny_model.training
+        assert not tiny_model.training  # stays eval
+
+    def test_inference_context_no_grad(self, tiny_model):
+        """Inside inference_context, gradients are disabled."""
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        tiny_model.eval()
+        with FastDiffusionModel.inference_context(tiny_model):
+            assert not torch.is_grad_enabled()
+
+
+# ---------------------------------------------------------------------------
+# TestSavePretrainedMerged — save_pretrained_merged
+# ---------------------------------------------------------------------------
+
+
+class TestSavePretrainedMerged:
+    """Tests for FastDiffusionModel.save_pretrained_merged."""
+
+    @pytest.fixture
+    def peft_model(self, tiny_model):
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        return FastDiffusionModel.get_peft_model(
+            tiny_model,
+            r=4,
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+            lora_alpha=4,
+            lora_dropout=0,
+            use_gradient_checkpointing=False,
+        )
+
+    def test_save_creates_directory(self, peft_model, tmp_path):
+        """save_pretrained_merged writes files to the given directory."""
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        save_dir = tmp_path / "merged"
+        FastDiffusionModel.save_pretrained_merged(peft_model, str(save_dir))
+        # Should contain at least a config and a weight file
+        assert save_dir.exists()
+        assert (save_dir / "config.json").exists()
+        files = list(save_dir.iterdir())
+        assert len(files) >= 2
+
+    def test_save_does_not_modify_original(self, peft_model, tmp_path):
+        """save_pretrained_merged leaves the original PEFT model intact."""
+        from peft import PeftModel
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        save_dir = tmp_path / "merged2"
+        FastDiffusionModel.save_pretrained_merged(peft_model, str(save_dir))
+        # Original model should still be a PeftModel
+        assert isinstance(peft_model, PeftModel)
+
+    def test_save_with_tokenizer(self, peft_model, tmp_path):
+        """save_pretrained_merged saves tokenizer when provided."""
+        from unittest.mock import MagicMock
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        mock_tokenizer = MagicMock()
+        save_dir = tmp_path / "merged3"
+        FastDiffusionModel.save_pretrained_merged(
+            peft_model, str(save_dir), tokenizer=mock_tokenizer
+        )
+        mock_tokenizer.save_pretrained.assert_called_once_with(str(save_dir))
