@@ -706,6 +706,7 @@ class FastDiffusionModel:
             use_reentrant=True,
         )
         model = get_peft_model(model, lora_config)
+        model._unturtle_gradient_checkpointing_mode = use_gradient_checkpointing
 
         FastDiffusionModel.patch_peft_model(model, lora_dropout=lora_dropout, bias=bias)
         patch_saving_functions(model)
@@ -791,9 +792,7 @@ class FastDiffusionModel:
             The same model in eval mode.
         """
         model.eval()
-        # Disable gradient checkpointing if it was enabled during training.
-        if hasattr(model, "gradient_checkpointing_disable"):
-            model.gradient_checkpointing_disable()
+        _apply_gradient_checkpointing_mode(model, False)
         return model
 
     @staticmethod
@@ -809,16 +808,7 @@ class FastDiffusionModel:
             The same model in train mode.
         """
         model.train()
-        if use_gradient_checkpointing and hasattr(model, "gradient_checkpointing_enable"):
-            try:
-                if use_gradient_checkpointing == "unsloth":
-                    # Use unsloth-style GC when available (offloads activations to CPU).
-                    from unsloth.models._utils import patch_unsloth_gradient_checkpointing  # TODO(Phase Z)
-                    patch_unsloth_gradient_checkpointing(model)
-                else:
-                    model.gradient_checkpointing_enable()
-            except Exception:  # noqa: BLE001
-                model.gradient_checkpointing_enable()
+        _apply_gradient_checkpointing_mode(model, use_gradient_checkpointing)
         return model
 
     @staticmethod
@@ -893,10 +883,7 @@ class FastDiffusionModel:
         merged.push_to_hub(repo_id, **push_kwargs)
         _logger.info("FastDiffusionModel: merged model pushed to %r", repo_id)
         if tokenizer is not None:
-            tok_kwargs: dict[str, Any] = {}
-            if token is not None:
-                tok_kwargs["token"] = token
-            tokenizer.push_to_hub(repo_id, **tok_kwargs)
+            tokenizer.push_to_hub(repo_id, **push_kwargs)
 
     @staticmethod
     @contextlib.contextmanager
@@ -914,13 +901,17 @@ class FastDiffusionModel:
             model: A dLLM model (plain or PEFT-wrapped).
         """
         was_training = model.training
+        gc_mode = _get_gradient_checkpointing_mode(model)
         FastDiffusionModel.for_inference(model)
         try:
             with torch.no_grad():
                 yield model
         finally:
             if was_training:
-                FastDiffusionModel.for_training(model)
+                FastDiffusionModel.for_training(model, use_gradient_checkpointing=gc_mode)
+            else:
+                model.eval()
+                _apply_gradient_checkpointing_mode(model, gc_mode)
 
 
 # ---------------------------------------------------------------------------
@@ -949,3 +940,36 @@ def _install_apply_stubs(model: Any) -> None:
                 module.apply_qkv = _original_apply_qkv
             if not hasattr(module, "apply_o"):
                 module.apply_o = _original_apply_o
+
+
+def _get_gradient_checkpointing_mode(model: Any) -> bool | str:
+    """Return the current gradient-checkpointing mode tracked by unturtle.
+
+    We explicitly track the requested mode because a temporary inference pass
+    should be reversible: `True`, `False`, and `"unsloth"` need to round-trip.
+    Falling back to module flags loses the distinction between `True` and
+    `"unsloth"`.
+    """
+    if hasattr(model, "_unturtle_gradient_checkpointing_mode"):
+        return model._unturtle_gradient_checkpointing_mode
+
+    for module in model.modules():
+        if hasattr(module, "gradient_checkpointing"):
+            return bool(module.gradient_checkpointing)
+    return False
+
+
+def _apply_gradient_checkpointing_mode(model: Any, mode: bool | str) -> None:
+    """Apply and persist a gradient-checkpointing mode to all reachable modules."""
+    model._unturtle_gradient_checkpointing_mode = mode
+
+    for module in model.modules():
+        if hasattr(module, "gradient_checkpointing"):
+            module.gradient_checkpointing = bool(mode)
+
+    if bool(mode):
+        if hasattr(model, "gradient_checkpointing_enable"):
+            model.gradient_checkpointing_enable()
+    else:
+        if hasattr(model, "gradient_checkpointing_disable"):
+            model.gradient_checkpointing_disable()

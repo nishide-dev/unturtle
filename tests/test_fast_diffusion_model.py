@@ -23,6 +23,8 @@ Tests cover:
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 import torch
 
@@ -750,6 +752,48 @@ class TestInferenceTrainingMethods:
         with FastDiffusionModel.inference_context(tiny_model):
             assert not torch.is_grad_enabled()
 
+    def test_inference_context_restores_gc_mode_false(self, tiny_model):
+        """inference_context should restore False GC mode exactly."""
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        tiny_model._unturtle_gradient_checkpointing_mode = False
+        tiny_model.train()
+        with FastDiffusionModel.inference_context(tiny_model):
+            assert _all_gc_flags_false(tiny_model)
+        assert tiny_model.training
+        assert tiny_model._unturtle_gradient_checkpointing_mode is False
+        assert _all_gc_flags_false(tiny_model)
+
+    def test_inference_context_restores_gc_mode_unsloth(self, tiny_model):
+        """inference_context should preserve the symbolic 'unsloth' mode."""
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        FastDiffusionModel.for_training(tiny_model, use_gradient_checkpointing="unsloth")
+        with FastDiffusionModel.inference_context(tiny_model):
+            assert _all_gc_flags_false(tiny_model)
+        assert tiny_model._unturtle_gradient_checkpointing_mode == "unsloth"
+        assert _all_gc_flags_true(tiny_model)
+
+    def test_inference_context_restores_state_on_exception(self, tiny_model):
+        """inference_context should restore mode/state even if body raises."""
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        FastDiffusionModel.for_training(tiny_model, use_gradient_checkpointing=False)
+        with pytest.raises(RuntimeError, match="boom"):
+            with FastDiffusionModel.inference_context(tiny_model):
+                raise RuntimeError("boom")
+        assert tiny_model.training
+        assert tiny_model._unturtle_gradient_checkpointing_mode is False
+        assert _all_gc_flags_false(tiny_model)
+
+    def test_for_training_preserves_requested_unsloth_mode(self, tiny_model):
+        """for_training should remember symbolic unsloth mode for later restore."""
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        FastDiffusionModel.for_training(tiny_model, use_gradient_checkpointing="unsloth")
+        assert tiny_model._unturtle_gradient_checkpointing_mode == "unsloth"
+        assert _all_gc_flags_true(tiny_model)
+
 
 # ---------------------------------------------------------------------------
 # TestSavePretrainedMerged — save_pretrained_merged
@@ -785,14 +829,28 @@ class TestSavePretrainedMerged:
         assert len(files) >= 2
 
     def test_save_does_not_modify_original(self, peft_model, tmp_path):
-        """save_pretrained_merged leaves the original PEFT model intact."""
+        """save_pretrained_merged leaves adapter weights on the original model intact."""
         from peft import PeftModel
         from unturtle.fast_diffusion_model import FastDiffusionModel
 
+        adapter_weights_before = {
+            name: param.detach().clone()
+            for name, param in peft_model.named_parameters()
+            if "lora_" in name
+        }
+
         save_dir = tmp_path / "merged2"
         FastDiffusionModel.save_pretrained_merged(peft_model, str(save_dir))
-        # Original model should still be a PeftModel
+
         assert isinstance(peft_model, PeftModel)
+        adapter_weights_after = {
+            name: param.detach().clone()
+            for name, param in peft_model.named_parameters()
+            if "lora_" in name
+        }
+        assert adapter_weights_before.keys() == adapter_weights_after.keys()
+        for name in adapter_weights_before:
+            assert torch.equal(adapter_weights_before[name], adapter_weights_after[name])
 
     def test_save_with_tokenizer(self, peft_model, tmp_path):
         """save_pretrained_merged saves tokenizer when provided."""
@@ -805,3 +863,76 @@ class TestSavePretrainedMerged:
             peft_model, str(save_dir), tokenizer=mock_tokenizer
         )
         mock_tokenizer.save_pretrained.assert_called_once_with(str(save_dir))
+
+
+class TestPushToHubMerged:
+    """Tests for FastDiffusionModel.push_to_hub_merged."""
+
+    @pytest.fixture
+    def peft_model(self, tiny_model):
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        return FastDiffusionModel.get_peft_model(
+            tiny_model,
+            r=4,
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+            lora_alpha=4,
+            lora_dropout=0,
+            use_gradient_checkpointing=False,
+        )
+
+    def test_push_forwards_kwargs_to_model_and_tokenizer(self, peft_model, monkeypatch):
+        """push_to_hub_merged should forward the same Hub kwargs to tokenizer."""
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        pushed = {}
+
+        def fake_deepcopy(obj):
+            merged = MagicMock()
+            merged_base = MagicMock()
+            merged.merge_and_unload.return_value = merged_base
+            pushed["merged_base"] = merged_base
+            return merged
+
+        monkeypatch.setattr("copy.deepcopy", fake_deepcopy)
+
+        tokenizer = MagicMock()
+        FastDiffusionModel.push_to_hub_merged(
+            peft_model,
+            "user/repo",
+            tokenizer=tokenizer,
+            token="hf_xxx",
+            revision="main",
+            private=True,
+            create_pr=True,
+            commit_message="test commit",
+        )
+
+        pushed["merged_base"].push_to_hub.assert_called_once_with(
+            "user/repo",
+            safe_serialization=True,
+            token="hf_xxx",
+            revision="main",
+            private=True,
+            create_pr=True,
+            commit_message="test commit",
+        )
+        tokenizer.push_to_hub.assert_called_once_with(
+            "user/repo",
+            safe_serialization=True,
+            token="hf_xxx",
+            revision="main",
+            private=True,
+            create_pr=True,
+            commit_message="test commit",
+        )
+
+
+def _all_gc_flags_false(model):
+    flags = [m.gradient_checkpointing for m in model.modules() if hasattr(m, "gradient_checkpointing")]
+    return all(flag is False for flag in flags)
+
+
+def _all_gc_flags_true(model):
+    flags = [m.gradient_checkpointing for m in model.modules() if hasattr(m, "gradient_checkpointing")]
+    return all(flag is True for flag in flags)
