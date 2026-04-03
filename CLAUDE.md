@@ -141,8 +141,9 @@ from unturtle import FastDiffusionModel           # Phase C 追加
 | Phase E | `unturtle/fast_diffusion_model.py` | for_inference / for_training / save_pretrained_merged | ✅ 完了 |
 | Phase F | `unturtle/models/diffusion_generation_utils.py`, `unturtle/models/a2d/generation_utils.py`, `unturtle/models/llada/generation_utils.py` | A2D / LLaDA 生成ユーティリティ (MDLM デノイジングループ) | ✅ 完了 |
 | Phase G | `unturtle/eval/` | 評価ハーネス | ✅ 完了 |
-| Phase H | `tests/models/`, `unturtle/models/a2d/modeling_modernbert.py` | RoPE テスト + ModernBERT A2D | 🚧 進行中 (RoPE 修正/テスト完了、ModernBERT 未着手) |
+| Phase H | `tests/models/`, `unturtle/models/a2d/modeling_modernbert.py` | RoPE テスト + ModernBERT A2D | ✅ 完了 |
 | Phase H+ | `unturtle/models/dream/`, `unturtle/models/llada/`, `unsloth/kernels/rope_embedding.py` | Dream/LLaDA の Triton RoPE 最適化適用可能性を評価 | 📝 backlog (#58) |
+| Phase I | `dev/distributed.md` | 分散学習 (FSDP / DeepSpeed ZeRO) の制約ドキュメント化・推奨設定 | ✅ 完了 (#51) |
 | Phase Z | `unturtle/` 全体 | unsloth 完全移行・依存除去 | 🔲 長期目標 |
 
 ---
@@ -826,3 +827,47 @@ Q, K = fast_rope_embedding(Q, K, cos, sin, rope_indices)
 - repeated/reset された `position_ids` を使う
 - B=2 以上のケースも追加して、バッチをまたいだ flatten row index も検証する
 
+
+---
+
+## 分散学習 (Distributed Training) — 現状と制約
+
+> **Phase I** 対応。ドキュメントは `CLAUDE.md` に統合 (`.gitignore` で `dev/*.md` は追跡対象外のため)。
+
+### サポート状況
+
+| 学習構成 | 状態 | 備考 |
+|---------|------|------|
+| シングル GPU | ✅ 検証済み | 標準的な使用ケース |
+| DDP (DistributedDataParallel) | ⚠️ 未検証 | 理論上は動作するが公式サポートなし |
+| FSDP | ❌ 非推奨 | 既知の制約あり (後述) |
+| DeepSpeed ZeRO-1/2 | ⚠️ 未検証 | unsloth との相性は未確認 |
+| DeepSpeed ZeRO-3 | ❌ 非推奨 | パラメータ分割が Triton カーネルと競合する可能性 |
+
+### FSDP に関する既知の制約
+
+1. **LLaDA は FSDP 非対応**: `unturtle/models/llada/configuration_llada.py` に明記。
+   buffer の FSDP 処理が未定義 (`modeling_llada.py:203`)。
+2. **Triton カーネルと FSDP の stream 競合**: `apply_lora_qkv` 等は `torch.cuda.current_stream()` を前提。
+   FSDP の all-gather stream と競合する可能性がある (未検証)。
+3. **`patch_unsloth_gradient_checkpointing`**: 分散環境での動作は未確認。
+   `DiffusionTrainer` は自動適用しない。
+
+### 推奨設定 (シングル GPU)
+
+```python
+args = DiffusionTrainingArguments(
+    output_dir="output",
+    per_device_train_batch_size=4,
+    gradient_accumulation_steps=4,
+    # fsdp / deepspeed は指定しない
+    bf16=True,
+)
+```
+
+### Phase I 将来対応予定
+
+- A2DLlama / A2DQwen2 での FSDP 最小構成テスト
+- LLaDA FSDP 対応調査 (buffer 問題の根本原因)
+- DeepSpeed ZeRO-2 と Triton カーネルの stream 競合調査
+- `tests/test_distributed.py` 新設
