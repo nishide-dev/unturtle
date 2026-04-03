@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import importlib
 import logging
 import types
 from typing import Any, Literal, Optional
@@ -57,12 +58,22 @@ from peft import LoraConfig, TaskType, get_peft_model
 from peft.tuners.lora import Linear as LoraLinear
 from transformers import AutoConfig, AutoTokenizer
 
-from unsloth.kernels.fast_lora import (
-    apply_lora_mlp_swiglu,
-    apply_lora_o,
-    apply_lora_qkv,
-)
-from unturtle.kernels.fast_lora import apply_lora_qkv_with_bias
+try:
+    from unturtle.kernels.fast_lora import (
+        apply_lora_mlp_swiglu,
+        apply_lora_o,
+        apply_lora_qkv,
+        apply_lora_qkv_with_bias,
+    )
+except (ImportError, OSError, AttributeError) as exc:
+    apply_lora_mlp_swiglu = None
+    apply_lora_o = None
+    apply_lora_qkv = None
+    apply_lora_qkv_with_bias = None
+    _FAST_LORA_IMPORT_ERROR = exc
+else:
+    _FAST_LORA_IMPORT_ERROR = None
+
 from unsloth.models._utils import prepare_model_for_kbit_training
 from unsloth.save import patch_saving_functions
 
@@ -73,6 +84,14 @@ from unturtle.models.a2d._fast_forward import (
 )
 
 _logger = logging.getLogger(__name__)
+
+
+def _require_fast_lora() -> None:
+    if _FAST_LORA_IMPORT_ERROR is not None:
+        raise ImportError(
+            "FastDiffusionModel requires unturtle.kernels.fast_lora and its optional "
+            "bitsandbytes-backed dependencies to be importable."
+        ) from _FAST_LORA_IMPORT_ERROR
 
 
 def _warn_once(msg: str) -> None:
@@ -120,6 +139,9 @@ def _patch_a2d_peft(model: Any, lora_dropout: float, bias: Literal["none", "all"
     # Triton kernels and flash attention require the model to be on CUDA.
     first_param = next(iter(model.parameters()), None)
     on_cuda = first_param is not None and first_param.device.type == "cuda"
+
+    if on_cuda and lora_dropout == 0 and bias == "none":
+        _require_fast_lora()
 
     for layer in layers:
         # --- fast attention (bidirectional) — GPU only ---
@@ -215,6 +237,9 @@ def _patch_dream_peft(
         return n_qkv, n_o, n_mlp
 
     layers = model.base_model.model.model.layers
+
+    if lora_dropout == 0 and bias == "none":
+        _require_fast_lora()
 
     for layer in layers:
         self_attn = layer.self_attn if hasattr(layer, "self_attn") else None
@@ -329,6 +354,9 @@ def _patch_llada_peft(
         return n_qkv, n_o, n_mlp
 
     blocks = transformer.blocks
+
+    if lora_dropout == 0 and bias == "none":
+        _require_fast_lora()
 
     for block in blocks:
         if not isinstance(block, LLaDALlamaBlock):
@@ -449,6 +477,9 @@ def _patch_modernbert_peft(
     if not on_cuda:
         return 0, 0, 0
 
+    if lora_dropout == 0 and bias == "none":
+        _require_fast_lora()
+
     for layer in layers:
         attn = getattr(layer, "attn", None)
         if attn is None:
@@ -488,6 +519,29 @@ def _no_bias(proj: Any) -> bool:
 
 def _no_lora_mag(proj: Any) -> bool:
     return len(getattr(proj, "lora_magnitude_vector", []) or []) == 0
+
+
+def _load_model_with_optional_4bit_fallback(
+    loader: Any,
+    model_name: str,
+    load_kwargs: dict[str, Any],
+) -> Any:
+    try:
+        return loader.from_pretrained(model_name, **load_kwargs)
+    except Exception as exc:  # noqa: BLE001
+        if "quantization_config" not in load_kwargs:
+            raise
+
+        fallback_kwargs = dict(load_kwargs)
+        fallback_kwargs.pop("quantization_config", None)
+        fallback_kwargs.pop("device_map", None)
+        _warn_once(
+            "FastDiffusionModel: 4-bit loading failed — retrying with full-precision loading."
+        )
+        _logger.debug(
+            "FastDiffusionModel: retrying without 4-bit quantization after error: %s", exc
+        )
+        return loader.from_pretrained(model_name, **fallback_kwargs)
 
 
 def _load_model_auto(model_name: str, load_kwargs: dict, trust_remote_code: bool) -> Any:
@@ -533,7 +587,7 @@ def _load_model_auto(model_name: str, load_kwargs: dict, trust_remote_code: bool
                 "FastDiffusionModel: using native unturtle class %s for model_type=%r",
                 native_cls.__name__, model_type,
             )
-            return native_cls.from_pretrained(model_name, **load_kwargs)
+            return _load_model_with_optional_4bit_fallback(native_cls, model_name, load_kwargs)
     except torch.cuda.OutOfMemoryError:
         raise  # OOM should propagate, not fall through to slower AutoModel loaders
     except Exception as exc:  # noqa: BLE001
@@ -547,7 +601,9 @@ def _load_model_auto(model_name: str, load_kwargs: dict, trust_remote_code: bool
     last_exc: Exception | None = None
     for name, loader_cls in loaders:
         try:
-            return loader_cls.from_pretrained(model_name, **load_kwargs)
+            return _load_model_with_optional_4bit_fallback(
+                loader_cls, model_name, load_kwargs
+            )
         except Exception as exc:  # noqa: BLE001
             _logger.debug("FastDiffusionModel: %s failed: %s", name, exc)
             last_exc = exc
@@ -684,23 +740,28 @@ class FastDiffusionModel:
 
         # --- 4-bit quantisation (CUDA only) ---
         if load_in_4bit and not is_on_cpu:
-            try:
-                from transformers import BitsAndBytesConfig
-
-                bnb_config = BitsAndBytesConfig(
-                    load_in_4bit=True,
-                    bnb_4bit_quant_type="nf4",
-                    bnb_4bit_compute_dtype=dtype,
-                    bnb_4bit_use_double_quant=True,
-                )
-                load_kwargs["quantization_config"] = bnb_config
-                # device_map="auto" is required for multi-GPU or when GPU 0 is partially occupied.
-                if "device_map" not in load_kwargs:
-                    load_kwargs["device_map"] = "auto"
-            except ImportError:
+            if importlib.util.find_spec("bitsandbytes") is None:
                 _warn_once(
                     "bitsandbytes not installed — falling back to full-precision loading."
                 )
+            else:
+                try:
+                    from transformers import BitsAndBytesConfig
+
+                    bnb_config = BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_quant_type="nf4",
+                        bnb_4bit_compute_dtype=dtype,
+                        bnb_4bit_use_double_quant=True,
+                    )
+                    load_kwargs["quantization_config"] = bnb_config
+                    # device_map="auto" is required for multi-GPU or when GPU 0 is partially occupied.
+                    if "device_map" not in load_kwargs:
+                        load_kwargs["device_map"] = "auto"
+                except ImportError:
+                    _warn_once(
+                        "bitsandbytes not installed — falling back to full-precision loading."
+                    )
         elif load_in_4bit and is_on_cpu:
             _warn_once(
                 "FastDiffusionModel: load_in_4bit=True requires CUDA — "

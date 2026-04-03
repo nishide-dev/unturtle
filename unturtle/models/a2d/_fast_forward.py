@@ -37,7 +37,7 @@ from typing import Optional, Tuple
 import torch
 from transformers.cache_utils import Cache
 
-from unsloth.kernels.rope_embedding import fast_rope_embedding
+from unturtle.kernels.rope_embedding import fast_rope_embedding
 from unsloth.utils.attention_dispatch import (
     HAS_FLASH_ATTENTION,
     SDPA,

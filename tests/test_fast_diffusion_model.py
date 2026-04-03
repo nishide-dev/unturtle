@@ -169,7 +169,7 @@ class TestGetPeftModel:
         """After get_peft_model, apply_qkv on attention layers should be
         apply_lora_qkv (the Triton kernel) when lora_dropout=0 and bias='none'.
         """
-        from unsloth.kernels.fast_lora import apply_lora_qkv
+        from unturtle.kernels.fast_lora import apply_lora_qkv
 
         from unturtle.fast_diffusion_model import FastDiffusionModel
 
@@ -189,7 +189,7 @@ class TestGetPeftModel:
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="Triton kernels require CUDA")
     def test_apply_o_patched_to_lora(self, tiny_model):
-        from unsloth.kernels.fast_lora import apply_lora_o
+        from unturtle.kernels.fast_lora import apply_lora_o
 
         from unturtle.fast_diffusion_model import FastDiffusionModel
 
@@ -525,7 +525,7 @@ class TestDreamPatching:
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="Triton kernels require CUDA")
     def test_dream_peft_o_proj_patched(self, tiny_dream_model):
         """After get_peft_model, o_proj layers should have apply_o=apply_lora_o."""
-        from unsloth.kernels.fast_lora import apply_lora_o
+        from unturtle.kernels.fast_lora import apply_lora_o
         from unturtle.fast_diffusion_model import FastDiffusionModel
 
         peft_model = FastDiffusionModel.get_peft_model(
@@ -620,7 +620,7 @@ class TestLLaDAPatching:
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="Triton kernels require CUDA")
     def test_llada_peft_attn_out_patched(self, tiny_llada_model):
         """After get_peft_model, attn_out in LLaDALlamaBlocks should have apply_o=apply_lora_o."""
-        from unsloth.kernels.fast_lora import apply_lora_o
+        from unturtle.kernels.fast_lora import apply_lora_o
         from unturtle.fast_diffusion_model import FastDiffusionModel
 
         peft_model = FastDiffusionModel.get_peft_model(
@@ -644,7 +644,7 @@ class TestLLaDAPatching:
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="Triton kernels require CUDA")
     def test_llada_peft_qkv_patched(self, tiny_llada_model):
         """LLaDALlamaBlock q/k/v_proj without bias should get apply_qkv=apply_lora_qkv."""
-        from unsloth.kernels.fast_lora import apply_lora_qkv
+        from unturtle.kernels.fast_lora import apply_lora_qkv
         from unturtle.fast_diffusion_model import FastDiffusionModel
 
         peft_model = FastDiffusionModel.get_peft_model(
