@@ -159,10 +159,13 @@ class DiffusionTrainer(UnslothTrainer):
 
         super().__init__(*pargs, **kwargs)
 
-        # DiffusionTrainer normalizes loss by n_maskable tokens inside compute_loss.
-        # Setting this flag tells the Transformers Trainer NOT to apply its own
-        # gradient-accumulation normalization (loss / current_gradient_accumulation_steps),
-        # which would double-normalize.  See transformers Trainer.training_step L1925.
+        # DiffusionTrainer does NOT use num_items_in_batch in compute_loss.
+        # Setting model_accepts_loss_kwargs=False tells the Transformers Trainer to apply
+        # its standard gradient-accumulation scaling (loss / current_gradient_accumulation_steps).
+        # Note: fused_masked_diffusion_loss already normalizes by n_maskable per microbatch,
+        # so the effective accumulated loss is a mean-of-microbatch-means (approximate token
+        # weighting when token counts vary across microbatches).  This matches the d1/MDLM
+        # reference trainer behavior.  See transformers Trainer.training_step L1925.
         self.model_accepts_loss_kwargs = False
 
         if isinstance(self.data_collator, PackedMaskedDiffusionDataCollator) and self._loss_weight_type != "uniform":
@@ -279,8 +282,6 @@ class DiffusionTrainer(UnslothTrainer):
         **kwargs: Any,
     ) -> GenerationEvaluator:
         tokenizer = tokenizer or getattr(self, "processing_class", None) or getattr(self, "tokenizer", None)
-        if tokenizer is None:
-            raise ValueError("Tokenizer or processing_class is required to build a generation evaluator.")
 
         return GenerationEvaluator(
             model=self.model,

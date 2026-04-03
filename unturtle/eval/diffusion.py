@@ -28,7 +28,22 @@ from .base import BaseEvaluator
 
 
 class MaskedDiffusionEvaluator(BaseEvaluator):
-    """Evaluate masked-diffusion loss metrics on a validation dataset."""
+    """Evaluate masked-diffusion loss metrics on a validation dataset.
+
+    Metrics reported by :meth:`evaluate`:
+
+    - ``eval_loss``: weighted training loss (may use timestep/scheduler weights).
+    - ``eval_masked_token_nll``: unweighted per-maskable-token NLL, matching the
+      MDLM trainer normalization ``token_nll / maskable_mask.sum()`` (mdlm.py L200).
+    - ``eval_perplexity``: ``exp(eval_masked_token_nll)``.
+    - ``eval_mask_rate``: fraction of maskable tokens that were actually masked.
+
+    Note: ``eval_masked_token_nll`` is the *training-objective* NLL evaluated on the
+    validation set with random masking.  It is **not** the MDLM Monte Carlo
+    log-likelihood estimator (which corrects for mask probability via
+    ``CE / p_mask[mask_indices]``).  For a direct comparison with MDLM eval metrics,
+    use a dedicated Monte Carlo evaluator.
+    """
 
     def __init__(
         self,
