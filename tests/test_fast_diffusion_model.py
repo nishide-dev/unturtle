@@ -936,3 +936,88 @@ def _all_gc_flags_false(model):
 def _all_gc_flags_true(model):
     flags = [m.gradient_checkpointing for m in model.modules() if hasattr(m, "gradient_checkpointing")]
     return all(flag is True for flag in flags)
+
+
+# ---------------------------------------------------------------------------
+# ModernBERT PEFT patching tests
+# ---------------------------------------------------------------------------
+
+
+def _tiny_modernbert_config():
+    from unturtle.models.a2d import A2DModernBertConfig
+    return A2DModernBertConfig(
+        vocab_size=1000,
+        hidden_size=128,
+        intermediate_size=256,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        max_position_embeddings=128,
+        pad_token_id=0,
+        bos_token_id=1,
+        eos_token_id=2,
+        cls_token_id=1,
+        sep_token_id=2,
+    )
+
+
+class TestModernBertPeftPatching:
+    """CPU tests for _patch_modernbert_peft and ModernBertAttention_fast_forward."""
+
+    @pytest.fixture
+    def peft_model(self):
+        from peft import LoraConfig, TaskType, get_peft_model
+        from unturtle.models.a2d import A2DModernBertForMaskedLM
+
+        config = _tiny_modernbert_config()
+        model = A2DModernBertForMaskedLM(config)
+        lora_config = LoraConfig(
+            r=4,
+            target_modules=["Wqkv", "Wo"],
+            task_type=TaskType.FEATURE_EXTRACTION,
+            lora_dropout=0,
+            bias="none",
+        )
+        return get_peft_model(model, lora_config)
+
+    def test_patch_peft_model_does_not_raise_on_cpu(self, peft_model):
+        """patch_peft_model must succeed on CPU (Triton skipped gracefully)."""
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+        FastDiffusionModel.patch_peft_model(peft_model, lora_dropout=0, bias="none")
+
+    def test_fast_forward_injected_on_cuda(self, peft_model):
+        """ModernBertAttention_fast_forward must be injected on CUDA."""
+        pytest.importorskip("torch.cuda", reason="CUDA required")
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+        from unturtle.models.a2d._fast_forward import ModernBertAttention_fast_forward
+
+        cuda_model = peft_model.cuda()
+        FastDiffusionModel.patch_peft_model(cuda_model, lora_dropout=0, bias="none")
+
+        for layer in cuda_model.base_model.model.model.layers:
+            assert layer.attn.forward.__func__ is ModernBertAttention_fast_forward, (
+                "ModernBertAttention_fast_forward was not injected on CUDA"
+            )
+
+    def test_forward_logits_shape_after_patch_cpu(self, peft_model):
+        """Forward pass shape is correct after CPU patch (fast_forward not injected)."""
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        FastDiffusionModel.patch_peft_model(peft_model, lora_dropout=0, bias="none")
+        peft_model.eval()
+        B, L = 2, 16
+        input_ids = torch.randint(3, 1000, (B, L))
+        with torch.no_grad():
+            out = peft_model(input_ids=input_ids)
+        assert out.logits.shape == (B, L, 1000)
+
+    def test_apply_wo_stub_installed(self, peft_model):
+        """apply_wo stubs must be present after patching."""
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+        from unturtle.models.a2d._fast_forward import _original_apply_wo
+
+        FastDiffusionModel.patch_peft_model(peft_model, lora_dropout=0, bias="none")
+        for layer in peft_model.base_model.model.model.layers:
+            assert hasattr(layer.attn, "apply_wo"), "apply_wo stub missing after patch"

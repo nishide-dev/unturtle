@@ -66,7 +66,11 @@ from unturtle.kernels.fast_lora import apply_lora_qkv_with_bias
 from unsloth.models._utils import prepare_model_for_kbit_training
 from unsloth.save import patch_saving_functions
 
-from unturtle.models.a2d._fast_forward import A2DAttention_fast_forward
+from unturtle.models.a2d._fast_forward import (
+    A2DAttention_fast_forward,
+    ModernBertAttention_fast_forward,
+    _install_modernbert_stubs,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -92,6 +96,9 @@ _DREAM_MODEL_TYPES = frozenset(["dream", "Dream"])
 
 # LLaDA model_type
 _LLADA_MODEL_TYPES = frozenset(["llada"])
+
+# ModernBERT A2D model_type
+_MODERNBERT_A2D_MODEL_TYPES = frozenset(["a2d-modernbert"])
 
 
 # ---------------------------------------------------------------------------
@@ -397,6 +404,82 @@ def _patch_llada_peft(
             )
 
     return n_qkv, n_o, n_mlp
+
+
+def _patch_modernbert_peft(
+    model: Any, lora_dropout: float, bias: Literal["none", "all", "lora_only"]
+) -> tuple[int, int, int]:
+    """Patch A2DModernBertForMaskedLM with bidirectional fast attention and Triton O-projection.
+
+    ModernBERT uses fused ``Wqkv`` and ``Wo`` (attention) and ``Wi`` / ``Wo`` (MLP).
+    Unlike the LLaMA/Qwen2 path, QKV and MLP Triton kernels are **not** applied
+    in this initial implementation because the fused projection shapes differ from
+    what ``apply_lora_qkv`` / ``apply_lora_mlp_swiglu`` expect.
+
+    What IS patched:
+    - ``layer.attn.forward`` → ``ModernBertAttention_fast_forward`` (CUDA only)
+    - ``layer.attn.Wo``     → ``apply_lora_o`` when conditions allow (CUDA, no dropout, no bias)
+
+    Layer hierarchy:
+        PeftModel → base_model → model (A2DModernBertForMaskedLM)
+            → model (A2DModernBertModel) → layers[i].attn / .mlp
+
+    Returns (n_qkv_patched=0, n_o_patched, n_mlp_patched=0).
+    """
+    n_o = 0
+
+    first_param = next(iter(model.parameters()), None)
+    on_cuda = first_param is not None and first_param.device.type == "cuda"
+
+    # A2DModernBertForMaskedLM wraps A2DModernBertModel in self.model
+    # Path: PeftModel → base_model → model (LM) → model (encoder) → layers
+    try:
+        layers = model.base_model.model.model.layers
+    except AttributeError:
+        _warn_once(
+            "FastDiffusionModel (ModernBERT): could not locate model.layers — "
+            "is this a valid A2DModernBertForMaskedLM PEFT model?"
+        )
+        return 0, 0, 0
+
+    # Install apply_wo stubs unconditionally (CPU + CUDA) so fast_forward
+    # and downstream code can dispatch through apply_wo regardless of device.
+    _install_modernbert_stubs(model)
+
+    if not on_cuda:
+        return 0, 0, 0
+
+    for layer in layers:
+        attn = getattr(layer, "attn", None)
+        if attn is None:
+            continue
+
+        # Always inject bidirectional fast-forward on CUDA
+        attn.forward = types.MethodType(ModernBertAttention_fast_forward, attn)
+
+        if lora_dropout != 0 or bias != "none":
+            continue
+
+        # Wo output projection — apply Triton apply_lora_o when conditions met
+        wo = getattr(attn, "Wo", None)
+        if (
+            wo is not None
+            and hasattr(wo, "lora_A")
+            and _no_bias(wo)
+            and _no_lora_mag(wo)
+        ):
+            # Redirect apply_wo to Triton apply_lora_o.
+            # apply_lora_o reads self.o_proj — we alias Wo as o_proj for compatibility.
+            attn.o_proj = attn.Wo
+            attn.apply_wo = apply_lora_o
+            n_o += 1
+        elif wo is not None and not hasattr(wo, "lora_A"):
+            _warn_once(
+                "FastDiffusionModel (ModernBERT): Wo has no LoRA adapter — "
+                "is 'Wo' in target_modules?"
+            )
+
+    return 0, n_o, 0
 
 
 def _no_bias(proj: Any) -> bool:
@@ -758,11 +841,23 @@ class FastDiffusionModel:
                 f"FastDiffusionModel (LLaDA) patched {n_blocks} blocks with "
                 f"{n_qkv} QKV blocks and {n_o} O (attn_out) blocks."
             )
+        elif model_type in _MODERNBERT_A2D_MODEL_TYPES:
+            _n_qkv, n_o, _n_mlp = _patch_modernbert_peft(model, lora_dropout, bias)
+            n_layers = len(model.base_model.model.model.layers)
+            _warn_once(
+                f"FastDiffusionModel (ModernBERT) patched {n_layers} layers with "
+                f"{n_o} Wo (output proj) layers. "
+                "Wqkv/MLP Triton kernels not yet supported for ModernBERT — "
+                "see issue #59 Phase 2."
+            )
         else:
             raise NotImplementedError(
                 f"FastDiffusionModel does not yet support model_type={model_type!r}. "
                 "Supported types: "
-                + ", ".join(sorted(_A2D_MODEL_TYPES | _DREAM_MODEL_TYPES | _LLADA_MODEL_TYPES))
+                + ", ".join(sorted(
+                    _A2D_MODEL_TYPES | _DREAM_MODEL_TYPES
+                    | _LLADA_MODEL_TYPES | _MODERNBERT_A2D_MODEL_TYPES
+                ))
             )
 
         # Propagate max_seq_length through the wrapped model hierarchy
