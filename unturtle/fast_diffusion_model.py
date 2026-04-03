@@ -36,10 +36,17 @@ Usage::
                         "gate_proj", "up_proj", "down_proj"],
         lora_alpha=16,
     )
+
+    # Switch to inference mode (eval + no_grad context manager)
+    FastDiffusionModel.for_inference(model)
+
+    # Save LoRA-merged weights
+    FastDiffusionModel.save_pretrained_merged(model, "output/merged", tokenizer)
 """
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import logging
 import types
@@ -699,6 +706,7 @@ class FastDiffusionModel:
             use_reentrant=True,
         )
         model = get_peft_model(model, lora_config)
+        model._unturtle_gradient_checkpointing_mode = use_gradient_checkpointing
 
         FastDiffusionModel.patch_peft_model(model, lora_dropout=lora_dropout, bias=bias)
         patch_saving_functions(model)
@@ -761,6 +769,150 @@ class FastDiffusionModel:
         if hasattr(model, "max_seq_length"):
             _propagate_max_seq_length(model, model.max_seq_length)
 
+    @staticmethod
+    def for_inference(model: Any) -> Any:
+        """Switch model to inference mode.
+
+        Sets ``model.eval()`` and disables gradient checkpointing so that
+        inference is as fast as possible.  Returns the model for convenience.
+
+        Note: dLLMs do not use KV cache, so there is no cache-enabling step
+        unlike ``FastLanguageModel.for_inference`` for AR models.
+
+        Usage::
+
+            FastDiffusionModel.for_inference(model)
+            with torch.no_grad():
+                logits = model(**inputs).logits
+
+        Args:
+            model: A dLLM model (plain or PEFT-wrapped).
+
+        Returns:
+            The same model in eval mode.
+        """
+        model.eval()
+        _apply_gradient_checkpointing_mode(model, False)
+        return model
+
+    @staticmethod
+    def for_training(model: Any, use_gradient_checkpointing: bool | str = True) -> Any:
+        """Switch model back to training mode and re-enable gradient checkpointing.
+
+        Args:
+            model:                      A dLLM model (plain or PEFT-wrapped).
+            use_gradient_checkpointing: ``True`` / ``"unsloth"`` to enable GC,
+                                        ``False`` to leave it disabled.
+
+        Returns:
+            The same model in train mode.
+        """
+        model.train()
+        _apply_gradient_checkpointing_mode(model, use_gradient_checkpointing)
+        return model
+
+    @staticmethod
+    def save_pretrained_merged(
+        model: Any,
+        save_directory: str,
+        tokenizer: Any = None,
+        safe_serialization: bool = True,
+        **kwargs: Any,
+    ) -> None:
+        """Merge LoRA adapters into the base weights and save.
+
+        Calls PEFT's ``merge_and_unload()`` on a copy of the model, then saves
+        the merged weights with ``save_pretrained``.  The original model
+        (with adapters) is left unchanged.
+
+        Args:
+            model:              PEFT-wrapped dLLM model (output of ``get_peft_model``).
+            save_directory:     Local directory path to save the merged model.
+            tokenizer:          Optional tokenizer to save alongside the model.
+            safe_serialization: Use safetensors format (recommended).
+            **kwargs:           Forwarded to ``save_pretrained``.
+        """
+        import copy
+
+        _logger.info("FastDiffusionModel: merging LoRA adapters into base weights …")
+        merged = copy.deepcopy(model)
+        # merge_and_unload returns the unwrapped base model with adapters merged.
+        merged = merged.merge_and_unload()
+        merged.save_pretrained(
+            save_directory,
+            safe_serialization=safe_serialization,
+            **kwargs,
+        )
+        _logger.info("FastDiffusionModel: merged model saved to %r", save_directory)
+        if tokenizer is not None:
+            tokenizer.save_pretrained(save_directory)
+            _logger.info("FastDiffusionModel: tokenizer saved to %r", save_directory)
+
+    @staticmethod
+    def push_to_hub_merged(
+        model: Any,
+        repo_id: str,
+        tokenizer: Any = None,
+        safe_serialization: bool = True,
+        token: Optional[str] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Merge LoRA adapters and push merged weights to the HuggingFace Hub.
+
+        Merges adapters via PEFT's ``merge_and_unload()`` then calls
+        ``push_to_hub`` on the merged model.  The original model is unchanged.
+
+        Args:
+            model:              PEFT-wrapped dLLM model.
+            repo_id:            HuggingFace Hub repository id (e.g. ``"user/my-model"``).
+            tokenizer:          Optional tokenizer to push alongside the model.
+            safe_serialization: Use safetensors format.
+            token:              HuggingFace auth token.
+            **kwargs:           Forwarded to ``push_to_hub``.
+        """
+        import copy
+
+        _logger.info("FastDiffusionModel: merging LoRA adapters for Hub push …")
+        merged = copy.deepcopy(model)
+        merged = merged.merge_and_unload()
+
+        push_kwargs: dict[str, Any] = dict(safe_serialization=safe_serialization, **kwargs)
+        if token is not None:
+            push_kwargs["token"] = token
+
+        merged.push_to_hub(repo_id, **push_kwargs)
+        _logger.info("FastDiffusionModel: merged model pushed to %r", repo_id)
+        if tokenizer is not None:
+            tokenizer.push_to_hub(repo_id, **push_kwargs)
+
+    @staticmethod
+    @contextlib.contextmanager
+    def inference_context(model: Any):
+        """Context manager that temporarily switches to inference mode.
+
+        Restores training mode on exit.
+
+        Usage::
+
+            with FastDiffusionModel.inference_context(model):
+                logits = model(**inputs).logits
+
+        Args:
+            model: A dLLM model (plain or PEFT-wrapped).
+        """
+        was_training = model.training
+        gc_mode = _get_gradient_checkpointing_mode(model)
+        FastDiffusionModel.for_inference(model)
+        try:
+            with torch.no_grad():
+                yield model
+        finally:
+            if was_training:
+                FastDiffusionModel.for_training(model, use_gradient_checkpointing=gc_mode)
+            else:
+                model.eval()
+                _apply_gradient_checkpointing_mode(model, gc_mode)
+
 
 # ---------------------------------------------------------------------------
 # Private helpers
@@ -788,3 +940,36 @@ def _install_apply_stubs(model: Any) -> None:
                 module.apply_qkv = _original_apply_qkv
             if not hasattr(module, "apply_o"):
                 module.apply_o = _original_apply_o
+
+
+def _get_gradient_checkpointing_mode(model: Any) -> bool | str:
+    """Return the current gradient-checkpointing mode tracked by unturtle.
+
+    We explicitly track the requested mode because a temporary inference pass
+    should be reversible: `True`, `False`, and `"unsloth"` need to round-trip.
+    Falling back to module flags loses the distinction between `True` and
+    `"unsloth"`.
+    """
+    if hasattr(model, "_unturtle_gradient_checkpointing_mode"):
+        return model._unturtle_gradient_checkpointing_mode
+
+    for module in model.modules():
+        if hasattr(module, "gradient_checkpointing"):
+            return bool(module.gradient_checkpointing)
+    return False
+
+
+def _apply_gradient_checkpointing_mode(model: Any, mode: bool | str) -> None:
+    """Apply and persist a gradient-checkpointing mode to all reachable modules."""
+    model._unturtle_gradient_checkpointing_mode = mode
+
+    for module in model.modules():
+        if hasattr(module, "gradient_checkpointing"):
+            module.gradient_checkpointing = bool(mode)
+
+    if bool(mode):
+        if hasattr(model, "gradient_checkpointing_enable"):
+            model.gradient_checkpointing_enable()
+    else:
+        if hasattr(model, "gradient_checkpointing_disable"):
+            model.gradient_checkpointing_disable()
