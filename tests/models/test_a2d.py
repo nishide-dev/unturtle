@@ -580,15 +580,31 @@ def _make_cos_sin(
     dtype: torch.dtype = torch.float32,
     device: str = "cpu",
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Build cos/sin of shape (B, L, head_dim) compatible with _rotate_half_rope."""
+    """Build sequential cos/sin of shape (B, L, head_dim)."""
+    position_ids = torch.arange(L, dtype=torch.long).unsqueeze(0).expand(B, -1)
+    return _make_cos_sin_from_position_ids(
+        position_ids=position_ids,
+        head_dim=head_dim,
+        dtype=dtype,
+        device=device,
+    )
+
+
+
+def _make_cos_sin_from_position_ids(
+    position_ids: torch.Tensor,
+    head_dim: int,
+    dtype: torch.dtype = torch.float32,
+    device: str = "cpu",
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Build cos/sin of shape (B, L, head_dim) for arbitrary position_ids."""
     theta = 1.0 / (
         10000 ** (torch.arange(0, head_dim, 2, dtype=torch.float32) / head_dim)
     )
-    pos = torch.arange(L, dtype=torch.float32)
-    freqs = torch.outer(pos, theta)               # (L, head_dim // 2)
-    emb = torch.cat([freqs, freqs], dim=-1)        # (L, head_dim)
-    cos = emb.cos().unsqueeze(0).expand(B, -1, -1).to(dtype=dtype).to(device)
-    sin = emb.sin().unsqueeze(0).expand(B, -1, -1).to(dtype=dtype).to(device)
+    freqs = position_ids[..., None].to(torch.float32) * theta.view(1, 1, -1)
+    emb = torch.cat([freqs, freqs], dim=-1)
+    cos = emb.cos().to(dtype=dtype).to(device)
+    sin = emb.sin().to(dtype=dtype).to(device)
     return cos, sin
 
 
@@ -617,20 +633,18 @@ class TestA2DRoPE:
         )
 
     def test_l2_norm_preserved_with_position_ids(self):
-        """L2 norm must be preserved even when position_ids is passed explicitly.
-
-        Note: ``_rotate_half_rope`` currently ignores ``position_ids`` and applies
-        the full cos/sin slice directly.  Sequential position_ids=[0,1,...,L-1]
-        therefore yields the same result as position_ids=None.
-        """
+        """RoPE norm preservation must hold for packed-style repeated position_ids."""
         from unturtle.models.a2d._fast_forward import _rotate_half_rope
 
         B, n_heads, L, head_dim = 2, 4, 8, 16
         torch.manual_seed(1)
         Q = torch.randn(B, n_heads, L, head_dim)
         K = torch.randn(B, n_heads, L, head_dim)
-        cos, sin = _make_cos_sin(B, L, head_dim)
-        position_ids = torch.arange(L).unsqueeze(0).expand(B, -1).long()  # (B, L)
+        position_ids: torch.LongTensor = torch.tensor(
+            [[0, 1, 2, 3, 0, 1, 2, 3], [0, 0, 1, 1, 2, 2, 3, 3]],
+            dtype=torch.long,
+        )
+        cos, sin = _make_cos_sin_from_position_ids(position_ids, head_dim)
 
         Q_out, K_out = _rotate_half_rope(Q, K, cos, sin, position_ids=position_ids)
 
@@ -640,12 +654,6 @@ class TestA2DRoPE:
         torch.testing.assert_close(
             K_out.norm(dim=-1), K.norm(dim=-1), atol=1e-5, rtol=1e-5,
         )
-
-        # Sequential position_ids must produce the same result as position_ids=None
-        # (documents current pass-through behavior; will catch future regressions)
-        Q_out_none, K_out_none = _rotate_half_rope(Q, K, cos, sin, position_ids=None)
-        torch.testing.assert_close(Q_out, Q_out_none)
-        torch.testing.assert_close(K_out, K_out_none)
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
     def test_cpu_matches_cuda_no_position_ids(self):
@@ -684,7 +692,7 @@ class TestA2DRoPE:
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
     def test_cpu_matches_cuda_with_position_ids(self):
-        """CPU _rotate_half_rope must match CUDA fast_rope_embedding (with position_ids)."""
+        """CPU fallback must match indexed CUDA RoPE for packed-style position_ids."""
         from unturtle.models.a2d._fast_forward import _rotate_half_rope
 
         try:
@@ -696,20 +704,20 @@ class TestA2DRoPE:
         torch.manual_seed(3)
         Q_cpu = torch.randn(B, n_heads, L, head_dim)
         K_cpu = torch.randn(B, n_heads, L, head_dim)
-        cos_cpu, sin_cpu = _make_cos_sin(B, L, head_dim)
-        position_ids = torch.arange(L).unsqueeze(0).long()  # (1, L)
+        position_ids: torch.LongTensor = torch.tensor(
+            [[0, 1, 2, 3, 0, 1, 2, 3]], dtype=torch.long
+        )
+        cos_cpu, sin_cpu = _make_cos_sin_from_position_ids(position_ids, head_dim)
 
         Q_out_cpu, K_out_cpu = _rotate_half_rope(
             Q_cpu, K_cpu, cos_cpu, sin_cpu, position_ids=position_ids
         )
 
-        # For the indexed CUDA path, pass cos/sin as (L, head_dim) and
-        # rope_embedding_indices as flat (B*L,) = (L,) for B=1.
         Q_cuda = Q_cpu.cuda().to(torch.bfloat16)
         K_cuda = K_cpu.cuda().to(torch.bfloat16)
-        cos_cuda = cos_cpu.squeeze(0).cuda().to(torch.bfloat16)   # (L, head_dim)
+        cos_cuda = cos_cpu.squeeze(0).cuda().to(torch.bfloat16)
         sin_cuda = sin_cpu.squeeze(0).cuda().to(torch.bfloat16)
-        rope_indices = position_ids.reshape(-1).cuda()             # (L,)
+        rope_indices = position_ids.reshape(-1).cuda()
 
         Q_out_cuda, K_out_cuda = fast_rope_embedding(
             Q_cuda, K_cuda, cos_cuda, sin_cuda,
