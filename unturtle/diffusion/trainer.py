@@ -159,6 +159,12 @@ class DiffusionTrainer(UnslothTrainer):
 
         super().__init__(*pargs, **kwargs)
 
+        # DiffusionTrainer normalizes loss by n_maskable tokens inside compute_loss.
+        # Setting this flag tells the Transformers Trainer NOT to apply its own
+        # gradient-accumulation normalization (loss / current_gradient_accumulation_steps),
+        # which would double-normalize.  See transformers Trainer.training_step L1925.
+        self.model_accepts_loss_kwargs = False
+
         if isinstance(self.data_collator, PackedMaskedDiffusionDataCollator) and self._loss_weight_type != "uniform":
             raise ValueError(
                 "PackedMaskedDiffusionDataCollator is not supported for diffusion training with "
@@ -298,8 +304,7 @@ class DiffusionTrainer(UnslothTrainer):
         self,
         dataset: Any,
         generation_config: Any | None = None,
-        batch_size: int = 1,
-        max_batches: int | None = None,
+        max_examples: int | None = None,
         metric_key_prefix: str = "gen",
         **kwargs: Any,
     ) -> dict[str, float]:
@@ -307,6 +312,5 @@ class DiffusionTrainer(UnslothTrainer):
         return evaluator.evaluate(
             dataset=dataset,
             generation_config=generation_config,
-            batch_size=batch_size,
-            max_batches=max_batches,
+            max_examples=max_examples,
         )

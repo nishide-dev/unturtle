@@ -107,11 +107,8 @@ class GenerationEvaluator(BaseEvaluator):
         self,
         dataset: Any,
         generation_config: Any | None = None,
-        batch_size: int = 1,
-        max_batches: int | None = None,
+        max_examples: int | None = None,
     ) -> dict[str, float]:
-        del batch_size  # current implementation evaluates one prompt at a time
-
         total_examples = 0
         exact_matches = 0
         correct_tokens = 0
@@ -119,14 +116,14 @@ class GenerationEvaluator(BaseEvaluator):
 
         with self.evaluation_mode():
             for idx, example in enumerate(dataset):
-                if max_batches is not None and idx >= max_batches:
+                if max_examples is not None and idx >= max_examples:
                     break
 
                 prompt_ids, reference_ids, attention_mask = self._extract_prompt_and_reference(example)
                 generated = self._generate_one(prompt_ids, generation_config, reference_ids, attention_mask)
 
                 if reference_ids is None or reference_ids.numel() == 0:
-                    total_examples += 1
+                    # No reference to score — skip without counting
                     continue
 
                 prompt_len = int(prompt_ids.numel())
