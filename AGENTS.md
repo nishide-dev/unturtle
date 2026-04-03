@@ -94,11 +94,15 @@ python -m pytest tests/ -v  # (no -race for Python, but run on GPU if kernel cha
    - For transformers API compatibility (post_init, tie_weights, BnB quantizer, init_weights):
      `dev/repos/transformers/src/transformers/modeling_utils.py`,
      `dev/repos/transformers/src/transformers/integrations/bitsandbytes.py`
+   - For KV cache / block decoding (Phase J):
+     `dev/repos/fast-dllm/dream/model/generation_utils_block.py`,
+     `dev/repos/fast-dllm/llada/model/modeling_llada.py`
    - If `dev/repos/` is not cloned, run:
      ```bash
      git clone https://github.com/dllm-reasoning/d1.git dev/repos/d1
      git clone https://github.com/zhziszz/dllm.git dev/repos/dllm
      git clone --depth=1 https://github.com/huggingface/transformers.git dev/repos/transformers
+     git clone --depth=1 https://github.com/NVlabs/Fast-dLLM.git dev/repos/fast-dllm
      ```
 
 2. **Behavioral differences from reference must be intentional** — Do not classify a

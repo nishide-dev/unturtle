@@ -63,6 +63,11 @@ from unturtle.kernels.fused_masked_diffusion_loss import (  # noqa: F401
     fused_masked_diffusion_loss,
 )
 from unturtle.fast_diffusion_model import FastDiffusionModel  # noqa: F401
+from unturtle.eval import (  # noqa: F401
+    BaseEvaluator,
+    GenerationEvaluator,
+    MaskedDiffusionEvaluator,
+)
 
 # ---------------------------------------------------------------------------
 # dLLM model classes

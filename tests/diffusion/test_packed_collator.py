@@ -94,14 +94,14 @@ class TestPackedShape:
             assert real > 0, "No real tokens in row"
             assert real <= 32
 
-    def test_labels_minus100_at_unmasked(self, collator):
-        """positions not in diffusion_mask must have label == -100."""
+    def test_labels_preserve_maskable_targets(self, collator):
+        """Real non-padding positions must keep their clean target ids."""
         samples = _make_samples(4, 8)
         batch = collator(samples)
-        dm = batch["diffusion_mask"]  # [B, L] bool
-        lbl = batch["labels"]         # [B, L]
-        # Unmasked non-padding positions should be -100
-        assert (lbl[~dm] == -100).all(), "Un-masked positions must have label -100"
+        attn = batch["attention_mask"].bool()
+        lbl = batch["labels"]
+        assert (lbl[attn] != -100).all(), "Real positions must keep clean labels"
+        assert (lbl[~attn] == -100).all(), "Padding positions must remain -100"
 
     def test_position_ids_reset_per_sample(self, collator):
         """position_ids must restart from 0 for each packed sample."""
@@ -285,9 +285,23 @@ class TestAttentionBoundaries:
         samples = _make_samples(2, 6)
         batch = coll(samples)
         assert "block_attention_mask" in batch
-        B, one, L1, L2 = batch["block_attention_mask"].shape
+        _, one, L1, L2 = batch["block_attention_mask"].shape
         assert one == 1
         assert L1 == L2 == 16
+
+    def test_block_diagonal_mask_present_even_when_flash_available(self, tokenizer, monkeypatch):
+        """CPU/SDPA fallback still needs block_attention_mask even if flash_attn is importable."""
+        from unturtle.diffusion import packed_collator as pc
+        monkeypatch.setattr(pc, "_FLASH_ATTN_AVAILABLE", True)
+
+        from unturtle.diffusion.packed_collator import PackedMaskedDiffusionDataCollator
+        coll = PackedMaskedDiffusionDataCollator(
+            tokenizer=tokenizer,
+            max_seq_length=16,
+            completion_only=False,
+        )
+        batch = coll(_make_samples(2, 6))
+        assert "block_attention_mask" in batch
 
     def test_samples_do_not_attend_across_boundaries(self, tokenizer, monkeypatch):
         """In the block-diagonal mask, positions from different samples must not attend."""

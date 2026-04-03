@@ -147,14 +147,15 @@ class PackedMaskedDiffusionDataCollator:
         if self.completion_only and "labels" in feature:
             raw_labels = list(feature["labels"])[:length]
             maskable = [lbl != -100 for lbl in raw_labels]
+            labels = list(raw_labels)
         else:
             # attention_mask or all-True
             if "attention_mask" in feature:
                 maskable = [bool(m) for m in list(feature["attention_mask"])[:length]]
             else:
                 maskable = [True] * length
+            labels = list(ids)
 
-        labels = list(ids)  # clean token ids (will be modified in-place below)
         return ids, labels, maskable
 
     def _pack_samples(
@@ -193,7 +194,7 @@ class PackedMaskedDiffusionDataCollator:
 
         Returns a dict with keys:
           ``input_ids``       – [B, max_seq_length] packed + padded noised ids
-          ``labels``          – [B, max_seq_length] clean ids at masked pos, -100 else
+          ``labels``          – [B, max_seq_length] clean ids at maskable pos, -100 at prompt/pad
           ``attention_mask``  – [B, max_seq_length] 1 at real tokens, 0 at pad
           ``diffusion_mask``  – [B, max_seq_length] bool, True at masked positions
           ``timesteps``           – [B] mean ``t`` per row (DiffusionTrainer compatible)
@@ -247,9 +248,7 @@ class PackedMaskedDiffusionDataCollator:
                 ts.append(t_val)
 
                 # Compute masking probability and Bernoulli mask
-                alpha_t = self.scheduler.alpha(
-                    torch.tensor([t_val])
-                ).item()
+                alpha_t = float(torch.as_tensor(self.scheduler.alpha(torch.tensor([t_val]))).item())
                 p_mask = 1.0 - alpha_t
 
                 rand = torch.rand(slen)
@@ -260,9 +259,8 @@ class PackedMaskedDiffusionDataCollator:
                 noised = torch.tensor(ids, dtype=torch.long)
                 noised[diff_mask] = self.mask_token_id
 
-                # Build labels for this sample: clean at masked, -100 elsewhere
+                # Keep clean labels for all maskable positions; prompt/pad stay -100.
                 lbl = torch.tensor(clean_labels, dtype=torch.long)
-                lbl[~diff_mask] = -100
 
                 # Position ids restart at 0 for each sample in the packed seq
                 pos = torch.arange(slen, dtype=torch.long)
@@ -311,28 +309,21 @@ class PackedMaskedDiffusionDataCollator:
             "sample_timesteps": all_timesteps,     # list[Tensor] — per-sample granularity
         }
 
-        # 4. Build attention bias for the model forward pass
-        if _FLASH_ATTN_AVAILABLE:
-            # Flash Attention varlen path: just pass cu_seqlens.
-            # The model's A2DAttention_fast_forward reads cu_seqlens from
-            # get_packed_info_from_kwargs when attention_mask shape triggers it.
-            # We keep attention_mask as the standard 2D mask; cu_seqlens is the
-            # authoritative source for Flash Attention block boundaries.
-            pass  # cu_seqlens already in batch
-        else:
-            # SDPA fallback: build a dense block-diagonal mask for each batch element.
-            # Shape: [B, 1, L, L] — True where attention is allowed.
-            device = out_input_ids.device
-            sdpa_masks = []
-            for b, (group, _) in enumerate(packed_groups):
-                seq_lens_b = [len(s[0]) for s in group]
-                total = sum(seq_lens_b)
-                m = _build_block_diagonal_mask(seq_lens_b, total, device)
-                # Pad to [1, 1, L, L]
-                padded = torch.zeros(1, 1, L, L, dtype=torch.bool, device=device)
-                padded[:, :, :total, :total] = m
-                sdpa_masks.append(padded)
-            batch["block_attention_mask"] = torch.cat(sdpa_masks, dim=0)  # [B, 1, L, L]
+        # 4. Always build the dense block-diagonal mask for non-Flash fallbacks.
+        # Even when flash_attn is installed, CPU execution and other fallback paths
+        # still need an explicit bidirectional block mask to preserve sample boundaries.
+        device = out_input_ids.device
+        sdpa_masks = []
+        for group, _ in packed_groups:
+            seq_lens_b = [len(s[0]) for s in group]
+            total = sum(seq_lens_b)
+            m = _build_block_diagonal_mask(seq_lens_b, total, device)
+            padded = torch.zeros(1, 1, L, L, dtype=torch.bool, device=device)
+            padded[:, :, :total, :total] = m
+            sdpa_masks.append(padded)
+        batch["block_attention_mask"] = torch.cat(sdpa_masks, dim=0)  # [B, 1, L, L]
+
+        if not _FLASH_ATTN_AVAILABLE:
             logger.debug(
                 "PackedMaskedDiffusionDataCollator: Flash Attention not available, "
                 "using dense block-diagonal SDPA mask."
