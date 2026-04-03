@@ -1549,6 +1549,17 @@ class LLaDAModelLM(LLaDAGenerationMixin, LLaDAPreTrainedModel):
     def can_generate(self) -> bool:
         return True
 
+    def generate(self, inputs=None, **kwargs):
+        """Redirect HF autoregressive ``generate()`` to ``diffusion_generate()``.
+
+        LLaDA uses MDLM-style masked diffusion, not autoregressive KV-cache
+        generation.  Calling HF's inherited ``generate()`` would invoke
+        ``prepare_inputs_for_generation()`` (AR protocol) and produce incorrect
+        output.  This override ensures that ``model.generate(...)`` always
+        routes to :meth:`diffusion_generate`.
+        """
+        return self.diffusion_generate(inputs, **kwargs)
+
     # TODO: these are required to make the implementation complete.
     # def resize_position_embeddings(self, new_num_position_embeddings: int):
     #     pass

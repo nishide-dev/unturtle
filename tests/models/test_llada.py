@@ -187,3 +187,51 @@ class TestLLaDAGeneration:
                 model.diffusion_generate(input_ids, steps=1, max_length=L + 1)
         finally:
             model.config.mask_token_id = original
+
+    def test_attention_mask_2d(self, model):
+        """Padded attention_mask (2-D) should be forwarded correctly to LLaDA.
+
+        Exercises the LLaDAGenerationMixin override that keeps the mask 2-D
+        instead of expanding to 4-D (which LLaDAModel cannot handle).
+        """
+        B, L = 2, 10
+        # Second sequence is shorter — last 2 positions are padding
+        input_ids = torch.full((B, L), self.TINY_MASK_ID, dtype=torch.long)
+        attention_mask = torch.ones((B, L), dtype=torch.long)
+        attention_mask[1, -2:] = 0  # simulate padding in second sample
+        with torch.no_grad():
+            out = model.diffusion_generate(
+                input_ids,
+                attention_mask=attention_mask,
+                steps=2,
+                mask_token_id=self.TINY_MASK_ID,
+                max_length=L + 1,
+            )
+        assert out.shape == (B, L + 1)
+
+    def test_generate_redirects_to_diffusion_generate(self, model):
+        """model.generate() must route to diffusion_generate(), not HF AR generate()."""
+        B, L = 1, 6
+        input_ids = torch.full((B, L), self.TINY_MASK_ID, dtype=torch.long)
+        with torch.no_grad():
+            out = model.generate(
+                input_ids,
+                steps=2,
+                mask_token_id=self.TINY_MASK_ID,
+                max_length=L + 1,
+            )
+        assert out.shape == (B, L + 1)
+
+    def test_num_return_sequences(self, model):
+        """num_return_sequences=2 should double the batch dimension."""
+        B, L = 1, 6
+        input_ids = torch.full((B, L), self.TINY_MASK_ID, dtype=torch.long)
+        with torch.no_grad():
+            out = model.diffusion_generate(
+                input_ids,
+                steps=2,
+                mask_token_id=self.TINY_MASK_ID,
+                max_length=L + 1,
+                num_return_sequences=2,
+            )
+        assert out.shape == (B * 2, L + 1)
