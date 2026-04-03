@@ -848,6 +848,15 @@ class TestA2DModernBert:
         assert isinstance(model.model, A2DModernBertModel)
         assert hasattr(model, "decoder")
 
+    def test_decoder_weight_tied_to_embeddings(self, config):
+        """decoder.weight must be tied to tok_embeddings.weight after model swap."""
+        from unturtle.models.a2d import A2DModernBertForMaskedLM
+        model = A2DModernBertForMaskedLM(config)
+        assert model.decoder.weight is model.model.embeddings.tok_embeddings.weight, (
+            "decoder.weight and tok_embeddings.weight are not the same tensor — "
+            "tie_weights() was not called after self.model replacement."
+        )
+
     def test_forward_logits_shape(self, config):
         from unturtle.models.a2d import A2DModernBertForMaskedLM
         model = A2DModernBertForMaskedLM(config)

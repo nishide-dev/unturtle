@@ -67,7 +67,10 @@ class A2DModernBertForMaskedLM(A2DGenerationMixin, ModernBertForMaskedLM):
     def __init__(self, config: A2DModernBertConfig):
         super().__init__(config)
         # Replace ModernBertModel with A2DModernBertModel so config_class is correct.
+        # tie_weights() must be called after the swap to restore the decoder↔embedding tie
+        # that post_init() established against the original ModernBertModel instance.
         self.model = A2DModernBertModel(config)
+        self.tie_weights()
 
 
 transformers.AutoConfig.register("a2d-modernbert", A2DModernBertConfig)
