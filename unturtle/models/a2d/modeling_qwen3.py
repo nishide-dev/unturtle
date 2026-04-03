@@ -41,6 +41,8 @@ from transformers.modeling_attn_mask_utils import _prepare_4d_attention_mask
 from transformers.processing_utils import Unpack
 from transformers.utils import TransformersKwargs
 
+from .generation_utils import A2DGenerationMixin
+
 if transformers.utils.is_torch_flex_attn_available():
     from torch.nn.attention.flex_attention import BlockMask
 else:
@@ -122,7 +124,7 @@ class A2DQwen3Model(transformers.Qwen3Model):
         )
 
 
-class A2DQwen3LMHeadModel(transformers.Qwen3ForCausalLM):
+class A2DQwen3LMHeadModel(A2DGenerationMixin, transformers.Qwen3ForCausalLM):
     config: A2DQwen3Config
 
     def __init__(self, config):

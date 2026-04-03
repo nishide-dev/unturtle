@@ -36,6 +36,8 @@ import torch
 from torch import nn
 
 import transformers
+
+from .generation_utils import A2DGenerationMixin
 from transformers.cache_utils import Cache, DynamicCache
 from transformers.modeling_outputs import BaseModelOutputWithPast
 from transformers.modeling_attn_mask_utils import _prepare_4d_attention_mask
@@ -119,7 +121,7 @@ class A2DLlamaModel(transformers.LlamaModel):
         )
 
 
-class A2DLlamaLMHeadModel(transformers.LlamaForCausalLM):
+class A2DLlamaLMHeadModel(A2DGenerationMixin, transformers.LlamaForCausalLM):
     config: A2DLlamaConfig
 
     def __init__(self, config):

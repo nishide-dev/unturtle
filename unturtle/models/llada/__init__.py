@@ -37,6 +37,7 @@ from .configuration_llada import (
     InitFnType,
     ActivationCheckpointingStrategy,
 )
+from .generation_utils import LLaDAGenerationConfig, LLaDAGenerationMixin
 from .modeling_llada import (
     LLaDAPreTrainedModel,
     LLaDAModel,
@@ -44,6 +45,8 @@ from .modeling_llada import (
 )
 
 __all__ = [
+    "LLaDAGenerationConfig",
+    "LLaDAGenerationMixin",
     "LLaDAConfig",
     "ModelConfig",
     "LayerNormType",

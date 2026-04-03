@@ -47,6 +47,8 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.models.auto import AutoModel
 from transformers.cache_utils import Cache
 
+from .generation_utils import LLaDAGenerationMixin
+
 from .configuration_llada import (
     LLaDAConfig,
     StrEnum,
@@ -1461,7 +1463,7 @@ def create_model_config_from_pretrained_config(config: LLaDAConfig):
     return model_config
 
 
-class LLaDAModelLM(LLaDAPreTrainedModel):
+class LLaDAModelLM(LLaDAGenerationMixin, LLaDAPreTrainedModel):
     """
     Extremely barebones HF model wrapper.
     """
@@ -1546,18 +1548,6 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
 
     def can_generate(self) -> bool:
         return True
-
-    def prepare_inputs_for_generation(
-        self, input_ids: torch.LongTensor, past_key_values: Optional[List[Tuple]] = None, **kwargs
-    ):
-        if past_key_values:
-            # This is because we want the model to only process the last generated token.
-            input_ids = input_ids[:, -1:]
-        model_inputs = {"input_ids": input_ids, "past_key_values": past_key_values}
-
-        model_inputs.update(kwargs)
-        model_inputs["use_cache"] = kwargs.pop("use_cache", self.config.use_cache)
-        return model_inputs
 
     # TODO: these are required to make the implementation complete.
     # def resize_position_embeddings(self, new_num_position_embeddings: int):

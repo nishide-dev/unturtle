@@ -394,3 +394,145 @@ class TestFlashVarlenCompaction:
             "Position 6 (sample1) should NOT change when V at position 5 (sample0) changes — "
             "cross-sample attention should be blocked by cu_seqlens"
         )
+
+
+# ---------------------------------------------------------------------------
+# A2D generation (diffusion_generate)
+# ---------------------------------------------------------------------------
+
+
+class TestA2DGeneration:
+    """Tests for A2DGenerationMixin.diffusion_generate on tiny CPU models."""
+
+    MASK_TOKEN_ID = 999
+
+    @pytest.fixture
+    def llama_config(self):
+        from unturtle.models.a2d import A2DLlamaConfig
+        return A2DLlamaConfig(
+            vocab_size=1000,
+            hidden_size=64,
+            intermediate_size=128,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=4,
+            max_position_embeddings=64,
+            mask_token_id=self.MASK_TOKEN_ID,
+        )
+
+    @pytest.fixture
+    def llama_model(self, llama_config):
+        from unturtle.models.a2d import A2DLlamaLMHeadModel
+        model = A2DLlamaLMHeadModel(llama_config).eval()
+        return model
+
+    def test_has_diffusion_generate(self, llama_model):
+        from unturtle.models.a2d import A2DGenerationMixin
+        assert isinstance(llama_model, A2DGenerationMixin)
+        assert callable(llama_model.diffusion_generate)
+
+    def test_output_shape(self, llama_model, llama_config):
+        """Output shape should be [B, max_length].
+
+        In dLLM generation the caller pre-fills completion slots with
+        mask_token_id and passes the full sequence.  max_length must be
+        > input length so we pass max_length explicitly.
+        """
+        B, L_prompt, L_new = 2, 4, 8
+        L_total = L_prompt + L_new
+        prompt_ids = torch.randint(0, 100, (B, L_prompt))
+        mask_fill = torch.full((B, L_new), self.MASK_TOKEN_ID, dtype=torch.long)
+        input_ids_full = torch.cat([prompt_ids, mask_fill], dim=1)
+        with torch.no_grad():
+            out = llama_model.diffusion_generate(
+                input_ids_full,
+                steps=3,
+                mask_token_id=self.MASK_TOKEN_ID,
+                max_length=L_total + 1,  # must be > input_length
+            )
+        assert out.shape == (B, L_total + 1)
+
+    def test_prompt_tokens_preserved(self, llama_model, llama_config):
+        """Prompt tokens (non-mask) must not be changed by generation."""
+        B, L_prompt, L_new = 1, 4, 6
+        L_total = L_prompt + L_new
+        prompt_ids = torch.tensor([[1, 2, 3, 4]])
+        mask_fill = torch.full((B, L_new), self.MASK_TOKEN_ID, dtype=torch.long)
+        input_ids_full = torch.cat([prompt_ids, mask_fill], dim=1)
+        with torch.no_grad():
+            out = llama_model.diffusion_generate(
+                input_ids_full,
+                steps=3,
+                mask_token_id=self.MASK_TOKEN_ID,
+                max_length=L_total + 1,
+            )
+        # Original prompt positions were NOT mask tokens → should be preserved
+        assert (out[0, :L_prompt] == prompt_ids[0]).all(), (
+            "Prompt tokens should not be overwritten by diffusion_generate"
+        )
+
+    def test_deterministic_with_seed(self, llama_model, llama_config):
+        """Same random seed + same input → identical output (regardless of alg)."""
+        B, L = 1, 8
+        input_ids = torch.full((B, L), self.MASK_TOKEN_ID, dtype=torch.long)
+        with torch.no_grad():
+            torch.manual_seed(42)
+            out1 = llama_model.diffusion_generate(
+                input_ids.clone(),
+                steps=2,
+                mask_token_id=self.MASK_TOKEN_ID,
+                temperature=0.0,
+                max_length=L + 1,
+            )
+            torch.manual_seed(42)
+            out2 = llama_model.diffusion_generate(
+                input_ids.clone(),
+                steps=2,
+                mask_token_id=self.MASK_TOKEN_ID,
+                temperature=0.0,
+                max_length=L + 1,
+            )
+        assert (out1 == out2).all(), "Same seed must produce identical output"
+
+    def test_num_steps_one(self, llama_model):
+        """steps=1 should complete in a single forward pass."""
+        B, L = 1, 6
+        input_ids = torch.full((B, L), self.MASK_TOKEN_ID, dtype=torch.long)
+        with torch.no_grad():
+            out = llama_model.diffusion_generate(
+                input_ids,
+                steps=1,
+                mask_token_id=self.MASK_TOKEN_ID,
+                max_length=L + 1,
+            )
+        assert out.shape == (B, L + 1)
+
+    def test_return_dict(self, llama_model):
+        """return_dict=True should return MaskedDiffusionModelOutput."""
+        from unturtle.models.diffusion_generation_utils import MaskedDiffusionModelOutput
+        B, L = 1, 4
+        input_ids = torch.full((B, L), self.MASK_TOKEN_ID, dtype=torch.long)
+        with torch.no_grad():
+            out = llama_model.diffusion_generate(
+                input_ids,
+                steps=2,
+                mask_token_id=self.MASK_TOKEN_ID,
+                max_length=L + 1,
+                return_dict=True,
+            )
+        assert isinstance(out, MaskedDiffusionModelOutput)
+        assert out.sequences.shape == (B, L + 1)
+
+    def test_maskgit_plus_alg(self, llama_model):
+        """maskgit_plus algorithm should run without error."""
+        B, L = 1, 6
+        input_ids = torch.full((B, L), self.MASK_TOKEN_ID, dtype=torch.long)
+        with torch.no_grad():
+            out = llama_model.diffusion_generate(
+                input_ids,
+                steps=3,
+                mask_token_id=self.MASK_TOKEN_ID,
+                alg="maskgit_plus",
+                max_length=L + 1,
+            )
+        assert out.shape == (B, L + 1)

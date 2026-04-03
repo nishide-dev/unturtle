@@ -30,11 +30,14 @@ Usage::
     from unturtle.models.a2d import A2DQwen3Config, A2DQwen3LMHeadModel
 """
 
+from .generation_utils import A2DGenerationConfig, A2DGenerationMixin
 from .modeling_llama import A2DLlamaConfig, A2DLlamaModel, A2DLlamaLMHeadModel
 from .modeling_qwen2 import A2DQwen2Config, A2DQwen2Model, A2DQwen2LMHeadModel
 from .modeling_qwen3 import A2DQwen3Config, A2DQwen3Model, A2DQwen3LMHeadModel
 
 __all__ = [
+    "A2DGenerationConfig",
+    "A2DGenerationMixin",
     "A2DLlamaConfig",
     "A2DLlamaModel",
     "A2DLlamaLMHeadModel",
