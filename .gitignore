@@ -220,3 +220,4 @@ server.pid
 *.log
 package-lock.json
 dev/*.md
+.serena/
