@@ -191,9 +191,15 @@ def A2DAttention_fast_forward(
     if position_embeddings is not None:
         cos, sin = position_embeddings
         if Q.device.type == "cuda":
-            Q, K = fast_rope_embedding(Q, K, cos, sin, position_ids)
+            if position_ids is not None and cos.ndim == 3 and cos.shape[0] == bsz:
+                cos = cos.reshape(-1, cos.shape[-1])
+                sin = sin.reshape(-1, sin.shape[-1])
+                rope_indices = torch.arange(bsz * q_len, device=Q.device, dtype=torch.long)
+                Q, K = fast_rope_embedding(Q, K, cos, sin, rope_indices)
+            else:
+                Q, K = fast_rope_embedding(Q, K, cos, sin)
         else:
-            # CPU fallback: plain rotate_half RoPE
+            # CPU fallback: plain rotate_half RoPE on pre-indexed cos/sin
             Q, K = _rotate_half_rope(Q, K, cos, sin, position_ids)
     # If position_embeddings is None, skip RoPE (shouldn't happen for A2D models
     # since A2DLlamaModel.forward always computes and passes them)
