@@ -566,3 +566,236 @@ class TestA2DGeneration:
                 max_length=L + 1,
             )
         assert out.shape == (B, L + 1)
+
+
+# ---------------------------------------------------------------------------
+# RoPE unit tests
+# ---------------------------------------------------------------------------
+
+
+def _make_cos_sin(
+    B: int,
+    L: int,
+    head_dim: int,
+    dtype: torch.dtype = torch.float32,
+    device: str = "cpu",
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Build sequential cos/sin of shape (B, L, head_dim)."""
+    position_ids = torch.arange(L, dtype=torch.long).unsqueeze(0).expand(B, -1)
+    return _make_cos_sin_from_position_ids(
+        position_ids=position_ids,
+        head_dim=head_dim,
+        dtype=dtype,
+        device=device,
+    )
+
+
+
+def _make_cos_sin_from_position_ids(
+    position_ids: torch.Tensor,
+    head_dim: int,
+    dtype: torch.dtype = torch.float32,
+    device: str = "cpu",
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Build cos/sin of shape (B, L, head_dim) for arbitrary position_ids."""
+    theta = 1.0 / (
+        10000 ** (torch.arange(0, head_dim, 2, dtype=torch.float32) / head_dim)
+    )
+    freqs = position_ids[..., None].to(torch.float32) * theta.view(1, 1, -1)
+    emb = torch.cat([freqs, freqs], dim=-1)
+    cos = emb.cos().to(dtype=dtype).to(device)
+    sin = emb.sin().to(dtype=dtype).to(device)
+    return cos, sin
+
+
+class TestA2DRoPE:
+    """Unit tests for ``_rotate_half_rope`` (CPU RoPE fallback in A2D fast forward)."""
+
+    def test_l2_norm_preserved_no_position_ids(self):
+        """RoPE rotation must be an isometry: per-vector L2 norm is preserved."""
+        from unturtle.models.a2d._fast_forward import _rotate_half_rope
+
+        B, n_heads, L, head_dim = 2, 4, 8, 16
+        torch.manual_seed(0)
+        Q = torch.randn(B, n_heads, L, head_dim)
+        K = torch.randn(B, n_heads, L, head_dim)
+        cos, sin = _make_cos_sin(B, L, head_dim)
+
+        Q_out, K_out = _rotate_half_rope(Q, K, cos, sin, position_ids=None)
+
+        assert Q_out.shape == Q.shape
+        assert K_out.shape == K.shape
+        torch.testing.assert_close(
+            Q_out.norm(dim=-1), Q.norm(dim=-1), atol=1e-5, rtol=1e-5,
+        )
+        torch.testing.assert_close(
+            K_out.norm(dim=-1), K.norm(dim=-1), atol=1e-5, rtol=1e-5,
+        )
+
+    def test_l2_norm_preserved_with_position_ids(self):
+        """RoPE norm preservation must hold for packed-style repeated position_ids."""
+        from unturtle.models.a2d._fast_forward import _rotate_half_rope
+
+        B, n_heads, L, head_dim = 2, 4, 8, 16
+        torch.manual_seed(1)
+        Q = torch.randn(B, n_heads, L, head_dim)
+        K = torch.randn(B, n_heads, L, head_dim)
+        position_ids: torch.LongTensor = torch.tensor(
+            [[0, 1, 2, 3, 0, 1, 2, 3], [0, 0, 1, 1, 2, 2, 3, 3]],
+            dtype=torch.long,
+        )
+        cos, sin = _make_cos_sin_from_position_ids(position_ids, head_dim)
+
+        Q_out, K_out = _rotate_half_rope(Q, K, cos, sin, position_ids=position_ids)
+
+        torch.testing.assert_close(
+            Q_out.norm(dim=-1), Q.norm(dim=-1), atol=1e-5, rtol=1e-5,
+        )
+        torch.testing.assert_close(
+            K_out.norm(dim=-1), K.norm(dim=-1), atol=1e-5, rtol=1e-5,
+        )
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+    def test_cpu_matches_cuda_no_position_ids(self):
+        """CPU _rotate_half_rope must match CUDA fast_rope_embedding (no position_ids)."""
+        from unturtle.models.a2d._fast_forward import _rotate_half_rope
+
+        try:
+            from unsloth.kernels.rope_embedding import fast_rope_embedding
+        except ImportError:
+            pytest.skip("unsloth.kernels.rope_embedding not available")
+
+        B, n_heads, L, head_dim = 1, 4, 8, 32
+        torch.manual_seed(2)
+        Q_cpu = torch.randn(B, n_heads, L, head_dim)
+        K_cpu = torch.randn(B, n_heads, L, head_dim)
+        cos_cpu, sin_cpu = _make_cos_sin(B, L, head_dim)
+
+        Q_out_cpu, K_out_cpu = _rotate_half_rope(Q_cpu, K_cpu, cos_cpu, sin_cpu)
+
+        # fast_rope_embedding expects cos/sin as (1, L, head_dim) or (L, head_dim);
+        # it calls .squeeze() internally so (1, L, head_dim) → (L, head_dim).
+        Q_cuda = Q_cpu.cuda().to(torch.bfloat16)
+        K_cuda = K_cpu.cuda().to(torch.bfloat16)
+        cos_cuda = cos_cpu.cuda().to(torch.bfloat16)   # (1, L, head_dim)
+        sin_cuda = sin_cpu.cuda().to(torch.bfloat16)
+
+        Q_out_cuda, K_out_cuda = fast_rope_embedding(Q_cuda, K_cuda, cos_cuda, sin_cuda)
+
+        # Tolerance is relaxed to 1e-2 because CUDA path runs in bfloat16
+        torch.testing.assert_close(
+            Q_out_cuda.float().cpu(), Q_out_cpu, atol=1e-2, rtol=1e-2,
+        )
+        torch.testing.assert_close(
+            K_out_cuda.float().cpu(), K_out_cpu, atol=1e-2, rtol=1e-2,
+        )
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+    def test_cpu_matches_cuda_with_position_ids(self):
+        """CPU fallback must match CUDA RoPE for packed-style position_ids."""
+        from unturtle.models.a2d._fast_forward import _rotate_half_rope
+
+        try:
+            from unsloth.kernels.rope_embedding import fast_rope_embedding
+        except ImportError:
+            pytest.skip("unsloth.kernels.rope_embedding not available")
+
+        B, n_heads, L, head_dim = 1, 4, 8, 32
+        torch.manual_seed(3)
+        Q_cpu = torch.randn(B, n_heads, L, head_dim)
+        K_cpu = torch.randn(B, n_heads, L, head_dim)
+        position_ids: torch.LongTensor = torch.tensor(
+            [[0, 1, 0, 1, 2, 3, 4, 5]], dtype=torch.long
+        )
+        cos_cpu, sin_cpu = _make_cos_sin_from_position_ids(position_ids, head_dim)
+
+        Q_out_cpu, K_out_cpu = _rotate_half_rope(
+            Q_cpu, K_cpu, cos_cpu, sin_cpu, position_ids=position_ids
+        )
+
+        Q_cuda = Q_cpu.cuda().to(torch.bfloat16)
+        K_cuda = K_cpu.cuda().to(torch.bfloat16)
+        cos_cuda = cos_cpu.cuda().to(torch.bfloat16)
+        sin_cuda = sin_cpu.cuda().to(torch.bfloat16)
+
+        Q_out_cuda, K_out_cuda = fast_rope_embedding(
+            Q_cuda, K_cuda, cos_cuda, sin_cuda,
+        )
+
+        torch.testing.assert_close(
+            Q_out_cuda.float().cpu(), Q_out_cpu, atol=1e-2, rtol=1e-2,
+        )
+        torch.testing.assert_close(
+            K_out_cuda.float().cpu(), K_out_cpu, atol=1e-2, rtol=1e-2,
+        )
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+    def test_flattened_preindexed_cuda_path_matches_cpu(self):
+        """Flattened pre-indexed cos/sin with flat row indices must match CPU fallback."""
+        from unturtle.models.a2d._fast_forward import _rotate_half_rope
+
+        try:
+            from unsloth.kernels.rope_embedding import fast_rope_embedding
+        except ImportError:
+            pytest.skip("unsloth.kernels.rope_embedding not available")
+
+        B, n_heads, L, head_dim = 2, 4, 8, 32
+        torch.manual_seed(4)
+        Q_cpu = torch.randn(B, n_heads, L, head_dim)
+        K_cpu = torch.randn(B, n_heads, L, head_dim)
+        position_ids: torch.LongTensor = torch.tensor(
+            [[0, 1, 2, 3, 0, 1, 2, 3], [0, 0, 1, 1, 2, 2, 3, 3]],
+            dtype=torch.long,
+        )
+        cos_cpu, sin_cpu = _make_cos_sin_from_position_ids(position_ids, head_dim)
+
+        Q_expected, K_expected = _rotate_half_rope(
+            Q_cpu, K_cpu, cos_cpu, sin_cpu, position_ids=position_ids
+        )
+
+        flat_indices = torch.arange(B * L, dtype=torch.long, device="cuda")
+        Q_out_cuda, K_out_cuda = fast_rope_embedding(
+            Q_cpu.cuda().to(torch.bfloat16),
+            K_cpu.cuda().to(torch.bfloat16),
+            cos_cpu.reshape(B * L, head_dim).cuda().to(torch.bfloat16),
+            sin_cpu.reshape(B * L, head_dim).cuda().to(torch.bfloat16),
+            rope_embedding_indices=flat_indices,
+        )
+
+        torch.testing.assert_close(
+            Q_out_cuda.float().cpu(), Q_expected, atol=1e-2, rtol=1e-2,
+        )
+        torch.testing.assert_close(
+            K_out_cuda.float().cpu(), K_expected, atol=1e-2, rtol=1e-2,
+        )
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+    def test_broadcasted_cos_sin_cuda_path_matches_cpu(self):
+        """Broadcasted (1, L, D) cos/sin must stay on the non-indexed CUDA path."""
+        from unturtle.models.a2d._fast_forward import _rotate_half_rope
+
+        try:
+            from unsloth.kernels.rope_embedding import fast_rope_embedding
+        except ImportError:
+            pytest.skip("unsloth.kernels.rope_embedding not available")
+
+        B, n_heads, L, head_dim = 2, 4, 8, 32
+        torch.manual_seed(5)
+        Q_cpu = torch.randn(B, n_heads, L, head_dim)
+        K_cpu = torch.randn(B, n_heads, L, head_dim)
+        cos_cpu, sin_cpu = _make_cos_sin(1, L, head_dim)
+
+        Q_expected, K_expected = _rotate_half_rope(Q_cpu, K_cpu, cos_cpu, sin_cpu)
+        Q_out_cuda, K_out_cuda = fast_rope_embedding(
+            Q_cpu.cuda().to(torch.bfloat16),
+            K_cpu.cuda().to(torch.bfloat16),
+            cos_cpu.cuda().to(torch.bfloat16),
+            sin_cpu.cuda().to(torch.bfloat16),
+        )
+
+        torch.testing.assert_close(
+            Q_out_cuda.float().cpu(), Q_expected, atol=1e-2, rtol=1e-2,
+        )
+        torch.testing.assert_close(
+            K_out_cuda.float().cpu(), K_expected, atol=1e-2, rtol=1e-2,
+        )

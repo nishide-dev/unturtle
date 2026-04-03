@@ -793,3 +793,35 @@ loss = loss.sum() / (inputs["input_ids"].numel() - num_prompt_tokens)
 mask_rate=0.15 のとき旧実装は MDLM より約 6.7 倍大きい loss 値を出していた。
 `n_maskable` に変更したことで LR を参照実装からそのまま移植できるようになった。
 
+### 16. A2D の CUDA RoPE は `position_ids` を再利用してはいけない
+
+`A2DLlamaModel.forward` / `A2DQwen2Model.forward` / `A2DQwen3Model.forward` では
+`self.rotary_emb(hidden_states, position_ids)` を先に呼び、**すでに `position_ids` に整列済みの**
+`cos, sin` を `position_embeddings` として `A2DAttention_fast_forward` に渡す。
+
+そのため CUDA 側で `fast_rope_embedding(Q, K, cos, sin, position_ids)` を呼ぶと、
+packed sequence のような非単調/リセットされた `position_ids` で **二重に index されて誤った RoPE** になる。
+CPU fallback の `_rotate_half_rope` は与えられた `cos/sin` をそのまま適用するため、この不整合に気づきにくい。
+
+```python
+# NG: pre-indexed cos/sin に対して position_ids を再度渡す
+cos, sin = position_embeddings  # already aligned to position_ids
+Q, K = fast_rope_embedding(Q, K, cos, sin, position_ids)
+
+# OK: Triton indexed pathを使うなら (B,L,D) -> (B*L,D) に flatten し、
+# row selector は position_ids ではなく flat row index を渡す
+cos, sin = position_embeddings
+cos = cos.reshape(-1, cos.shape[-1])
+sin = sin.reshape(-1, sin.shape[-1])
+rope_indices = torch.arange(bsz * q_len, device=Q.device, dtype=torch.long)
+Q, K = fast_rope_embedding(Q, K, cos, sin, rope_indices)
+```
+
+**症状**:
+- `position_ids = [0,1,0,1,2,3,...]` のような packed/reset パターンで CUDA だけ出力が壊れる
+- 単純な `[0,1,2,3,...]` テストは通るため見逃しやすい
+
+**テスト方針**:
+- repeated/reset された `position_ids` を使う
+- B=2 以上のケースも追加して、バッチをまたいだ flatten row index も検証する
+
