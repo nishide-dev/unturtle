@@ -277,3 +277,105 @@ def A2DAttention_fast_forward(
     # Dispatch through apply_o — uses Triton fused kernel when patched
     attn_output = self.apply_o(self, attn_output)
     return attn_output, None
+
+
+# ---------------------------------------------------------------------------
+# ModernBERT bidirectional fast attention forward
+# ---------------------------------------------------------------------------
+
+
+def ModernBertAttention_fast_forward(
+    self,
+    hidden_states: torch.Tensor,
+    position_embeddings: Optional[tuple] = None,
+    attention_mask: Optional[torch.Tensor] = None,
+    **kwargs,
+) -> tuple:
+    """Drop-in replacement for ``ModernBertAttention.forward``.
+
+    Dispatches through ``self.apply_wo`` (set by ``_patch_modernbert_peft``) so
+    that the Triton-fused ``apply_lora_o`` kernel is used for the output
+    projection when LoRA is present.
+
+    Key differences from upstream ``ModernBertAttention.forward``:
+    - ``is_causal=False`` is enforced (upstream already does this via
+      ``self.is_causal = False``, but we make it explicit for SDPA fallback).
+    - Output projection dispatches through ``self.apply_wo`` stub, enabling
+      Triton LoRA patching of ``attn.Wo``.
+
+    Note: Wqkv and RoPE are handled identically to the upstream — no double
+    indexing occurs because ``position_embeddings`` is already pre-indexed
+    ``(cos, sin)`` from ``ModernBertModel.forward``.
+    """
+    input_shape = hidden_states.shape[:-1]
+    bsz, q_len, _ = hidden_states.shape
+
+    n_heads = self.config.num_attention_heads
+    head_dim = self.head_dim
+
+    # Fused QKV projection + reshape: [B, L, 3*H*D] → [B, L, 3, H, D] → unbind
+    qkv = self.Wqkv(hidden_states)
+    qkv = qkv.view(*input_shape, 3, n_heads, head_dim)
+    Q, K, V = qkv.unbind(dim=-3)
+
+    # Q/K/V: [B, L, H, D] → [B, H, L, D]
+    Q = Q.transpose(1, 2)
+    K = K.transpose(1, 2)
+    V = V.transpose(1, 2)
+
+    # RoPE: position_embeddings is pre-indexed (cos, sin) from ModernBertModel.forward.
+    # Apply directly — no re-indexing needed (no A2D RoPE double-index bug here).
+    if position_embeddings is not None:
+        cos, sin = position_embeddings
+        # cos/sin shape: [B, L, D] — unsqueeze head dim for broadcasting
+        cos = cos.unsqueeze(1)
+        sin = sin.unsqueeze(1)
+        Q = (Q.float() * cos + _rotate_half(Q.float()) * sin).to(Q.dtype)
+        K = (K.float() * cos + _rotate_half(K.float()) * sin).to(K.dtype)
+
+    # Bidirectional attention via SDPA (is_causal=False enforced)
+    scale = head_dim ** -0.5
+    if HAS_FLASH_ATTENTION and hidden_states.device.type == "cuda":
+        from flash_attn import flash_attn_func
+        # flash_attn expects [B, L, H, D]
+        Q_fa = Q.transpose(1, 2)
+        K_fa = K.transpose(1, 2)
+        V_fa = V.transpose(1, 2)
+        attn_out = flash_attn_func(Q_fa, K_fa, V_fa, causal=False)
+        attn_output = attn_out.reshape(bsz, q_len, n_heads * head_dim)
+    else:
+        attn_out = torch.nn.functional.scaled_dot_product_attention(
+            Q, K, V,
+            attn_mask=attention_mask,
+            dropout_p=self.attention_dropout if self.training else 0.0,
+            is_causal=False,
+            scale=scale,
+        )
+        attn_output = attn_out.transpose(1, 2).reshape(bsz, q_len, n_heads * head_dim)
+
+    attn_output = self.out_drop(self.apply_wo(self, attn_output))
+    return attn_output, None
+
+
+def _rotate_half(x: torch.Tensor) -> torch.Tensor:
+    """Rotate the second half of the last dimension."""
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2 :]
+    return torch.cat((-x2, x1), dim=-1)
+
+
+def _original_apply_wo(self, X: torch.Tensor) -> torch.Tensor:
+    """Default stub: pass through self.Wo (the output projection)."""
+    return self.Wo(X)
+
+
+def _install_modernbert_stubs(model) -> None:
+    """Set apply_wo stub on all ModernBertAttention layers that lack it.
+
+    Required before _patch_modernbert_peft or before using
+    ModernBertAttention_fast_forward without PEFT.
+    """
+    for module in model.modules():
+        if hasattr(module, "Wqkv") and hasattr(module, "Wo"):
+            if not hasattr(module, "apply_wo"):
+                module.apply_wo = _original_apply_wo
