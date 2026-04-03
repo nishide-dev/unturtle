@@ -40,9 +40,11 @@ from typing import Any
 import torch
 
 from unsloth.trainer import UnslothTrainer, UnslothTrainingArguments
+from unturtle.eval import GenerationEvaluator, MaskedDiffusionEvaluator
 from unturtle.kernels.masked_diffusion_loss import fast_masked_diffusion_loss
 
 from .collator import MaskedDiffusionDataCollator
+from .packed_collator import PackedMaskedDiffusionDataCollator
 from .schedulers import BaseAlphaScheduler, LinearAlphaScheduler, make_alpha_scheduler
 
 
@@ -138,18 +140,31 @@ class DiffusionTrainer(UnslothTrainer):
         self._loss_weight_type: str = getattr(args, "loss_weight_type", "uniform")
         completion_only: bool = getattr(args, "completion_only", True)
 
+        model = kwargs.get("model") or (pargs[0] if pargs else None)
+
         # Inject MaskedDiffusionDataCollator unless the caller supplied one
         if "data_collator" not in kwargs or kwargs["data_collator"] is None:
             tokenizer = kwargs.get("tokenizer") or kwargs.get("processing_class")
             if tokenizer is not None:
+                mask_token_id = getattr(tokenizer, "mask_token_id", None)
+                if mask_token_id is None:
+                    mask_token_id = getattr(getattr(model, "config", None), "mask_token_id", None)
                 kwargs["data_collator"] = MaskedDiffusionDataCollator(
                     tokenizer=tokenizer,
                     scheduler=self._alpha_scheduler,
+                    mask_token_id=mask_token_id,
                     time_epsilon=self._time_epsilon,
                     completion_only=completion_only,
                 )
 
         super().__init__(*pargs, **kwargs)
+
+        if isinstance(self.data_collator, PackedMaskedDiffusionDataCollator) and self._loss_weight_type != "uniform":
+            raise ValueError(
+                "PackedMaskedDiffusionDataCollator is not supported for diffusion training with "
+                "loss_weight_type='timestep' or 'scheduler'. Use uniform weighting or an "
+                "unpacked MaskedDiffusionDataCollator."
+            )
 
     # ------------------------------------------------------------------ #
     #  Loss computation                                                   #
@@ -161,13 +176,13 @@ class DiffusionTrainer(UnslothTrainer):
         inputs: dict[str, torch.Tensor | Any],
         return_outputs: bool = False,
         num_items_in_batch: torch.Tensor | int | None = None,
-        **kwargs: Any,
+        **_kwargs: Any,
     ) -> torch.Tensor | tuple[torch.Tensor, Any]:
         """Compute the masked diffusion CE loss using the Triton kernel.
 
         Expects ``inputs`` to contain:
           ``input_ids``      – noised token ids (from the data collator)
-          ``labels``         – clean token ids (``x_0``); ``-100`` at unmasked positions
+          ``labels``         – clean token ids (``x_0``); prompt/padding may be ``-100``
           ``diffusion_mask`` – bool tensor, True at masked positions
           ``timesteps``      – sampled ``t``, shape ``(B,)``
         """
@@ -187,13 +202,6 @@ class DiffusionTrainer(UnslothTrainer):
             loss_weights=loss_weights,
         )
 
-        # When num_items_in_batch is provided, normalize loss by it so that
-        # transformers' training_step does not also divide by gradient_accumulation_steps.
-        # (transformers 5.x training_step skips the /grad_accum normalization when
-        # compute_loss receives num_items_in_batch and num_items_in_batch is not None.)
-        if num_items_in_batch is not None:
-            loss = loss / num_items_in_batch
-
         return (loss, outputs) if return_outputs else loss
 
     # ------------------------------------------------------------------ #
@@ -204,13 +212,12 @@ class DiffusionTrainer(UnslothTrainer):
         self,
         timesteps: torch.Tensor,
         logits: torch.Tensor,
-        diffusion_mask: torch.Tensor,
+        _diffusion_mask: torch.Tensor,
     ) -> torch.Tensor | None:
         """Return per-token loss weights based on ``loss_weight_type``."""
         if self._loss_weight_type == "uniform":
             return None
 
-        B = logits.shape[0]
         device = logits.device
         t = timesteps.to(device)
 
@@ -226,4 +233,80 @@ class DiffusionTrainer(UnslothTrainer):
         raise ValueError(
             f"Unknown loss_weight_type '{self._loss_weight_type}'. "
             "Choose from: 'uniform', 'timestep', 'scheduler'."
+        )
+
+    def build_diffusion_evaluator(
+        self,
+        tokenizer: Any | None = None,
+        data_collator: Any | None = None,
+        metric_key_prefix: str = "eval",
+        **kwargs: Any,
+    ) -> MaskedDiffusionEvaluator:
+        tokenizer = tokenizer or getattr(self, "processing_class", None) or getattr(self, "tokenizer", None)
+        if tokenizer is None:
+            raise ValueError("Tokenizer or processing_class is required to build a diffusion evaluator.")
+
+        collator = data_collator or self.data_collator
+        if isinstance(collator, PackedMaskedDiffusionDataCollator) and self._loss_weight_type != "uniform":
+            raise ValueError(
+                "PackedMaskedDiffusionDataCollator is not supported for diffusion evaluation with "
+                "loss_weight_type='timestep' or 'scheduler'. Use uniform weighting or pass an "
+                "unpacked MaskedDiffusionDataCollator explicitly."
+            )
+
+        return MaskedDiffusionEvaluator(
+            model=self.model,
+            tokenizer=tokenizer,
+            data_collator=collator,
+            loss_weight_type=self._loss_weight_type,
+            alpha_scheduler=self._alpha_scheduler,
+            time_epsilon=self._time_epsilon,
+            completion_only=getattr(self.args, "completion_only", True),
+            metric_key_prefix=metric_key_prefix,
+            **kwargs,
+        )
+
+    def build_generation_evaluator(
+        self,
+        tokenizer: Any | None = None,
+        metric_key_prefix: str = "gen",
+        **kwargs: Any,
+    ) -> GenerationEvaluator:
+        tokenizer = tokenizer or getattr(self, "processing_class", None) or getattr(self, "tokenizer", None)
+        if tokenizer is None:
+            raise ValueError("Tokenizer or processing_class is required to build a generation evaluator.")
+
+        return GenerationEvaluator(
+            model=self.model,
+            tokenizer=tokenizer,
+            metric_key_prefix=metric_key_prefix,
+            **kwargs,
+        )
+
+    def evaluate_diffusion(
+        self,
+        dataset: Any,
+        batch_size: int = 1,
+        max_batches: int | None = None,
+        metric_key_prefix: str = "eval",
+        **kwargs: Any,
+    ) -> dict[str, float]:
+        evaluator = self.build_diffusion_evaluator(metric_key_prefix=metric_key_prefix, **kwargs)
+        return evaluator.evaluate(dataset=dataset, batch_size=batch_size, max_batches=max_batches)
+
+    def evaluate_generation(
+        self,
+        dataset: Any,
+        generation_config: Any | None = None,
+        batch_size: int = 1,
+        max_batches: int | None = None,
+        metric_key_prefix: str = "gen",
+        **kwargs: Any,
+    ) -> dict[str, float]:
+        evaluator = self.build_generation_evaluator(metric_key_prefix=metric_key_prefix, **kwargs)
+        return evaluator.evaluate(
+            dataset=dataset,
+            generation_config=generation_config,
+            batch_size=batch_size,
+            max_batches=max_batches,
         )

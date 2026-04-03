@@ -330,15 +330,16 @@ class TestMaskedDiffusionDataCollator:
             "Some masked positions do not contain mask_token_id"
         )
 
-    def test_labels_minus100_at_unmasked(self):
-        """Unmasked positions must have label == -100."""
+    def test_labels_preserve_maskable_targets(self):
+        """Maskable positions must keep their clean target ids."""
         collator = self.MaskedDiffusionDataCollator(
             tokenizer=self._make_tokenizer(),
             scheduler=self.LinearAlphaScheduler(),
         )
-        batch = collator(self._make_features())
-        unmasked_labels = batch["labels"][~batch["diffusion_mask"]]
-        assert (unmasked_labels == -100).all()
+        features = self._make_features()
+        batch = collator(features)
+        expected = torch.stack([f["labels"] for f in features])
+        assert torch.equal(batch["labels"], expected)
 
     def test_no_mask_token_raises(self):
         class NoMaskTok:

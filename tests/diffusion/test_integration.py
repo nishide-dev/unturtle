@@ -36,7 +36,9 @@ from unturtle.diffusion import (
     DiffusionTrainingArguments,
     LinearAlphaScheduler,
     MaskedDiffusionDataCollator,
+    PackedMaskedDiffusionDataCollator,
 )
+from unturtle.eval import MaskedDiffusionEvaluator
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -134,8 +136,6 @@ class TestDiffusionTrainerComputeLoss:
         input_ids = batch["input_ids"]
         labels = batch["labels"]
         diffusion_mask = batch["diffusion_mask"]
-        timesteps = batch["timesteps"]
-
         outputs = model(input_ids=input_ids, labels=None)
         logits = outputs.logits  # [B, L, V]
 
@@ -256,6 +256,8 @@ class TestLossWeightTypes:
             w = scheduler.weight(timesteps)
             loss_weights = w
 
+        if loss_weights is not None:
+            loss_weights = loss_weights.to(logits.device)
         loss = fast_masked_diffusion_loss(logits, labels, diffusion_mask, loss_weights)
         assert not torch.isnan(loss), f"NaN loss with weight_type={weight_type}"
         assert loss.item() >= 0, f"Negative loss with weight_type={weight_type}"
@@ -282,6 +284,20 @@ class TestCollatorIntegration:
         batch = collator(samples)
         for key in ("input_ids", "labels", "diffusion_mask", "timesteps"):
             assert key in batch, f"Missing key: {key}"
+
+    def test_collator_pads_variable_length_inputs(self, tokenizer):
+        scheduler = LinearAlphaScheduler()
+        collator = MaskedDiffusionDataCollator(
+            tokenizer=tokenizer,
+            scheduler=scheduler,
+            mask_token_id=tokenizer.mask_token_id,
+        )
+        batch = collator([
+            {"input_ids": [5, 6, 7], "attention_mask": [1, 1, 1]},
+            {"input_ids": [8, 9, 10, 11, 12], "attention_mask": [1, 1, 1, 1, 1]},
+        ])
+        assert batch["input_ids"].shape == (2, 5)
+        assert batch["attention_mask"].shape == (2, 5)
 
     def test_collator_mask_token_applied(self, tokenizer):
         scheduler = LinearAlphaScheduler()
@@ -316,6 +332,25 @@ class TestCollatorIntegration:
         batch = collator(samples)
         prompt_mask = batch["diffusion_mask"][:, :prompt_len]
         assert not prompt_mask.any(), "Prompt positions must never be masked"
+
+    def test_collator_pads_variable_length_labels(self, tokenizer):
+        scheduler = LinearAlphaScheduler()
+        collator = MaskedDiffusionDataCollator(
+            tokenizer=tokenizer,
+            scheduler=scheduler,
+            mask_token_id=tokenizer.mask_token_id,
+            completion_only=True,
+        )
+        batch = collator([
+            {"input_ids": [5, 6, 7], "labels": [-100, 6, 7], "attention_mask": [1, 1, 1]},
+            {"input_ids": [8, 9, 10, 11, 12], "labels": [-100, -100, 10, 11, 12], "attention_mask": [1, 1, 1, 1, 1]},
+        ])
+        assert batch["input_ids"].shape == (2, 5)
+        assert batch["labels"].shape == (2, 5)
+        assert batch["labels"].tolist() == [
+            [-100, 6, 7, -100, -100],
+            [-100, -100, 10, 11, 12],
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -370,3 +405,114 @@ class TestBidirectionalAttention:
         # In a causal model, changing position L-1 should NOT affect position 0
         diff = (out_original[0, 0] - out_modified[0, 0]).abs().max().item()
         assert diff == 0.0, "GPT-2 should NOT show future-token influence (causal)"
+
+
+# ---------------------------------------------------------------------------
+# A-5: Evaluation helper smoke test
+# ---------------------------------------------------------------------------
+
+
+class TestEvaluationHelpers:
+    @pytest.fixture
+    def tokenizer(self):
+        return _make_tokenizer()
+
+    def test_trainer_evaluate_diffusion_helper_runs(self, tokenizer, tmp_path):
+        model = _make_bert("cpu")
+        dataset = Dataset.from_list([
+            {
+                "input_ids": torch.randint(5, VOCAB_SIZE, (SEQ_LEN,)).tolist(),
+                "labels": [-100] * 4 + torch.randint(5, VOCAB_SIZE, (SEQ_LEN - 4,)).tolist(),
+                "attention_mask": [1] * SEQ_LEN,
+            }
+            for _ in range(4)
+        ])
+        args = DiffusionTrainingArguments(
+            output_dir=str(tmp_path / "eval"),
+            per_device_train_batch_size=2,
+            remove_unused_columns=False,
+            report_to="none",
+            use_cpu=True,
+            bf16=False,
+            fp16=False,
+            max_steps=1,
+        )
+        trainer = DiffusionTrainer(
+            model=model,
+            args=args,
+            train_dataset=dataset,
+            eval_dataset=dataset,
+            processing_class=tokenizer,
+        )
+        metrics = trainer.evaluate_diffusion(dataset, batch_size=2)
+        assert metrics["eval_num_batches"] == 2.0
+        assert metrics["eval_loss"] >= 0.0
+
+    def test_trainer_uses_model_config_mask_token_id_fallback(self, tokenizer, tmp_path):
+        tokenizer.mask_token = None
+        tokenizer.mask_token_id = None
+        model = _make_bert("cpu")
+        model.config.mask_token_id = 2
+        dataset = Dataset.from_list([
+            {
+                "input_ids": torch.randint(5, VOCAB_SIZE, (SEQ_LEN,)).tolist(),
+                "labels": [-100] * 4 + torch.randint(5, VOCAB_SIZE, (SEQ_LEN - 4,)).tolist(),
+                "attention_mask": [1] * SEQ_LEN,
+            }
+            for _ in range(2)
+        ])
+        args = DiffusionTrainingArguments(
+            output_dir=str(tmp_path / "eval-fallback"),
+            per_device_train_batch_size=2,
+            remove_unused_columns=False,
+            report_to="none",
+            use_cpu=True,
+            bf16=False,
+            fp16=False,
+            max_steps=1,
+        )
+        trainer = DiffusionTrainer(
+            model=model,
+            args=args,
+            train_dataset=dataset,
+            eval_dataset=dataset,
+            processing_class=tokenizer,
+        )
+        assert trainer.data_collator.mask_token_id == 2
+
+    def test_trainer_rejects_packed_non_uniform_weighting(self, tokenizer, tmp_path):
+        model = _make_bert("cpu")
+        dataset = Dataset.from_list([
+            {
+                "input_ids": torch.randint(5, VOCAB_SIZE, (SEQ_LEN,)).tolist(),
+                "labels": [-100] * 4 + torch.randint(5, VOCAB_SIZE, (SEQ_LEN - 4,)).tolist(),
+                "attention_mask": [1] * SEQ_LEN,
+            }
+            for _ in range(2)
+        ])
+        args = DiffusionTrainingArguments(
+            output_dir=str(tmp_path / "packed-weighting"),
+            per_device_train_batch_size=2,
+            remove_unused_columns=False,
+            report_to="none",
+            use_cpu=True,
+            bf16=False,
+            fp16=False,
+            max_steps=1,
+            loss_weight_type="timestep",
+        )
+        packed_collator = PackedMaskedDiffusionDataCollator(
+            tokenizer=tokenizer,
+            max_seq_length=SEQ_LEN,
+            scheduler=LinearAlphaScheduler(),
+            mask_token_id=tokenizer.mask_token_id,
+        )
+        with pytest.raises(ValueError, match="PackedMaskedDiffusionDataCollator"):
+            DiffusionTrainer(
+                model=model,
+                args=args,
+                train_dataset=dataset,
+                eval_dataset=dataset,
+                processing_class=tokenizer,
+                data_collator=packed_collator,
+            )

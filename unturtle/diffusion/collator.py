@@ -21,7 +21,7 @@ diffusion timestep ``t``) and replaces them with the ``[MASK]`` token id.  The
 resulting batch contains:
 
   ``input_ids``      – noised token ids (masked positions → mask_token_id)
-  ``labels``         – clean token ids (``x_0``); unmasked positions → -100
+  ``labels``         – clean token ids (``x_0``); prompt/padding positions → -100
   ``diffusion_mask`` – bool tensor, True at masked positions
   ``timesteps``      – sampled ``t`` values, shape ``(B,)``
 
@@ -37,7 +37,7 @@ from typing import Any
 
 import torch
 from transformers import PreTrainedTokenizerBase
-from transformers.data.data_collator import default_data_collator
+from transformers.data.data_collator import default_data_collator, pad_without_fast_tokenizer_warning
 
 from .schedulers import BaseAlphaScheduler, LinearAlphaScheduler
 
@@ -90,8 +90,40 @@ class MaskedDiffusionDataCollator:
           ``input_ids``, ``attention_mask`` (if present), ``labels``,
           ``diffusion_mask``, ``timesteps``.
         """
-        # --- standard HF collation (padding, stacking) ---
-        batch = default_data_collator(features)
+        # --- standard HF collation with tokenizer-aware padding when available ---
+        if hasattr(self.tokenizer, "pad"):
+            has_labels = any("labels" in feature for feature in features)
+            features_to_pad = [
+                {k: v for k, v in feature.items() if k != "labels"}
+                for feature in features
+            ]
+            batch = pad_without_fast_tokenizer_warning(
+                self.tokenizer,
+                features_to_pad,
+                padding=True,
+                return_tensors="pt",
+            )
+
+            if has_labels:
+                seq_len = batch["input_ids"].shape[1]
+                padding_side = getattr(self.tokenizer, "padding_side", "right")
+                padded_labels = []
+                for feature in features:
+                    if "labels" in feature:
+                        labels = list(feature["labels"])
+                    else:
+                        labels = [-100] * len(feature["input_ids"])
+
+                    pad_len = seq_len - len(labels)
+                    if padding_side == "left":
+                        labels = ([-100] * pad_len) + labels
+                    else:
+                        labels = labels + ([-100] * pad_len)
+                    padded_labels.append(labels)
+
+                batch["labels"] = torch.tensor(padded_labels, dtype=torch.long)
+        else:
+            batch = default_data_collator(features)
 
         input_ids: torch.Tensor = batch["input_ids"]  # [B, L]
         B, L = input_ids.shape
@@ -114,7 +146,7 @@ class MaskedDiffusionDataCollator:
         ) * torch.rand(B, device=device)  # [B], in (eps, 1]
 
         # --- compute per-token masking probability p_mask = 1 - alpha(t) ---
-        alpha_t: torch.Tensor = self.scheduler.alpha(t)  # [B]
+        alpha_t = torch.as_tensor(self.scheduler.alpha(t), device=device, dtype=t.dtype)  # [B]
         p_mask: torch.Tensor = (1.0 - alpha_t).unsqueeze(1).expand(B, L)  # [B, L]
 
         # --- stochastic masking (Bernoulli) ---
@@ -125,9 +157,13 @@ class MaskedDiffusionDataCollator:
         noised_input_ids = input_ids.clone()
         noised_input_ids[diffusion_mask] = self.mask_token_id
 
-        # --- build labels: clean tokens at masked positions, -100 elsewhere ---
-        labels = input_ids.clone()
-        labels[~diffusion_mask] = -100
+        # --- build labels: keep clean targets for all maskable positions ---
+        if self.completion_only and "labels" in batch:
+            labels = batch["labels"].clone()
+        else:
+            labels = input_ids.clone()
+            if "attention_mask" in batch:
+                labels[~batch["attention_mask"].bool()] = -100
 
         batch["input_ids"] = noised_input_ids
         batch["labels"] = labels
