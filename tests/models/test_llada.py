@@ -92,3 +92,146 @@ class TestLLaDAModel:
         loss.backward()
         grads = [p.grad for p in model.parameters() if p.grad is not None]
         assert len(grads) > 0
+
+
+# ---------------------------------------------------------------------------
+# LLaDA generation (diffusion_generate)
+# ---------------------------------------------------------------------------
+
+
+class TestLLaDAGeneration:
+    """Tests for LLaDAGenerationMixin.diffusion_generate on tiny CPU models."""
+
+    MASK_TOKEN_ID = 126336  # LLaDA default; overridden via config below
+
+    @pytest.fixture
+    def config(self):
+        from unturtle.models.llada import LLaDAConfig
+        return LLaDAConfig(
+            d_model=64,
+            n_heads=4,
+            n_layers=2,
+            vocab_size=512,
+            mlp_ratio=4,
+            max_sequence_length=64,
+            attention_dropout=0.0,
+            residual_dropout=0.0,
+            embedding_dropout=0.0,
+            rope=True,
+            init_device="cpu",
+            mask_token_id=511,  # use last token as [MASK] for tiny vocab
+        )
+
+    @pytest.fixture
+    def model(self, config):
+        from unturtle.models.llada import LLaDAModelLM
+        return LLaDAModelLM(config).eval()
+
+    TINY_MASK_ID = 511
+
+    def test_has_diffusion_generate(self, model):
+        from unturtle.models.llada import LLaDAGenerationMixin
+        assert isinstance(model, LLaDAGenerationMixin)
+        assert callable(model.diffusion_generate)
+
+    def test_prepare_inputs_for_generation_removed(self, model):
+        """prepare_inputs_for_generation (AR protocol) must no longer exist."""
+        assert not hasattr(model, "prepare_inputs_for_generation"), (
+            "prepare_inputs_for_generation should be removed from LLaDAModelLM — "
+            "it implemented an AR (KV cache) protocol incompatible with dLLM generation."
+        )
+
+    def test_output_shape(self, model, config):
+        B, L = 2, 10
+        input_ids = torch.full((B, L), self.TINY_MASK_ID, dtype=torch.long)
+        with torch.no_grad():
+            out = model.diffusion_generate(
+                input_ids,
+                steps=2,
+                mask_token_id=self.TINY_MASK_ID,
+                max_length=L + 1,
+            )
+        assert out.shape == (B, L + 1)
+
+    def test_deterministic_with_seed(self, model):
+        """Same random seed + same input → identical output."""
+        B, L = 1, 8
+        input_ids = torch.full((B, L), self.TINY_MASK_ID, dtype=torch.long)
+        with torch.no_grad():
+            torch.manual_seed(42)
+            out1 = model.diffusion_generate(
+                input_ids.clone(),
+                steps=2,
+                mask_token_id=self.TINY_MASK_ID,
+                temperature=0.0,
+                max_length=L + 1,
+            )
+            torch.manual_seed(42)
+            out2 = model.diffusion_generate(
+                input_ids.clone(),
+                steps=2,
+                mask_token_id=self.TINY_MASK_ID,
+                temperature=0.0,
+                max_length=L + 1,
+            )
+        assert (out1 == out2).all(), "Same seed must produce identical output"
+
+    def test_no_mask_token_id_raises(self, model):
+        """Should raise ValueError if mask_token_id is not provided and not in config."""
+        original = getattr(model.config, "mask_token_id", None)
+        model.config.mask_token_id = None
+        try:
+            with pytest.raises(ValueError, match="mask_token_id"):
+                B, L = 1, 4
+                input_ids = torch.zeros((B, L), dtype=torch.long)
+                model.diffusion_generate(input_ids, steps=1, max_length=L + 1)
+        finally:
+            model.config.mask_token_id = original
+
+    def test_attention_mask_2d(self, model):
+        """Padded attention_mask (2-D) should be forwarded correctly to LLaDA.
+
+        Exercises the LLaDAGenerationMixin override that keeps the mask 2-D
+        instead of expanding to 4-D (which LLaDAModel cannot handle).
+        """
+        B, L = 2, 10
+        # Second sequence is shorter — last 2 positions are padding
+        input_ids = torch.full((B, L), self.TINY_MASK_ID, dtype=torch.long)
+        attention_mask = torch.ones((B, L), dtype=torch.long)
+        attention_mask[1, -2:] = 0  # simulate padding in second sample
+        with torch.no_grad():
+            out = model.diffusion_generate(
+                input_ids,
+                attention_mask=attention_mask,
+                steps=2,
+                mask_token_id=self.TINY_MASK_ID,
+                max_length=L + 1,
+            )
+        assert out.shape == (B, L + 1)
+
+    def test_generate_redirects_to_diffusion_generate(self, model):
+        """model.generate() must route to diffusion_generate(), not HF AR generate()."""
+        B, L = 1, 6
+        input_ids = torch.full((B, L), self.TINY_MASK_ID, dtype=torch.long)
+        with torch.no_grad():
+            out = model.generate(
+                input_ids,
+                steps=2,
+                mask_token_id=self.TINY_MASK_ID,
+                max_length=L + 1,
+            )
+        assert out.shape == (B, L + 1)
+
+    def test_num_return_sequences(self, model):
+        """num_return_sequences=2 should double the batch dimension."""
+        B, L = 1, 6
+        input_ids = torch.full((B, L), self.TINY_MASK_ID, dtype=torch.long)
+        with torch.no_grad():
+            out = model.diffusion_generate(
+                input_ids,
+                steps=2,
+                mask_token_id=self.TINY_MASK_ID,
+                max_length=L + 1,
+                num_return_sequences=2,
+            )
+        assert out.shape == (B * 2, L + 1)

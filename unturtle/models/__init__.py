@@ -25,7 +25,14 @@ Public API::
     from unturtle.models.dream import DreamConfig, DreamModel
 """
 
+from .diffusion_generation_utils import (
+    MaskedDiffusionGenerationConfig,
+    MaskedDiffusionGenerationMixin,
+    MaskedDiffusionModelOutput,
+)
 from .a2d import (
+    A2DGenerationConfig,
+    A2DGenerationMixin,
     A2DLlamaConfig,
     A2DLlamaModel,
     A2DLlamaLMHeadModel,
@@ -37,6 +44,8 @@ from .a2d import (
     A2DQwen3LMHeadModel,
 )
 from .llada import (
+    LLaDAGenerationConfig,
+    LLaDAGenerationMixin,
     LLaDAConfig,
     LLaDAModel,
     LLaDAModelLM,
@@ -49,6 +58,11 @@ from .dream import (
 )
 
 __all__ = [
+    "MaskedDiffusionGenerationConfig",
+    "MaskedDiffusionGenerationMixin",
+    "MaskedDiffusionModelOutput",
+    "A2DGenerationConfig",
+    "A2DGenerationMixin",
     "A2DLlamaConfig",
     "A2DLlamaModel",
     "A2DLlamaLMHeadModel",
@@ -58,6 +72,8 @@ __all__ = [
     "A2DQwen3Config",
     "A2DQwen3Model",
     "A2DQwen3LMHeadModel",
+    "LLaDAGenerationConfig",
+    "LLaDAGenerationMixin",
     "LLaDAConfig",
     "LLaDAModel",
     "LLaDAModelLM",

@@ -39,6 +39,8 @@ from transformers.cache_utils import Cache, DynamicCache
 from transformers.modeling_outputs import BaseModelOutputWithPast
 from transformers.modeling_attn_mask_utils import _prepare_4d_attention_mask
 from transformers.processing_utils import Unpack
+
+from .generation_utils import A2DGenerationMixin
 from transformers.utils import TransformersKwargs
 
 if transformers.utils.is_torch_flex_attn_available():
@@ -122,7 +124,7 @@ class A2DQwen2Model(transformers.Qwen2Model):
         )
 
 
-class A2DQwen2LMHeadModel(transformers.Qwen2ForCausalLM):
+class A2DQwen2LMHeadModel(A2DGenerationMixin, transformers.Qwen2ForCausalLM):
     config: A2DQwen2Config
 
     def __init__(self, config):
