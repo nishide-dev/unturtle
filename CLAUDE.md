@@ -101,24 +101,24 @@ from unturtle import FastDiffusionModel           # Phase C 追加
 - `A2DAttention_fast_forward` (bidirectional, causal=False) を injection
 - `TaskType.FEATURE_EXTRACTION` で PEFT ラップ (CAUSAL_LM guard 回避)
 
-### 将来目標: Phase Z — unsloth 完全移行
+### unsloth との依存関係方針 (2026-04 確定)
 
-**最終的なあるべき姿**: unturtle が unsloth に依存しない独立した dLLM フレームワークになること。
-現在 `unturtle/__init__.py` の `from unsloth import *` に依存している以下のコンポーネントを
-順次 unturtle 内で再実装・ベンダリングする:
+**unturtle は unsloth に依存する dLLM 特化ライブラリ** として開発する。
+unsloth からの完全独立化 (旧 Phase Z) は **プロジェクトの目標ではない**。
 
-| コンポーネント | 現状 | Phase Z での対応 |
-|--------------|------|----------------|
-| `Fast_CrossEntropyLoss` (Triton CE) | `unsloth/kernels/cross_entropy_loss.py` | `unturtle/kernels/` に移植 |
-| `fast_rope_embedding` | `unsloth/kernels/rope_embedding.py` | `unturtle/kernels/` に移植 |
-| `apply_lora_qkv` / `apply_lora_o` | `unsloth/kernels/fast_lora.py` | `unturtle/kernels/fast_lora.py` に統合 |
-| `run_attention` / `select_attention_backend` | `unsloth/utils/attention_dispatch.py` | `unturtle/utils/` に移植 |
-| `get_packed_info_from_kwargs` | `unsloth/utils/packing.py` | `unturtle/utils/` に移植 |
-| `UnslothTrainer` / `UnslothTrainingArguments` | `unsloth/trainer.py` | `DiffusionTrainer` が直接 `SFTTrainer` を継承 |
-| `FastLanguageModel` (AR 用) | `unsloth/models/` | 不要 (dLLM では `FastDiffusionModel` のみ) |
-| Optimizers | `unsloth/optimizers.py` (未実装) | `unturtle/optimizers.py` に実装 |
+**方針**:
+- unsloth のカーネル最適化 (`fast_rope_embedding`, `Fast_CrossEntropyLoss`, LoRA kernels) はそのまま利用する
+- `DiffusionTrainer` は `UnslothTrainer` を継承し続けて問題ない
+- unturtle が提供する価値は **dLLM 特有のコンポーネント** に集中する:
+  - bidirectional attention fast forward (A2D / Dream / LLaDA)
+  - masked diffusion loss kernel
+  - dLLM 生成ユーティリティ (MDLM denoising loop, KV cache)
+  - dLLM 学習・評価ハーネス
 
-進捗はこのセクションと各ファイルの `# TODO(Phase Z):` コメントで追跡する。
+**`unturtle/utils/` について** (Phase Z 作業の残滓):
+- `packing.py`, `attention_dispatch.py`, `_runtime.py` は A2D fast forward パスが直接利用するため有効
+- `unturtle/trainer.py` のベンダリングは将来 revert 候補 (現状は動作するため放置)
+- `# TODO(Phase Z):` コメントは将来対応不要なため気にしなくてよい
 
 ---
 
@@ -142,9 +142,10 @@ from unturtle import FastDiffusionModel           # Phase C 追加
 | Phase F | `unturtle/models/diffusion_generation_utils.py`, `unturtle/models/a2d/generation_utils.py`, `unturtle/models/llada/generation_utils.py` | A2D / LLaDA 生成ユーティリティ (MDLM デノイジングループ) | ✅ 完了 |
 | Phase G | `unturtle/eval/` | 評価ハーネス | ✅ 完了 |
 | Phase H | `tests/models/`, `unturtle/models/a2d/modeling_modernbert.py` | RoPE テスト + ModernBERT A2D | ✅ 完了 |
-| Phase H+ | `unturtle/models/dream/`, `unturtle/models/llada/`, `unsloth/kernels/rope_embedding.py` | Dream/LLaDA の Triton RoPE 最適化適用可能性を評価 | 📝 backlog (#58) |
+| Phase H+ | `unturtle/models/dream/`, `unturtle/models/llada/`, `unsloth/kernels/rope_embedding.py` | Dream/LLaDA の Triton RoPE 最適化適用可能性を評価 | 🔍 調査完了 (#58, 詳細は下記) |
 | Phase I | `dev/distributed.md` | 分散学習 (FSDP / DeepSpeed ZeRO) の制約ドキュメント化・推奨設定 | ✅ 完了 (#51) |
-| Phase Z | `unturtle/` 全体 | unsloth 完全移行・依存除去 | 🔲 長期目標 |
+| ~~Phase Z~~ | ~~`unturtle/` 全体~~ | ~~unsloth 完全移行・依存除去~~ | ❌ 方針転換により廃止 (#67-#69 クローズ) |
+| Phase Z-proper | `pyproject.toml`, `unsloth/` 削除 | unsloth を外部依存化・`unsloth/` ディレクトリ削除・`from unsloth import *` を明示 re-export に置換 | 🔲 未着手 (#74) |
 
 ---
 
@@ -871,3 +872,67 @@ args = DiffusionTrainingArguments(
 - LLaDA FSDP 対応調査 (buffer 問題の根本原因)
 - DeepSpeed ZeRO-2 と Triton カーネルの stream 競合調査
 - `tests/test_distributed.py` 新設
+
+---
+
+## Phase H+ 調査結果 — Dream / LLaDA Triton RoPE & ModernBERT 最適化 (#58)
+
+### Dream の Triton RoPE 適用可能性 (MEDIUM リスク)
+
+**現状**: `DreamAttention.forward` と `DreamSdpaAttention.forward` (lines 329, 420) はいずれも
+`apply_rotary_pos_emb(query_states, key_states, cos, sin)` を使用している。
+`cos/sin` は `DreamRotaryEmbedding.forward(hidden_states, position_ids)` が事前に
+`position_ids` に沿って生成した shape `(B, L, head_dim)` のテンソル。
+
+**最適化方針** (未実装):
+- CUDA 時に `fast_rope_embedding` を呼ぶには、A2D の gotcha #16 と同じ flatten+arange パターンが必要
+- `cos/sin` はすでに `position_ids` でインデックス済みのため、そのまま `fast_rope_embedding` に
+  渡すと二重インデックスになる (A2D の修正前と同じバグ)
+- 正しい実装:
+  ```python
+  # Dream attention forward (CUDA path):
+  cos, sin = position_embeddings  # (B, L, head_dim) — pre-indexed
+  cos_flat = cos.reshape(-1, cos.shape[-1])   # (B*L, head_dim)
+  sin_flat = sin.reshape(-1, sin.shape[-1])   # (B*L, head_dim)
+  rope_indices = torch.arange(bsz * q_len, device=Q.device, dtype=torch.long)
+  Q, K = fast_rope_embedding(Q, K, cos_flat, sin_flat, rope_indices)
+  ```
+- Dream は `_patch_dream_peft` で attention の `apply_qkv` / `apply_o` をすでに置換している。
+  RoPE 最適化は `DreamAttention_fast_forward` を追加する形で実装する ✅ #64 で完了
+
+**実装時の重要な注意点** (Gotcha #17 に追記):
+- `DreamRotaryEmbedding` は `cat(freqs, freqs)` パターンで `(B, L, head_dim)` の cos/sin を返す (A2D の `LlamaRotaryEmbedding` は `(B, L, head_dim//2)` を返す)
+- `fast_rope_embedding` は cos/sin の前半 `head_dim//2` 要素のみ使うため、Dream では `cos[..., :head_dim//2]` に切り詰めてから `reshape(-1, head_dim//2)` して渡す必要がある
+- `fast_rope_embedding` は **in-place** でテンソルを書き換えるため、テストで CPU/CUDA を両方呼ぶ場合は `.clone()` が必要
+
+**ブロッカー**: `fast_rope_embedding` の呼び出し先が `unsloth.kernels.rope_embedding` であり、
+Phase Z 前は unsloth 依存が残る。今は後回しにして Phase H+ 実装 issue で対応予定。
+
+### LLaDA の Triton RoPE 適用可能性 (LOW リスク)
+
+**現状**: `LLaDABlock._scaled_dot_product_attention` の line 715 にて
+`q, k = self.rotary_emb(q, k)` を呼んでいる。`RotaryEmbedding.forward(q, k)` は
+シーケンス順ベースで pos テーブルを内部生成する独自インターフェース (position_ids なし)。
+
+**最適化方針** (未実装):
+- `RotaryEmbedding.forward` 内部の `apply_rotary_pos_emb` を CUDA 時に置換する方針
+- `pos_sin/pos_cos` は shape `(1, n_heads, seq_len, head_dim)` なので `reshape(-1, head_dim)` して
+  arange indices を渡すことで `fast_rope_embedding` が使える
+- ただしシーケンス順ベースなので double-index リスクは低く、緊急性は低い
+
+### ModernBERT Triton 最適化の現状ギャップ (#59 Phase 2)
+
+| 最適化 | 状態 | 備考 |
+|-------|------|------|
+| Triton QKV LoRA | ❌ 未適用 | `apply_lora_qkv` は split q/k/v 前提。`Wqkv` (fused) に対応した新カーネルが必要 |
+| Triton O-proj LoRA | ✅ 適用済み | `attn.o_proj = attn.Wo` エイリアス + `apply_lora_o` (#63) |
+| Triton MLP LoRA | ❌ 未適用 | `apply_lora_mlp_swiglu` は gate/up/down split 前提。`Wi` (fused GLU) + `Wo` 構造に非互換 |
+| Flash Attention 双方向 | ✅ 適用済み | upstream の `is_causal=False` をそのまま利用 (#63) |
+| 勾配チェックポイント | ✅ 適用済み | HF 汎用 `GradientCheckpointingLayer` パス |
+| 4-bit 量子化 | ✅ 適用済み | `TaskType.FEATURE_EXTRACTION` で PEFT ラップ後も動作 |
+
+**未適用の最適化を実装するために必要な新カーネル**:
+1. `apply_lora_fused_qkv` — `Wqkv` (fused 3D projection) 用 Triton LoRA カーネル
+2. `apply_lora_fused_mlp_glu` — `Wi` (GLU input) / `Wo` 用 Triton LoRA カーネル
+
+これらは Phase Z (unsloth 完全移行) のカーネル移植フェーズと合わせて検討する。

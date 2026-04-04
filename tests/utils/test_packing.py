@@ -15,7 +15,7 @@
 
 from unsloth import FastLanguageModel
 from unsloth.utils import attention_dispatch as attention_dispatch_utils
-from unsloth.utils.packing import (
+from unturtle.utils.packing import (
     configure_padding_free,
     configure_sample_packing,
     enable_padding_free_metadata,

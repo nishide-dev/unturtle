@@ -37,87 +37,95 @@ Target state (Phase Z — full migration, no unsloth dependency):
   CLAUDE.md §「unsloth 完全移行チェックリスト」when it is decoupled.
 """
 
-from unsloth import *  # noqa: F401, F403  # TODO(Phase Z): remove after full migration
-from unsloth import __version__  # noqa: F401
+import sys
 
-# ---------------------------------------------------------------------------
-# dLLM training stack — canonical source is unturtle.*
-# ---------------------------------------------------------------------------
-from unturtle.diffusion import (  # noqa: F401
-    BaseAlphaScheduler,
-    CosineAlphaScheduler,
-    DiffusionTrainer,
-    DiffusionTrainingArguments,
-    DiffuGRPOTrainer,
-    DiffuGRPOConfig,
-    LinearAlphaScheduler,
-    MaskedDiffusionDataCollator,
-    PackedMaskedDiffusionDataCollator,
-    make_alpha_scheduler,
-)
-from unturtle.kernels.masked_diffusion_loss import (  # noqa: F401
-    fast_masked_diffusion_loss,
-    masked_diffusion_loss_from_timesteps,
-)
-from unturtle.kernels.fused_masked_diffusion_loss import (  # noqa: F401
-    fused_masked_diffusion_loss,
-)
-from unturtle.fast_diffusion_model import FastDiffusionModel  # noqa: F401
-from unturtle.eval import (  # noqa: F401
-    BaseEvaluator,
-    GenerationEvaluator,
-    MaskedDiffusionEvaluator,
+
+_unsloth_module = sys.modules.get("unsloth")
+_UNSLOTH_BOOTSTRAPPING = _unsloth_module is not None and not hasattr(
+    _unsloth_module, "is_bfloat16_supported"
 )
 
-# ---------------------------------------------------------------------------
-# dLLM model classes
-# ---------------------------------------------------------------------------
-from unturtle.models import (  # noqa: F401
-    A2DLlamaConfig,
-    A2DLlamaModel,
-    A2DLlamaLMHeadModel,
-    A2DModernBertConfig,
-    A2DModernBertModel,
-    A2DModernBertForMaskedLM,
-    A2DQwen2Config,
-    A2DQwen2Model,
-    A2DQwen2LMHeadModel,
-    A2DQwen3Config,
-    A2DQwen3Model,
-    A2DQwen3LMHeadModel,
-    LLaDAConfig,
-    LLaDAModel,
-    LLaDAModelLM,
-    DreamConfig,
-    DreamModel,
-    DreamGenerationMixin,
-    DreamGenerationConfig,
-)
-# Alias for discoverability — DreamModel is the full masked-diffusion model
-DreamForDiffusionLM = DreamModel  # noqa: F401
+__version__ = getattr(_unsloth_module, "__version__", "0.0.0")
 
-# ---------------------------------------------------------------------------
-# Optimizers
-# Re-export unsloth optimizers when available so users can write
-#   from unturtle import QGaLoreAdamW8bit
-# instead of reaching into unsloth directly.
-# TODO(Phase Z): once unsloth dependency is removed, vendor or reimplement
-#   these optimizers inside unturtle.optimizers and update these imports.
-# ---------------------------------------------------------------------------
-try:
-    from unsloth.optimizers import (  # noqa: F401
-        GaLoreProjector,
-        QGaLoreAdamW8bit,
+if not _UNSLOTH_BOOTSTRAPPING:
+    from unsloth import *  # noqa: F401, F403  # TODO(Phase Z): remove after full migration
+
+    # ---------------------------------------------------------------------------
+    # dLLM training stack — canonical source is unturtle.*
+    # ---------------------------------------------------------------------------
+    from unturtle.diffusion import (  # noqa: F401
+        BaseAlphaScheduler,
+        CosineAlphaScheduler,
+        DiffusionTrainer,
+        DiffusionTrainingArguments,
+        DiffuGRPOTrainer,
+        DiffuGRPOConfig,
+        LinearAlphaScheduler,
+        MaskedDiffusionDataCollator,
+        PackedMaskedDiffusionDataCollator,
+        make_alpha_scheduler,
     )
-except (ImportError, AttributeError):
-    pass  # Older unsloth versions that do not expose these symbols
-
-# UnslothAdamW family — available in newer unsloth releases
-try:
-    from unsloth.optimizers import (  # noqa: F401
-        UnslothAdamW,
-        UnslothAdamW8bit,
-        UnslothAdamWScheduleFree,
+    from unturtle.kernels.masked_diffusion_loss import (  # noqa: F401
+        fast_masked_diffusion_loss,
+        masked_diffusion_loss_from_timesteps,
     )
-except (ImportError, AttributeError):
-    pass
+    from unturtle.kernels.fused_masked_diffusion_loss import (  # noqa: F401
+        fused_masked_diffusion_loss,
+    )
+    from unturtle.fast_diffusion_model import FastDiffusionModel  # noqa: F401
+    from unturtle.eval import (  # noqa: F401
+        BaseEvaluator,
+        GenerationEvaluator,
+        MaskedDiffusionEvaluator,
+    )
+
+    # ---------------------------------------------------------------------------
+    # dLLM model classes
+    # ---------------------------------------------------------------------------
+    from unturtle.models import (  # noqa: F401
+        A2DLlamaConfig,
+        A2DLlamaModel,
+        A2DLlamaLMHeadModel,
+        A2DModernBertConfig,
+        A2DModernBertModel,
+        A2DModernBertForMaskedLM,
+        A2DQwen2Config,
+        A2DQwen2Model,
+        A2DQwen2LMHeadModel,
+        A2DQwen3Config,
+        A2DQwen3Model,
+        A2DQwen3LMHeadModel,
+        LLaDAConfig,
+        LLaDAModel,
+        LLaDAModelLM,
+        DreamConfig,
+        DreamModel,
+        DreamGenerationMixin,
+        DreamGenerationConfig,
+    )
+    DreamForDiffusionLM = DreamModel  # noqa: F401
+
+    # ---------------------------------------------------------------------------
+    # Optimizers
+    # Re-export unsloth optimizers when available so users can write
+    #   from unturtle import QGaLoreAdamW8bit
+    # instead of reaching into unsloth directly.
+    # TODO(Phase Z): once unsloth dependency is removed, vendor or reimplement
+    #   these optimizers inside unturtle.optimizers and update these imports.
+    # ---------------------------------------------------------------------------
+    try:
+        from unsloth.optimizers import (  # noqa: F401
+            GaLoreProjector,
+            QGaLoreAdamW8bit,
+        )
+    except (ImportError, AttributeError):
+        pass  # Older unsloth versions that do not expose these symbols
+
+    try:
+        from unsloth.optimizers import (  # noqa: F401
+            UnslothAdamW,
+            UnslothAdamW8bit,
+            UnslothAdamWScheduleFree,
+        )
+    except (ImportError, AttributeError):
+        pass

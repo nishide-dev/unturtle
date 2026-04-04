@@ -37,8 +37,8 @@ from typing import Optional, Tuple
 import torch
 from transformers.cache_utils import Cache
 
-from unsloth.kernels.rope_embedding import fast_rope_embedding
-from unsloth.utils.attention_dispatch import (
+from unturtle.kernels.rope_embedding import fast_rope_embedding
+from unturtle.utils.attention_dispatch import (
     HAS_FLASH_ATTENTION,
     SDPA,
     AttentionConfig,
@@ -46,7 +46,7 @@ from unsloth.utils.attention_dispatch import (
     run_attention,
     select_attention_backend,
 )
-from unsloth.utils.packing import get_packed_info_from_kwargs
+from unturtle.utils.packing import get_packed_info_from_kwargs
 
 if HAS_FLASH_ATTENTION:
     from flash_attn import flash_attn_varlen_func

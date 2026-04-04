@@ -19,8 +19,8 @@ import math
 
 import torch
 
-from unsloth.utils import attention_dispatch
-from unsloth.utils import packing as packing_utils
+from unturtle.utils import attention_dispatch
+from unturtle.utils import packing as packing_utils
 
 
 def _make_seq_info(lengths):

@@ -267,7 +267,7 @@ class TestA2DPackedForward:
 
     def test_get_packed_info_returns_non_none_when_key_present(self, tiny_config):
         """get_packed_info_from_kwargs must return non-None when packed_seq_lengths is in kwargs."""
-        from unsloth.utils.packing import get_packed_info_from_kwargs
+        from unturtle.utils.packing import get_packed_info_from_kwargs
 
         packed_seq_lengths = torch.tensor([8, 8], dtype=torch.int32)
         kwargs = {"packed_seq_lengths": packed_seq_lengths}
@@ -661,9 +661,9 @@ class TestA2DRoPE:
         from unturtle.models.a2d._fast_forward import _rotate_half_rope
 
         try:
-            from unsloth.kernels.rope_embedding import fast_rope_embedding
+            from unturtle.kernels.rope_embedding import fast_rope_embedding
         except ImportError:
-            pytest.skip("unsloth.kernels.rope_embedding not available")
+            pytest.skip("unturtle.kernels.rope_embedding not available")
 
         B, n_heads, L, head_dim = 1, 4, 8, 32
         torch.manual_seed(2)
@@ -696,9 +696,9 @@ class TestA2DRoPE:
         from unturtle.models.a2d._fast_forward import _rotate_half_rope
 
         try:
-            from unsloth.kernels.rope_embedding import fast_rope_embedding
+            from unturtle.kernels.rope_embedding import fast_rope_embedding
         except ImportError:
-            pytest.skip("unsloth.kernels.rope_embedding not available")
+            pytest.skip("unturtle.kernels.rope_embedding not available")
 
         B, n_heads, L, head_dim = 1, 4, 8, 32
         torch.manual_seed(3)
@@ -735,9 +735,9 @@ class TestA2DRoPE:
         from unturtle.models.a2d._fast_forward import _rotate_half_rope
 
         try:
-            from unsloth.kernels.rope_embedding import fast_rope_embedding
+            from unturtle.kernels.rope_embedding import fast_rope_embedding
         except ImportError:
-            pytest.skip("unsloth.kernels.rope_embedding not available")
+            pytest.skip("unturtle.kernels.rope_embedding not available")
 
         B, n_heads, L, head_dim = 2, 4, 8, 32
         torch.manual_seed(4)
@@ -775,9 +775,9 @@ class TestA2DRoPE:
         from unturtle.models.a2d._fast_forward import _rotate_half_rope
 
         try:
-            from unsloth.kernels.rope_embedding import fast_rope_embedding
+            from unturtle.kernels.rope_embedding import fast_rope_embedding
         except ImportError:
-            pytest.skip("unsloth.kernels.rope_embedding not available")
+            pytest.skip("unturtle.kernels.rope_embedding not available")
 
         B, n_heads, L, head_dim = 2, 4, 8, 32
         torch.manual_seed(5)
