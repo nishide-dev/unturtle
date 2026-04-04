@@ -58,7 +58,7 @@ __all__ = [
 class LoRA_QKV_Bias(torch.autograd.Function):
     """Fused QKV LoRA with bias support.
 
-    Identical to :class:`unturtle.kernels._fast_lora_core.LoRA_QKV` except each
+    Identical to :class:`unsloth.kernels.fast_lora.LoRA_QKV` except each
     projection's bias is added after the matmul (forward) and the bias
     gradients are accumulated in backward.
 
