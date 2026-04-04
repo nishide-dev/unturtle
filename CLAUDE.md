@@ -145,6 +145,7 @@ unsloth からの完全独立化 (旧 Phase Z) は **プロジェクトの目標
 | Phase H+ | `unturtle/models/dream/`, `unturtle/models/llada/`, `unsloth/kernels/rope_embedding.py` | Dream/LLaDA の Triton RoPE 最適化適用可能性を評価 | 🔍 調査完了 (#58, 詳細は下記) |
 | Phase I | `dev/distributed.md` | 分散学習 (FSDP / DeepSpeed ZeRO) の制約ドキュメント化・推奨設定 | ✅ 完了 (#51) |
 | ~~Phase Z~~ | ~~`unturtle/` 全体~~ | ~~unsloth 完全移行・依存除去~~ | ❌ 方針転換により廃止 (#67-#69 クローズ) |
+| Phase Z-proper | `pyproject.toml`, `unsloth/` 削除 | unsloth を外部依存化・`unsloth/` ディレクトリ削除・`from unsloth import *` を明示 re-export に置換 | 🔲 未着手 (#74) |
 
 ---
 
