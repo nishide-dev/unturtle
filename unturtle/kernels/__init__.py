@@ -34,7 +34,7 @@ Public API::
     )
 """
 
-from .cross_entropy_loss import Fast_CrossEntropyLoss, fast_cross_entropy_loss
+from unsloth.kernels.cross_entropy_loss import Fast_CrossEntropyLoss, fast_cross_entropy_loss
 from .masked_diffusion_loss import (
     fast_masked_diffusion_loss,
     masked_diffusion_loss_from_timesteps,

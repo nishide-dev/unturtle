@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import torch
 import torch.nn.functional as F
-from unturtle.kernels.cross_entropy_loss import Fast_CrossEntropyLoss
+from unsloth.kernels.cross_entropy_loss import Fast_CrossEntropyLoss
 
 # Singleton -100 tensors reused across calls to avoid repeated scalar allocs.
 # Created lazily per device.
