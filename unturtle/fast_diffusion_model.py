@@ -74,8 +74,7 @@ except (ImportError, OSError, AttributeError) as exc:
 else:
     _FAST_LORA_IMPORT_ERROR = None
 
-from unsloth.models._utils import prepare_model_for_kbit_training
-from unsloth.save import patch_saving_functions
+from unturtle.save import patch_saving_functions, prepare_model_for_kbit_training
 
 from unturtle.models.a2d._fast_forward import (
     A2DAttention_fast_forward,
