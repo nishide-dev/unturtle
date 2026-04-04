@@ -26,7 +26,7 @@ import torch
 from torch import Tensor
 from torch.nn.functional import scaled_dot_product_attention
 
-from unsloth.models._utils import HAS_FLASH_ATTENTION, xformers, xformers_attention
+from ._runtime import HAS_FLASH_ATTENTION, xformers, xformers_attention
 
 from .packing import (
     build_sdpa_packed_attention_mask,
