@@ -588,3 +588,60 @@ class TestLLaDAFastMLP:
         with torch.no_grad():
             out = peft_model(input_ids=input_ids)
         assert out.logits.shape[:2] == (B, L)
+
+    def test_default_apply_mlp_numerics(self, llama_config):
+        """_default_apply_mlp output matches the original inline MLP formula."""
+        from unturtle.models.llada import LLaDAModelLM
+        from unturtle.models.llada.modeling_llada import LLaDALlamaBlock
+
+        model = LLaDAModelLM(llama_config).eval()
+        block = model.model.transformer.blocks[0]
+
+        B, L, d = 2, 8, llama_config.d_model
+        x = torch.randn(B, L, d)
+
+        # Reference: inline formula
+        with torch.no_grad():
+            x_ref = block.ff_norm(x)
+            gate, up = block.ff_proj(x_ref), block.up_proj(x_ref)
+            gate = block.act(gate)
+            ref_out = block.ff_out(gate * up)
+
+        # Via stub
+        with torch.no_grad():
+            stub_out = LLaDALlamaBlock._default_apply_mlp(block, block.ff_norm(x))
+
+        assert torch.allclose(stub_out, ref_out, atol=1e-6), (
+            f"_default_apply_mlp mismatch: {(stub_out - ref_out).abs().max()}"
+        )
+
+    @pytest.mark.skipif(not cuda, reason="Triton MLP LoRA requires CUDA")
+    def test_swiglu_block_not_patched(self):
+        """LLaDALlamaBlock with swiglu activation is NOT patched with Triton MLP."""
+        from unturtle.models.llada import LLaDAConfig, LLaDAModelLM
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+        from unturtle.models.llada.modeling_llada import LLaDALlamaBlock
+
+        swiglu_config = LLaDAConfig(
+            d_model=64, n_heads=4, n_layers=2, vocab_size=512,
+            mlp_ratio=4, max_sequence_length=64, rope=True,
+            block_type="llama", activation_type="swiglu",  # swiglu → ff_out.in_features=128
+            init_device="cpu",
+        )
+        model = LLaDAModelLM(swiglu_config).cuda()
+        peft_model = FastDiffusionModel.get_peft_model(
+            model, r=4,
+            target_modules=["q_proj", "k_proj", "v_proj", "attn_out", "ff_proj", "up_proj", "ff_out"],
+            lora_dropout=0, bias="none",
+        )
+        inner = peft_model.base_model.model
+        blocks = (inner.model.transformer.blocks
+                  if hasattr(inner, "model") and hasattr(inner.model, "transformer")
+                  else inner.transformer.blocks)
+
+        # No block should have apply_mlp replaced with apply_lora_mlp_swiglu
+        from unturtle.kernels.fast_lora import apply_lora_mlp_swiglu
+        patched = [b for b in blocks if b.apply_mlp is apply_lora_mlp_swiglu]
+        assert len(patched) == 0, (
+            "swiglu blocks should NOT be patched with Triton MLP kernel"
+        )

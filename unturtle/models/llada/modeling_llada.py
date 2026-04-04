@@ -958,7 +958,12 @@ class LLaDALlamaBlock(LLaDABlock):
 
     @staticmethod
     def _default_apply_mlp(self, x: torch.Tensor) -> torch.Tensor:
-        """Default (non-Triton) MLP forward: SwiGLU with ff_proj/up_proj/ff_out."""
+        """Default (non-Triton) gated MLP: ff_proj(gate) * up_proj → ff_out.
+
+        Replaced by ``apply_lora_mlp_swiglu`` on CUDA when ``activation_type="silu"``.
+        With SwiGLU (default), ``act.chunk(2)`` halves the gate output while
+        ``up_proj`` stays full-width, so Triton patching is skipped for non-SiLU blocks.
+        """
         x, x_up = self.ff_proj(x), self.up_proj(x)
         if self._activation_checkpoint_fn is not None:
             x = self._activation_checkpoint_fn(self.act, x)  # type: ignore

@@ -423,13 +423,24 @@ def _patch_llada_peft(
                 "FastDiffusionModel (LLaDA): cannot patch attn_out with Triton kernel."
             )
 
-        # ff_proj / up_proj / ff_out — SwiGLU equivalent of gate/up/down.
-        # apply_lora_mlp_swiglu reads self.gate_proj / self.up_proj / self.down_proj,
-        # so we set aliases on block before replacing apply_mlp.
+        # ff_proj / up_proj / ff_out — gated MLP (gate/up/down).
+        # apply_lora_mlp_swiglu reads self.gate_proj / self.up_proj / self.down_proj
+        # and uses the SiLU-gated SwiGLU Triton kernel.
+        # Only patch when activation_type is SiLU (output_multiplier==1); with SwiGLU
+        # (output_multiplier==0.5) ff_proj output is halved by chunk(2) while up_proj
+        # stays full-width, producing a shape mismatch in the Triton kernel.
+        block_act = getattr(block, "act", None)
+        act_is_silu = block_act is not None and isinstance(block_act, torch.nn.SiLU)
         ff_proj = getattr(block, "ff_proj", None)
         up_proj = getattr(block, "up_proj", None)
         ff_out = getattr(block, "ff_out", None)
-        if (
+        if not act_is_silu:
+            _warn_once(
+                f"FastDiffusionModel (LLaDA): skipping Triton MLP patch for "
+                f"{type(block_act).__name__} activation — only SiLU is supported. "
+                "MLP LoRA will use PEFT default path."
+            )
+        elif (
             ff_proj is not None
             and up_proj is not None
             and ff_out is not None
