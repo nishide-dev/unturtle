@@ -66,6 +66,12 @@ from transformers import PretrainedConfig
 from .configuration_dream import DreamConfig
 from .generation_utils import DreamGenerationMixin, DreamGenerationConfig
 
+try:
+    from unturtle.kernels.rope_embedding import fast_rope_embedding as _fast_rope_embedding
+    _HAS_FAST_ROPE = True
+except ImportError:
+    _HAS_FAST_ROPE = False
+
 if is_flash_attn_2_available():
     from transformers.modeling_flash_attention_utils import _flash_attention_forward
 
@@ -869,3 +875,102 @@ class DreamModel(DreamGenerationMixin, DreamPreTrainedModel):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+
+
+# ---------------------------------------------------------------------------
+# Fast attention forward for Dream — Triton RoPE fast path
+# ---------------------------------------------------------------------------
+
+def _apply_dream_rope(
+    query_states: torch.Tensor,
+    key_states: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+    bsz: int,
+    q_len: int,
+) -> tuple:
+    """Apply RoPE to Dream query/key states.
+
+    ``cos`` / ``sin`` are pre-indexed by ``position_ids`` (shape ``(B, L, head_dim)``
+    or ``(1, L, head_dim)``).  On CUDA we flatten to ``(B*L, head_dim)`` and use
+    a sequential row-index so that ``fast_rope_embedding`` does not double-index.
+    On CPU we fall back to the plain ``apply_rotary_pos_emb`` path.
+
+    Args:
+        query_states: ``(B, n_heads, L, head_dim)``
+        key_states:   ``(B, n_kv_heads, L, head_dim)``
+        cos, sin:     pre-indexed, shape ``(B, L, head_dim)`` or ``(1, L, head_dim)``
+    """
+    if _HAS_FAST_ROPE and query_states.device.type == "cuda" and cos.ndim == 3:
+        # fast_rope_embedding expects cos/sin of shape (rows, head_dim//2).
+        # DreamRotaryEmbedding returns (B, L, head_dim), so we take the first
+        # half before flattening (the kernel only reads head_dim//2 elements).
+        half = cos.shape[-1] // 2
+        cos_flat = cos[..., :half].reshape(-1, half).contiguous()  # (B*L, head_dim//2)
+        sin_flat = sin[..., :half].reshape(-1, half).contiguous()  # (B*L, head_dim//2)
+        rope_indices = torch.arange(bsz * q_len, device=query_states.device, dtype=torch.long)
+        query_states, key_states = _fast_rope_embedding(
+            query_states, key_states, cos_flat, sin_flat, rope_indices
+        )
+    else:
+        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+    return query_states, key_states
+
+
+def DreamAttention_fast_forward(
+    self,
+    hidden_states: torch.Tensor,
+    attention_mask: Optional[torch.Tensor] = None,
+    position_ids: Optional[torch.LongTensor] = None,
+    past_key_value=None,
+    output_attentions: bool = False,
+    use_cache: bool = False,
+    cache_position: Optional[torch.LongTensor] = None,
+    position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+    **kwargs,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+    """Drop-in replacement for ``DreamAttention.forward`` with Triton RoPE fast path.
+
+    Replaces ``apply_rotary_pos_emb`` with ``_apply_dream_rope`` which uses
+    ``fast_rope_embedding`` on CUDA (flatten + sequential row index, no double-index).
+    The rest of the forward pass is unchanged.
+
+    Injected by ``FastDiffusionModel._patch_dream_peft`` when the model is on CUDA.
+    """
+    bsz, q_len, _ = hidden_states.size()
+
+    query_states, key_states, value_states = self.apply_qkv(self, hidden_states)
+
+    query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
+    key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+    value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+
+    if position_embeddings is None:
+        cos, sin = self.rotary_emb(value_states, position_ids)
+    else:
+        cos, sin = position_embeddings
+
+    query_states, key_states = _apply_dream_rope(query_states, key_states, cos, sin, bsz, q_len)
+
+    if past_key_value is not None:
+        cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
+        key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+
+    key_states = repeat_kv(key_states, self.num_key_value_groups)
+    value_states = repeat_kv(value_states, self.num_key_value_groups)
+
+    attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
+    if attention_mask is not None:
+        causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+        attn_weights = attn_weights + causal_mask
+
+    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+    attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
+    attn_output = torch.matmul(attn_weights, value_states)
+
+    attn_output = self.apply_o(self, attn_output.transpose(1, 2).contiguous().reshape(bsz, q_len, self.hidden_size))
+
+    if not output_attentions:
+        attn_weights = None
+
+    return attn_output, attn_weights, past_key_value

@@ -81,6 +81,7 @@ from unturtle.models.a2d._fast_forward import (
     ModernBertAttention_fast_forward,
     _install_modernbert_stubs,
 )
+from unturtle.models.dream.modeling_dream import DreamAttention_fast_forward
 
 _logger = logging.getLogger(__name__)
 
@@ -242,6 +243,10 @@ def _patch_dream_peft(
 
     for layer in layers:
         self_attn = layer.self_attn if hasattr(layer, "self_attn") else None
+
+        # Inject Triton RoPE fast forward unconditionally (CUDA already checked above)
+        if self_attn is not None:
+            self_attn.forward = types.MethodType(DreamAttention_fast_forward, self_attn)
 
         if lora_dropout != 0 or bias != "none":
             continue

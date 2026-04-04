@@ -217,6 +217,8 @@ These rules apply to `_patch_a2d_peft`, `_patch_dream_peft`, `_patch_llada_peft`
 | `load_in_4bit` without `device_map` OOM on crowded GPU | OOM caught silently → falls through to Hub class → `all_tied_weights_keys` error | `FastDiffusionModel.from_pretrained` sets `device_map="auto"` automatically when `load_in_4bit=True` |
 | A2D CUDA RoPE with pre-indexed `position_embeddings` | Packed/non-monotonic `position_ids` produce wrong CUDA outputs despite CPU fallback passing | `self.rotary_emb(hidden_states, position_ids)` already returns cos/sin aligned to `position_ids`; in `A2DAttention_fast_forward` flatten `(B,L,D)` cos/sin to `(B*L,D)` and pass flat row indices `arange(B*L)` instead of reusing `position_ids` |
 | Attempting to fully decouple from unsloth | High effort with low dLLM value — vendoring trainer/kernels/optimizers gets very complex | **unturtle is a dLLM-specialized library that depends on unsloth** — don't try to remove unsloth dependency; focus effort on dLLM-specific components (bidirectional attention, masked diffusion loss, generation utils) |
+| `fast_rope_embedding` expects `(rows, head_dim//2)` cos/sin, but Dream/LlaMA RotaryEmbedding returns `(B, L, head_dim)` with cat(freqs,freqs) pattern | CUDA/CPU parity test fails with large diff (~10x) even though shapes seem OK | Slice `cos[..., :head_dim//2]` before `reshape(-1, head_dim//2)` when passing Dream cos/sin to `fast_rope_embedding`; A2D works automatically because `LlamaRotaryEmbedding` already returns `(B, L, head_dim//2)` |
+| `fast_rope_embedding` is in-place | CPU/CUDA parity tests fail when the same tensor is passed to both paths sequentially | Always `.clone()` Q/K before passing to `fast_rope_embedding` in tests that compare CPU and CUDA outputs |
 
 ---
 

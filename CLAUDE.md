@@ -898,7 +898,12 @@ args = DiffusionTrainingArguments(
   Q, K = fast_rope_embedding(Q, K, cos_flat, sin_flat, rope_indices)
   ```
 - Dream は `_patch_dream_peft` で attention の `apply_qkv` / `apply_o` をすでに置換している。
-  RoPE 最適化は `DreamAttention_fast_forward` を追加する形で実装する
+  RoPE 最適化は `DreamAttention_fast_forward` を追加する形で実装する ✅ #64 で完了
+
+**実装時の重要な注意点** (Gotcha #17 に追記):
+- `DreamRotaryEmbedding` は `cat(freqs, freqs)` パターンで `(B, L, head_dim)` の cos/sin を返す (A2D の `LlamaRotaryEmbedding` は `(B, L, head_dim//2)` を返す)
+- `fast_rope_embedding` は cos/sin の前半 `head_dim//2` 要素のみ使うため、Dream では `cos[..., :head_dim//2]` に切り詰めてから `reshape(-1, head_dim//2)` して渡す必要がある
+- `fast_rope_embedding` は **in-place** でテンソルを書き換えるため、テストで CPU/CUDA を両方呼ぶ場合は `.clone()` が必要
 
 **ブロッカー**: `fast_rope_embedding` の呼び出し先が `unsloth.kernels.rope_embedding` であり、
 Phase Z 前は unsloth 依存が残る。今は後回しにして Phase H+ 実装 issue で対応予定。
