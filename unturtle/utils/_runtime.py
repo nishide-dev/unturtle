@@ -134,9 +134,21 @@ except Exception:
     xformers = None
     xformers_attention = None
 
+SUPPORTS_BFLOAT16: bool = False
+if _device_type in ("cuda", "hip") and torch.cuda.is_available():
+    _major, _ = torch.cuda.get_device_capability()
+    SUPPORTS_BFLOAT16 = _major >= 8
+
+
+def is_bfloat16_supported() -> bool:
+    return SUPPORTS_BFLOAT16
+
+
 __all__ = [
     "HAS_FLASH_ATTENTION",
     "HAS_FLASH_ATTENTION_SOFTCAPPING",
+    "SUPPORTS_BFLOAT16",
+    "is_bfloat16_supported",
     "xformers",
     "xformers_attention",
 ]

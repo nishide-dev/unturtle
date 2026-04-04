@@ -39,7 +39,7 @@ from typing import Any
 
 import torch
 
-from unsloth.trainer import UnslothTrainer, UnslothTrainingArguments
+from unturtle.trainer import UnslothTrainer, UnslothTrainingArguments
 from unturtle.eval import GenerationEvaluator, MaskedDiffusionEvaluator
 from unturtle.kernels.masked_diffusion_loss import fast_masked_diffusion_loss
 
