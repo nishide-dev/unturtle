@@ -67,7 +67,7 @@ from .configuration_dream import DreamConfig
 from .generation_utils import DreamGenerationMixin, DreamGenerationConfig
 
 try:
-    from unturtle.kernels.rope_embedding import fast_rope_embedding as _fast_rope_embedding
+    from unsloth.kernels.rope_embedding import fast_rope_embedding as _fast_rope_embedding
     _HAS_FAST_ROPE = True
 except ImportError:
     _HAS_FAST_ROPE = False

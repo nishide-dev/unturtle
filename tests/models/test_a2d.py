@@ -661,9 +661,9 @@ class TestA2DRoPE:
         from unturtle.models.a2d._fast_forward import _rotate_half_rope
 
         try:
-            from unturtle.kernels.rope_embedding import fast_rope_embedding
+            from unturtle.kernels import fast_rope_embedding
         except ImportError:
-            pytest.skip("unturtle.kernels.rope_embedding not available")
+            pytest.skip("fast_rope_embedding not available")
 
         B, n_heads, L, head_dim = 1, 4, 8, 32
         torch.manual_seed(2)
@@ -696,9 +696,9 @@ class TestA2DRoPE:
         from unturtle.models.a2d._fast_forward import _rotate_half_rope
 
         try:
-            from unturtle.kernels.rope_embedding import fast_rope_embedding
+            from unturtle.kernels import fast_rope_embedding
         except ImportError:
-            pytest.skip("unturtle.kernels.rope_embedding not available")
+            pytest.skip("fast_rope_embedding not available")
 
         B, n_heads, L, head_dim = 1, 4, 8, 32
         torch.manual_seed(3)
@@ -735,9 +735,9 @@ class TestA2DRoPE:
         from unturtle.models.a2d._fast_forward import _rotate_half_rope
 
         try:
-            from unturtle.kernels.rope_embedding import fast_rope_embedding
+            from unturtle.kernels import fast_rope_embedding
         except ImportError:
-            pytest.skip("unturtle.kernels.rope_embedding not available")
+            pytest.skip("fast_rope_embedding not available")
 
         B, n_heads, L, head_dim = 2, 4, 8, 32
         torch.manual_seed(4)
@@ -775,9 +775,9 @@ class TestA2DRoPE:
         from unturtle.models.a2d._fast_forward import _rotate_half_rope
 
         try:
-            from unturtle.kernels.rope_embedding import fast_rope_embedding
+            from unturtle.kernels import fast_rope_embedding
         except ImportError:
-            pytest.skip("unturtle.kernels.rope_embedding not available")
+            pytest.skip("fast_rope_embedding not available")
 
         B, n_heads, L, head_dim = 2, 4, 8, 32
         torch.manual_seed(5)

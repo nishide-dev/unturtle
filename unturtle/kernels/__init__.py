@@ -40,7 +40,7 @@ from .masked_diffusion_loss import (
     masked_diffusion_loss_from_timesteps,
 )
 from .fused_masked_diffusion_loss import fused_masked_diffusion_loss
-from .rope_embedding import fast_rope_embedding
+from unsloth.kernels.rope_embedding import fast_rope_embedding
 
 __all__ = [
     "Fast_CrossEntropyLoss",
