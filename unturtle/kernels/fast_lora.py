@@ -32,13 +32,11 @@ from __future__ import annotations
 
 import torch
 
-from ._fast_lora_core import (
+from unsloth.kernels.fast_lora import (
     LoRA_QKV,
     apply_lora_qkv,
     apply_lora_o,
     apply_lora_mlp_swiglu,
-)
-from ._fast_lora_utils import (
     _maybe_fake_quantize_activations,
     fast_dequantize,
     get_lora_parameters_bias,
