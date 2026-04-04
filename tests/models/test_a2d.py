@@ -267,7 +267,7 @@ class TestA2DPackedForward:
 
     def test_get_packed_info_returns_non_none_when_key_present(self, tiny_config):
         """get_packed_info_from_kwargs must return non-None when packed_seq_lengths is in kwargs."""
-        from unsloth.utils.packing import get_packed_info_from_kwargs
+        from unturtle.utils.packing import get_packed_info_from_kwargs
 
         packed_seq_lengths = torch.tensor([8, 8], dtype=torch.int32)
         kwargs = {"packed_seq_lengths": packed_seq_lengths}
