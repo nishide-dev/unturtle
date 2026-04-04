@@ -327,7 +327,7 @@ def _patch_llada_peft(
     and are not supported by the split QKV kernel — they are skipped with a
     warning.
     """
-    from unturtle.models.llada.modeling_llada import LLaDALlamaBlock
+    from unturtle.models.llada.modeling_llada import LLaDALlamaBlock, _make_llada_fast_rope_forward
 
     n_qkv = n_o = n_mlp = 0
 
@@ -369,6 +369,15 @@ def _patch_llada_peft(
                 "(only LLaDALlamaBlock is supported for Triton LoRA patching)."
             )
             continue
+
+        # Inject Triton RoPE fast forward unconditionally (CUDA already checked above).
+        rotary_emb = getattr(block, "rotary_emb", None)
+        if rotary_emb is not None and not getattr(rotary_emb, "_fast_rope_patched", False):
+            import types
+            rotary_emb.forward = types.MethodType(
+                _make_llada_fast_rope_forward(type(rotary_emb).forward), rotary_emb
+            )
+            rotary_emb._fast_rope_patched = True
 
         if lora_dropout != 0 or bias != "none":
             continue

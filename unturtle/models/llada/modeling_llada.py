@@ -49,6 +49,12 @@ from transformers.cache_utils import Cache
 
 from .generation_utils import LLaDAGenerationMixin
 
+try:
+    from unturtle.kernels.rope_embedding import fast_rope_embedding as _fast_rope_embedding
+    _HAS_FAST_ROPE = True
+except ImportError:
+    _HAS_FAST_ROPE = False
+
 from .configuration_llada import (
     LLaDAConfig,
     StrEnum,
@@ -1597,3 +1603,49 @@ class LLaDAModelLM(LLaDAGenerationMixin, LLaDAPreTrainedModel):
         # Always call super() so transformers 5.x can run its recompute_mapping logic.
         # This handles missing_keys and recompute_mapping kwargs passed by from_pretrained.
         super().tie_weights(**kwargs)
+
+
+def _make_llada_fast_rope_forward(original_forward):
+    """Return a patched ``RotaryEmbedding.forward`` that uses Triton on CUDA.
+
+    LLaDA's ``RotaryEmbedding`` caches ``pos_sin/pos_cos`` with shape
+    ``(1, 1, seq_len, head_dim)`` built via ``cat(freqs, freqs)``.
+    ``fast_rope_embedding`` expects cos/sin of shape ``(rows, head_dim//2)``,
+    so we slice the first ``head_dim//2`` elements and use sequential
+    ``arange(seq_len)`` indices (no double-index risk since the cache is
+    sequence-order based, not pre-indexed to ``position_ids``).
+
+    Falls back to the original implementation when query_len != key_len
+    (KV-cache prefix case) because ``Fast_RoPE_Embedding_QK`` requires
+    Q and K to share the same sequence length.
+    """
+
+    def _fast_forward(self, q: torch.Tensor, k: torch.Tensor):
+        query_len, key_len = q.shape[-2], k.shape[-2]
+
+        if not (_HAS_FAST_ROPE and q.device.type == "cuda" and query_len == key_len):
+            return original_forward(self, q, k)
+
+        if self.config.rope_full_precision:
+            q_, k_ = q.float(), k.float()
+        else:
+            q_, k_ = q, k
+
+        pos_sin, pos_cos = self.get_rotary_embedding(key_len, q_.device)
+        pos_sin = pos_sin.type_as(q_)
+        pos_cos = pos_cos.type_as(q_)
+
+        # pos_cos/pos_sin: (1, 1, key_len, head_dim) with cat(freqs,freqs) pattern.
+        # Slice first head_dim//2 elements and drop batch/head dims → (key_len, head_dim//2).
+        half = q_.shape[-1] // 2
+        cos_2d = pos_cos[0, 0, :key_len, :half].contiguous()  # (key_len, head_dim//2)
+        sin_2d = pos_sin[0, 0, :key_len, :half].contiguous()  # (key_len, head_dim//2)
+
+        # rope_embedding_indices grid size = batch * seq_len; tile arange(key_len) over batch.
+        bsz = q_.shape[0]
+        rope_indices = torch.arange(key_len, device=q_.device, dtype=torch.long).repeat(bsz)
+        q_out, k_out = _fast_rope_embedding(q_.clone(), k_.clone(), cos_2d, sin_2d, rope_indices)
+
+        return q_out.type_as(q), k_out.type_as(k)
+
+    return _fast_forward
