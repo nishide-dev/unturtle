@@ -101,24 +101,24 @@ from unturtle import FastDiffusionModel           # Phase C 追加
 - `A2DAttention_fast_forward` (bidirectional, causal=False) を injection
 - `TaskType.FEATURE_EXTRACTION` で PEFT ラップ (CAUSAL_LM guard 回避)
 
-### 将来目標: Phase Z — unsloth 完全移行
+### unsloth との依存関係方針 (2026-04 確定)
 
-**最終的なあるべき姿**: unturtle が unsloth に依存しない独立した dLLM フレームワークになること。
-現在 `unturtle/__init__.py` の `from unsloth import *` に依存している以下のコンポーネントを
-順次 unturtle 内で再実装・ベンダリングする:
+**unturtle は unsloth に依存する dLLM 特化ライブラリ** として開発する。
+unsloth からの完全独立化 (旧 Phase Z) は **プロジェクトの目標ではない**。
 
-| コンポーネント | 現状 | Phase Z での対応 |
-|--------------|------|----------------|
-| `Fast_CrossEntropyLoss` (Triton CE) | `unsloth/kernels/cross_entropy_loss.py` | `unturtle/kernels/` に移植 |
-| `fast_rope_embedding` | `unsloth/kernels/rope_embedding.py` | `unturtle/kernels/` に移植 |
-| `apply_lora_qkv` / `apply_lora_o` | `unsloth/kernels/fast_lora.py` | `unturtle/kernels/fast_lora.py` に統合 |
-| `run_attention` / `select_attention_backend` | `unsloth/utils/attention_dispatch.py` | `unturtle/utils/` に移植 |
-| `get_packed_info_from_kwargs` | `unsloth/utils/packing.py` | `unturtle/utils/` に移植 |
-| `UnslothTrainer` / `UnslothTrainingArguments` | `unsloth/trainer.py` | `DiffusionTrainer` が直接 `SFTTrainer` を継承 |
-| `FastLanguageModel` (AR 用) | `unsloth/models/` | 不要 (dLLM では `FastDiffusionModel` のみ) |
-| Optimizers | `unsloth/optimizers.py` (未実装) | `unturtle/optimizers.py` に実装 |
+**方針**:
+- unsloth のカーネル最適化 (`fast_rope_embedding`, `Fast_CrossEntropyLoss`, LoRA kernels) はそのまま利用する
+- `DiffusionTrainer` は `UnslothTrainer` を継承し続けて問題ない
+- unturtle が提供する価値は **dLLM 特有のコンポーネント** に集中する:
+  - bidirectional attention fast forward (A2D / Dream / LLaDA)
+  - masked diffusion loss kernel
+  - dLLM 生成ユーティリティ (MDLM denoising loop, KV cache)
+  - dLLM 学習・評価ハーネス
 
-進捗はこのセクションと各ファイルの `# TODO(Phase Z):` コメントで追跡する。
+**`unturtle/utils/` について** (Phase Z 作業の残滓):
+- `packing.py`, `attention_dispatch.py`, `_runtime.py` は A2D fast forward パスが直接利用するため有効
+- `unturtle/trainer.py` のベンダリングは将来 revert 候補 (現状は動作するため放置)
+- `# TODO(Phase Z):` コメントは将来対応不要なため気にしなくてよい
 
 ---
 
@@ -144,7 +144,7 @@ from unturtle import FastDiffusionModel           # Phase C 追加
 | Phase H | `tests/models/`, `unturtle/models/a2d/modeling_modernbert.py` | RoPE テスト + ModernBERT A2D | ✅ 完了 |
 | Phase H+ | `unturtle/models/dream/`, `unturtle/models/llada/`, `unsloth/kernels/rope_embedding.py` | Dream/LLaDA の Triton RoPE 最適化適用可能性を評価 | 🔍 調査完了 (#58, 詳細は下記) |
 | Phase I | `dev/distributed.md` | 分散学習 (FSDP / DeepSpeed ZeRO) の制約ドキュメント化・推奨設定 | ✅ 完了 (#51) |
-| Phase Z | `unturtle/` 全体 | unsloth 完全移行・依存除去 | 🔲 長期目標 |
+| ~~Phase Z~~ | ~~`unturtle/` 全体~~ | ~~unsloth 完全移行・依存除去~~ | ❌ 方針転換により廃止 (#67-#69 クローズ) |
 
 ---
 
