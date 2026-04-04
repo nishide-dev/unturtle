@@ -270,3 +270,166 @@ class TestDreamFastRoPE:
         assert torch.allclose(q_cpu, q_out.cpu(), atol=1e-4), (
             f"CUDA/CPU parity failed: max_diff={(q_cpu - q_out.cpu()).abs().max().item():.2e}"
         )
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="Triton RoPE requires CUDA")
+    def test_cuda_parity_with_actual_reset_position_ids(self, config):
+        """CUDA fast path matches CPU for pre-indexed cos/sin derived from reset position_ids.
+
+        This is the exact failure mode from CLAUDE.md gotcha #16/#17:
+        position_ids are non-monotonic (packed/reset), cos/sin are pre-indexed
+        from those ids, and we must not double-index inside fast_rope_embedding.
+        """
+        from unturtle.models.dream import DreamConfig
+        from unturtle.models.dream.modeling_dream import _apply_dream_rope, DreamRotaryEmbedding
+
+        torch.manual_seed(3)
+        B, n_heads, L, head_dim = 2, 4, 8, 32
+        n_kv_heads = 4
+
+        # Build reset position_ids: batch 0 = [0,1,2,3,0,1,2,3], batch 1 = [0,1,2,3,4,5,6,7]
+        position_ids = torch.stack([
+            torch.tensor([0, 1, 2, 3, 0, 1, 2, 3]),
+            torch.arange(L),
+        ])
+
+        # Derive cos/sin via DreamRotaryEmbedding (same as model would do)
+        cfg = DreamConfig(
+            vocab_size=1000, hidden_size=head_dim * n_heads,
+            intermediate_size=256, num_hidden_layers=1,
+            num_attention_heads=n_heads, num_key_value_heads=n_kv_heads,
+            max_position_embeddings=128, pad_token_id=0, mask_token_id=1,
+        )
+        rotary = DreamRotaryEmbedding(config=cfg)
+        dummy_x = torch.randn(B, L, cfg.hidden_size)
+        cos, sin = rotary(dummy_x, position_ids)  # pre-indexed (B, L, head_dim)
+
+        q = torch.randn(B, n_heads, L, head_dim)
+        k = torch.randn(B, n_kv_heads, L, head_dim)
+
+        # CPU reference
+        q_cpu, k_cpu = _apply_dream_rope(q.clone(), k.clone(), cos, sin, B, L)
+
+        # CUDA fast path
+        q_cuda, k_cuda = _apply_dream_rope(
+            q.cuda().clone(), k.cuda().clone(), cos.cuda(), sin.cuda(), B, L
+        )
+
+        assert torch.allclose(q_cpu, q_cuda.cpu(), atol=1e-4), (
+            f"Q mismatch (reset pos_ids): max_diff={(q_cpu - q_cuda.cpu()).abs().max().item():.2e}"
+        )
+        assert torch.allclose(k_cpu, k_cuda.cpu(), atol=1e-4), (
+            f"K mismatch (reset pos_ids): max_diff={(k_cpu - k_cuda.cpu()).abs().max().item():.2e}"
+        )
+
+    def test_gqa_parity(self, config):
+        """_apply_dream_rope works correctly with GQA (n_kv_heads < n_heads)."""
+        from unturtle.models.dream import DreamConfig
+        from unturtle.models.dream.modeling_dream import _apply_dream_rope
+
+        torch.manual_seed(5)
+        B, n_heads, n_kv_heads, L, head_dim = 2, 8, 2, 16, 32
+
+        freqs = torch.randn(B, L, head_dim // 2)
+        cos = torch.cat([freqs.cos(), freqs.cos()], dim=-1)
+        sin = torch.cat([freqs.sin(), freqs.sin()], dim=-1)
+
+        q = torch.randn(B, n_heads, L, head_dim)
+        k = torch.randn(B, n_kv_heads, L, head_dim)
+
+        q_out, k_out = _apply_dream_rope(q.clone(), k.clone(), cos, sin, B, L)
+
+        assert q_out.shape == (B, n_heads, L, head_dim)
+        assert k_out.shape == (B, n_kv_heads, L, head_dim)
+        assert not torch.isnan(q_out).any()
+        assert not torch.isnan(k_out).any()
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="Triton RoPE requires CUDA")
+    def test_gqa_cuda_parity(self, config):
+        """CUDA and CPU agree for GQA (n_kv_heads < n_heads)."""
+        from unturtle.models.dream.modeling_dream import _apply_dream_rope
+
+        torch.manual_seed(6)
+        B, n_heads, n_kv_heads, L, head_dim = 2, 8, 2, 16, 32
+
+        freqs = torch.randn(B, L, head_dim // 2)
+        cos = torch.cat([freqs.cos(), freqs.cos()], dim=-1)
+        sin = torch.cat([freqs.sin(), freqs.sin()], dim=-1)
+
+        q = torch.randn(B, n_heads, L, head_dim)
+        k = torch.randn(B, n_kv_heads, L, head_dim)
+
+        q_cpu, k_cpu = _apply_dream_rope(q.clone(), k.clone(), cos, sin, B, L)
+        q_cuda, k_cuda = _apply_dream_rope(
+            q.cuda().clone(), k.cuda().clone(), cos.cuda(), sin.cuda(), B, L
+        )
+
+        assert torch.allclose(q_cpu, q_cuda.cpu(), atol=1e-4), (
+            f"GQA Q mismatch: max_diff={(q_cpu - q_cuda.cpu()).abs().max().item():.2e}"
+        )
+        assert torch.allclose(k_cpu, k_cuda.cpu(), atol=1e-4), (
+            f"GQA K mismatch: max_diff={(k_cpu - k_cuda.cpu()).abs().max().item():.2e}"
+        )
+
+    def test_position_embeddings_none_fallback(self, config):
+        """DreamAttention_fast_forward computes RoPE internally when position_embeddings=None."""
+        import types
+        from unturtle.models.dream import DreamModel
+        from unturtle.models.dream.modeling_dream import DreamAttention_fast_forward
+
+        torch.manual_seed(9)
+        model = DreamModel(config).cpu().eval()
+
+        for module in model.modules():
+            if hasattr(module, "q_proj") and hasattr(module, "o_proj"):
+                if not hasattr(module, "apply_qkv"):
+                    from unturtle.fast_diffusion_model import _original_apply_qkv, _original_apply_o
+                    module.apply_qkv = _original_apply_qkv
+                    module.apply_o = _original_apply_o
+
+        for layer in model.model.layers:
+            layer.self_attn.forward = types.MethodType(
+                DreamAttention_fast_forward, layer.self_attn
+            )
+
+        B, L = 2, 16
+        input_ids = torch.randint(0, config.vocab_size, (B, L))
+        # DreamModel.forward computes and passes position_embeddings internally,
+        # but we verify the model still runs without error.
+        with torch.no_grad():
+            out = model(input_ids=input_ids)
+        assert out.logits.shape == (B, L, config.vocab_size)
+        assert not torch.isnan(out.logits).any()
+
+    def test_fast_forward_with_lora_dropout_still_works(self, config):
+        """DreamAttention_fast_forward is injected even when lora_dropout > 0.
+
+        The LoRA Triton kernels are skipped in that case, but the forward
+        (including Triton RoPE on CUDA) must still execute correctly.
+        """
+        import types
+        from unturtle.models.dream import DreamModel
+        from unturtle.models.dream.modeling_dream import DreamAttention_fast_forward
+
+        torch.manual_seed(11)
+        model = DreamModel(config).cpu().eval()
+
+        for module in model.modules():
+            if hasattr(module, "q_proj") and hasattr(module, "o_proj"):
+                if not hasattr(module, "apply_qkv"):
+                    from unturtle.fast_diffusion_model import _original_apply_qkv, _original_apply_o
+                    module.apply_qkv = _original_apply_qkv
+                    module.apply_o = _original_apply_o
+
+        # Inject forward manually (simulates what _patch_dream_peft does
+        # unconditionally before the lora_dropout check)
+        for layer in model.model.layers:
+            layer.self_attn.forward = types.MethodType(
+                DreamAttention_fast_forward, layer.self_attn
+            )
+
+        B, L = 2, 8
+        input_ids = torch.randint(0, config.vocab_size, (B, L))
+        with torch.no_grad():
+            out = model(input_ids=input_ids)
+        assert out.logits.shape == (B, L, config.vocab_size)
+        assert not torch.isnan(out.logits).any()

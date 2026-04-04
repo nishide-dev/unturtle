@@ -892,8 +892,9 @@ def _apply_dream_rope(
     """Apply RoPE to Dream query/key states.
 
     ``cos`` / ``sin`` are pre-indexed by ``position_ids`` (shape ``(B, L, head_dim)``
-    or ``(1, L, head_dim)``).  On CUDA we flatten to ``(B*L, head_dim)`` and use
-    a sequential row-index so that ``fast_rope_embedding`` does not double-index.
+    or ``(1, L, head_dim)``).  On CUDA we slice the first ``head_dim//2`` elements,
+    flatten to ``(B*L, head_dim//2)``, and use a sequential row-index so that
+    ``fast_rope_embedding`` does not double-index.
     On CPU we fall back to the plain ``apply_rotary_pos_emb`` path.
 
     Args:
