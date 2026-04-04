@@ -896,6 +896,11 @@ class LLaDALlamaBlock(LLaDABlock):
             config.d_model, self.hidden_size, bias=config.include_bias, device=config.init_device
         )
 
+        # apply_mlp stub — replaced by Triton kernel via _patch_llada_peft on CUDA.
+        # Aliased names for apply_lora_mlp_swiglu compatibility:
+        #   gate_proj → ff_proj, down_proj → ff_out (set in _patch_llada_peft)
+        self.apply_mlp = LLaDALlamaBlock._default_apply_mlp
+
     def reset_parameters(self):
         super().reset_parameters()
         self.attn_norm.reset_parameters()
@@ -945,17 +950,27 @@ class LLaDALlamaBlock(LLaDABlock):
             x = self._activation_checkpoint_fn(self.ff_norm, x)  # type: ignore
         else:
             x = self.ff_norm(x)
-        x, x_up = self.ff_proj(x), self.up_proj(x) # new add
-        if self._activation_checkpoint_fn is not None:
-            x = self._activation_checkpoint_fn(self.act, x)  # type: ignore
-        else:
-            x = self.act(x)
-        x = x * x_up # new add
-        x = self.ff_out(x)
+        x = self.apply_mlp(self, x)
         x = self.dropout(x)
         x = og_x + x
 
         return x, cache
+
+    @staticmethod
+    def _default_apply_mlp(self, x: torch.Tensor) -> torch.Tensor:
+        """Default (non-Triton) gated MLP: ff_proj(gate) * up_proj → ff_out.
+
+        Replaced by ``apply_lora_mlp_swiglu`` on CUDA when ``activation_type="silu"``.
+        With SwiGLU (default), ``act.chunk(2)`` halves the gate output while
+        ``up_proj`` stays full-width, so Triton patching is skipped for non-SiLU blocks.
+        """
+        x, x_up = self.ff_proj(x), self.up_proj(x)
+        if self._activation_checkpoint_fn is not None:
+            x = self._activation_checkpoint_fn(self.act, x)  # type: ignore
+        else:
+            x = self.act(x)
+        x = x * x_up
+        return self.ff_out(x)
 
 
 class LLaDAOutput(NamedTuple):

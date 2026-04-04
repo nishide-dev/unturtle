@@ -423,25 +423,46 @@ def _patch_llada_peft(
                 "FastDiffusionModel (LLaDA): cannot patch attn_out with Triton kernel."
             )
 
-        # ff_proj / up_proj (gate/up equivalent, no down_proj in LLaDA SwiGLU variant)
+        # ff_proj / up_proj / ff_out — gated MLP (gate/up/down).
+        # apply_lora_mlp_swiglu reads self.gate_proj / self.up_proj / self.down_proj
+        # and uses the SiLU-gated SwiGLU Triton kernel.
+        # Only patch when activation_type is SiLU (output_multiplier==1); with SwiGLU
+        # (output_multiplier==0.5) ff_proj output is halved by chunk(2) while up_proj
+        # stays full-width, producing a shape mismatch in the Triton kernel.
+        block_act = getattr(block, "act", None)
+        act_is_silu = block_act is not None and isinstance(block_act, torch.nn.SiLU)
         ff_proj = getattr(block, "ff_proj", None)
         up_proj = getattr(block, "up_proj", None)
-        if (
+        ff_out = getattr(block, "ff_out", None)
+        if not act_is_silu:
+            _warn_once(
+                f"FastDiffusionModel (LLaDA): skipping Triton MLP patch for "
+                f"{type(block_act).__name__} activation — only SiLU is supported. "
+                "MLP LoRA will use PEFT default path."
+            )
+        elif (
             ff_proj is not None
             and up_proj is not None
+            and ff_out is not None
             and hasattr(ff_proj, "lora_A")
             and hasattr(up_proj, "lora_A")
+            and hasattr(ff_out, "lora_A")
             and _no_bias(ff_proj)
             and _no_bias(up_proj)
+            and _no_bias(ff_out)
             and _no_lora_mag(ff_proj)
             and _no_lora_mag(up_proj)
+            and _no_lora_mag(ff_out)
         ):
-            # LLaDA SwiGLU has no down_proj — MLP packing not applicable to
-            # apply_lora_mlp_swiglu (which requires gate/up/down). Skip silently.
+            # Set gate_proj/down_proj aliases for apply_lora_mlp_swiglu compatibility.
+            block.gate_proj = ff_proj
+            block.down_proj = ff_out
+            block.apply_mlp = apply_lora_mlp_swiglu
+            n_mlp += 1
+        else:
             _warn_once(
-                "FastDiffusionModel (LLaDA): LLaDALlamaBlock MLP uses ff_proj/up_proj "
-                "without down_proj — apply_lora_mlp_swiglu requires gate/up/down. "
-                "MLP LoRA will use PEFT default path."
+                "FastDiffusionModel (LLaDA): cannot patch MLP with Triton kernel "
+                "(LoRA not enabled, bias present, or magnitude scaling active)."
             )
 
     return n_qkv, n_o, n_mlp
