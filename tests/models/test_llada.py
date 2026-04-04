@@ -351,3 +351,122 @@ class TestLLaDAFastRoPE:
             if hasattr(b, "rotary_emb") and getattr(b.rotary_emb, "_fast_rope_patched", False)
         ]
         assert len(patched) > 0, "Expected at least one block to have Triton RoPE patched"
+
+    def test_kv_cache_fallback_cpu_parity(self, rotary_emb):
+        """query_len < key_len (KV-cache prefix) falls back to original — CPU parity."""
+        from unturtle.models.llada.modeling_llada import _make_llada_fast_rope_forward
+        import types
+
+        B, n_heads, query_len, key_len, head_dim = 2, 4, 3, 8, 16
+        q = torch.randn(B, n_heads, query_len, head_dim)
+        k = torch.randn(B, n_heads, key_len, head_dim)
+
+        original_forward = type(rotary_emb).forward
+        fast_forward = _make_llada_fast_rope_forward(original_forward)
+        rotary_emb.forward = types.MethodType(fast_forward, rotary_emb)
+
+        q_fast, k_fast = rotary_emb(q.clone(), k.clone())
+        q_orig, k_orig = original_forward(rotary_emb, q.clone(), k.clone())
+
+        assert torch.allclose(q_fast, q_orig, atol=1e-6), f"Q mismatch: {(q_fast - q_orig).abs().max()}"
+        assert torch.allclose(k_fast, k_orig, atol=1e-6), f"K mismatch: {(k_fast - k_orig).abs().max()}"
+
+    @pytest.mark.skipif(not cuda, reason="Triton fast RoPE requires CUDA")
+    def test_kv_cache_fallback_cuda_parity(self, rotary_emb):
+        """query_len < key_len on CUDA also falls back to original (no Triton path)."""
+        from unturtle.models.llada.modeling_llada import _make_llada_fast_rope_forward
+        import types
+
+        B, n_heads, query_len, key_len, head_dim = 2, 4, 3, 8, 16
+        q = torch.randn(B, n_heads, query_len, head_dim)
+        k = torch.randn(B, n_heads, key_len, head_dim)
+
+        original_forward = type(rotary_emb).forward
+        q_ref, k_ref = original_forward(rotary_emb, q.clone(), k.clone())
+
+        fast_forward = _make_llada_fast_rope_forward(original_forward)
+        rotary_emb.forward = types.MethodType(fast_forward, rotary_emb)
+        q_out, k_out = rotary_emb(q.clone().cuda(), k.clone().cuda())
+
+        assert torch.allclose(q_out.cpu(), q_ref, atol=1e-6), f"Q max diff: {(q_out.cpu() - q_ref).abs().max()}"
+        assert torch.allclose(k_out.cpu(), k_ref, atol=1e-6), f"K max diff: {(k_out.cpu() - k_ref).abs().max()}"
+
+    @pytest.mark.skipif(not cuda, reason="Triton fast RoPE requires CUDA")
+    def test_gqa_cuda_parity(self):
+        """GQA (n_kv_heads=1): CUDA fast RoPE matches original for Q; K passthrough."""
+        from unturtle.models.llada import LLaDAConfig
+        from unturtle.models.llada.modeling_llada import RotaryEmbedding, _make_llada_fast_rope_forward
+        from collections import defaultdict
+        import types
+
+        config = LLaDAConfig(
+            d_model=64,
+            n_heads=4,
+            n_kv_heads=1,
+            n_layers=2,
+            vocab_size=512,
+            max_sequence_length=64,
+            rope=True,
+            init_device="cpu",
+        )
+        cache = defaultdict(lambda: None)
+        rotary_emb = RotaryEmbedding(config, cache)
+
+        B, n_heads, n_kv_heads, T, head_dim = 2, 4, 1, 8, 16
+        q = torch.randn(B, n_heads, T, head_dim)
+        k = torch.randn(B, n_kv_heads, T, head_dim)
+
+        original_forward = type(rotary_emb).forward
+        q_ref, k_ref = original_forward(rotary_emb, q.clone(), k.clone())
+
+        fast_forward = _make_llada_fast_rope_forward(original_forward)
+        rotary_emb.forward = types.MethodType(fast_forward, rotary_emb)
+        q_out, k_out = rotary_emb(q.clone().cuda(), k.clone().cuda())
+
+        assert torch.allclose(q_out.cpu(), q_ref, atol=1e-4), f"Q max diff: {(q_out.cpu() - q_ref).abs().max()}"
+        assert torch.allclose(k_out.cpu(), k_ref, atol=1e-4), f"K max diff: {(k_out.cpu() - k_ref).abs().max()}"
+
+    @pytest.mark.skipif(not cuda, reason="Triton fast RoPE requires CUDA")
+    def test_double_patch_idempotent(self):
+        """Calling _patch_llada_peft twice does not stack the fast forward wrapper."""
+        from unturtle.models.llada import LLaDAConfig, LLaDAModelLM
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        config = LLaDAConfig(
+            d_model=64,
+            n_heads=4,
+            n_layers=2,
+            vocab_size=512,
+            max_sequence_length=64,
+            rope=True,
+            block_type="llama",
+            init_device="cpu",
+        )
+        model = LLaDAModelLM(config).cuda()
+        peft_model = FastDiffusionModel.get_peft_model(
+            model, r=4,
+            target_modules=["q_proj", "k_proj", "v_proj", "attn_out"],
+            lora_dropout=0, bias="none",
+        )
+
+        inner = peft_model.base_model.model
+        blocks = (inner.model.transformer.blocks
+                  if hasattr(inner, "model") and hasattr(inner.model, "transformer")
+                  else inner.transformer.blocks)
+
+        # Collect forward bindings after first patch
+        forwards_after_first = [
+            id(b.rotary_emb.forward) for b in blocks if hasattr(b, "rotary_emb")
+        ]
+
+        # Simulate a second patch call
+        from unturtle.fast_diffusion_model import _patch_llada_peft
+        _patch_llada_peft(peft_model, lora_dropout=0, bias="none")
+
+        forwards_after_second = [
+            id(b.rotary_emb.forward) for b in blocks if hasattr(b, "rotary_emb")
+        ]
+
+        assert forwards_after_first == forwards_after_second, (
+            "double patch changed rotary_emb.forward bindings — wrapper was stacked"
+        )
