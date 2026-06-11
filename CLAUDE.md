@@ -160,8 +160,8 @@ Two tiers, different guarantees:
 - **Smoke / in-loop** (`unturtle.eval` — `GSM8KEvaluator`, `MaskedDiffusionEvaluator`,
   `GenerationEvaluator`): fast local sanity checks during training/CI. NOT authoritative.
 - **Canonical benchmark** (`unturtle.eval.harness`, lm-evaluation-harness): the
-  authoritative, paper-comparable path. Routes through `FastDiffusionModel` +
-  `diffusion_generate`. Every run pins an explicit per-(model_family, task)
+  authoritative, paper-comparable path. Routes through `model.generate` (via
+  `FastDiffusionModel.generate` forwarder). Every run pins an explicit per-(model_family, task)
   `DecodingConfig` and records it with the score (dLLM scores are highly sensitive to
   decoding hyperparameters such as max_new_tokens, eos-suppression, steps, temperature).
 
@@ -170,13 +170,17 @@ must not require it (the adapter/runner import `lm_eval` lazily).
 
 ## High-level generation
 
-`FastDiffusionModel.generate(model, inputs, algorithm="auto", **kwargs)` is the high-level
-inference entry. `algorithm` is explicit: `"auto"` (default — fastest discrete path the model
-supports: block-decode when available, else MDLM; BD3LM when requested), or force
-`"mdlm"` / `"block_decode"` / `"bd3lm"`. It delegates to `model.diffusion_generate(...)` with
-the flag set the named algorithm implies, so output is identical to the equivalent
-`diffusion_generate` call; the low-level `diffusion_generate` entry stays for existing callers.
-Decoding algorithms are registered in `unturtle/models/generation/sampler.py`
+`model.generate(inputs, algorithm="auto", **kwargs)` is the unified dLLM inference entry
+(transformers-standard name; diffusion is the default behavior). `algorithm` is explicit:
+`"auto"` (default — fastest discrete path the model supports: BD3LM when requested via
+`use_block_diffusion=True`, else block-decode when available, else MDLM), or force
+`"mdlm"` / `"block_decode"` / `"bd3lm"`. The resolved algorithm's flags
+(`use_cache` / `use_block_diffusion`) are injected into kwargs and override
+`generation_config` fields — pin `algorithm="mdlm"` explicitly when the no-cache MDLM
+path is the intent on a block-decode-capable model. `FastDiffusionModel.generate(model,
+inputs, algorithm=..., **kwargs)` remains as a thin forwarder (unsloth-style facade,
+behaviorally identical to calling `model.generate` directly). Decoding algorithms are
+registered in `unturtle/models/generation/sampler.py`
 (discrete-masked-only today; the registry is open for future continuous-diffusion algorithms).
 
 ## Issue, branch, commit, PR workflow
