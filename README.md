@@ -31,11 +31,12 @@ uv pip install -e ".[huggingface]"
 
 ## Legacy repository
 
-This repository is a clean rebuild forked from the legacy
-[unturtle monorepo](https://github.com/nishide-dev/unturtle) at commit
-`a6c1f893fc87c0973f9c32e59ca3d7d54ffb9724` (2026-03-28).
+This repository is a clean rebuild of the archived
+[unturtle-legacy](https://github.com/nishide-dev/unturtle-legacy) monorepo
+(originally a fork of unsloth; see `NOTICE` for the vendored-code provenance).
 The legacy repository includes Unturtle Studio and lighteval integration;
-those components are not carried forward here.
+those components are not carried forward here. Its issue/PR history remains
+browsable read-only.
 
 ## License
 

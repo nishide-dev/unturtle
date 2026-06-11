@@ -4,6 +4,11 @@ on:
   push:
     branches: ["main"]
   pull_request:
+    branches: ["main"]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 # Note: test collection is intentionally excluded from this workflow.
 # unsloth performs GPU-specific patching at import time; test collection
