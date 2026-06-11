@@ -24,6 +24,7 @@ Fork point: commit a6c1f893fc87c0973f9c32e59ca3d7d54ffb9724 (2026-03-28)
 The following files are derived from the upstream Unsloth codebase
 and retain the original Apache 2.0 license header:
 
+  - unturtle/trainer.py
   - unturtle/diffusion/trainer.py
   - unturtle/utils/attention_dispatch.py
   - unturtle/utils/packing.py
