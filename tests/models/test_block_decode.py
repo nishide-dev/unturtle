@@ -31,6 +31,7 @@ class TestA2DBlockDecode:
     @pytest.fixture
     def tiny_model(self):
         """Create a tiny A2D LLaMA model for testing."""
+        torch.manual_seed(0)
         config = TinyA2DLlamaConfig(
             vocab_size=128,
             hidden_size=64,
