@@ -18,7 +18,8 @@ unturtle              dLLM method layer (this repo)
                         ├── models/generation/    shared cache / block-decode / generation mixin
                         ├── diffusion/            MDLM / BD3LM trainer, collator, GRPO
                         ├── kernels/              Triton kernels, fast LoRA paths
-                        └── eval/                 smoke evaluators + lm-evaluation-harness adapter
+                        ├── eval/                 smoke evaluators + lm-evaluation-harness adapter
+                        └── cli/                  unturtle CLI (train / generate / export / eval)
 ```
 
 ## Quick start

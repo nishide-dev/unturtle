@@ -1,0 +1,62 @@
+# Diffu-GRPO / wd1 RL via `unturtle train --config examples/configs/llada_grpo.yaml`.
+# Requires: uv pip install -e ".[huggingface,grpo]"
+#
+# The dataset is mapped to TRL's ``prompt`` column from ``data.dataset_text_field``
+# unless the dataset already exposes ``prompt``.
+
+model:
+  model: GSAI-ML/LLaDA-8B-Instruct
+  model_type: llada
+  max_seq_length: 512
+  load_in_4bit: true
+
+data:
+  dataset: allenai/tulu-3-sft-mixture
+  dataset_text_field: text
+
+training:
+  task: grpo
+  training_type: lora
+  output_dir: ./outputs/llada_grpo_cli
+  num_epochs: 1
+  learning_rate: 1.0e-5
+  batch_size: 1
+  gradient_accumulation_steps: 8
+  warmup_steps: 5
+  save_steps: 0
+  weight_decay: 0.01
+  random_seed: 3407
+  packing: false
+  gradient_checkpointing: unsloth
+
+diffusion:
+  alpha_scheduler: linear
+  time_epsilon: 0.001
+  loss_weight_type: uniform
+  completion_only: true
+
+lora:
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.0
+  target_modules: q_proj,k_proj,v_proj,attn_out,ff_proj,up_proj,ff_out
+  use_rslora: false
+
+logging:
+  enable_wandb: false
+  wandb_project: unturtle-training
+  enable_tensorboard: false
+  tensorboard_dir: runs
+
+grpo:
+  builtin_reward: length
+  num_generations: 8
+  max_completion_length: 128
+  num_iterations: 1
+  diffusion_steps: 128
+  block_length: 32
+  mask_id: null
+  cfg_scale: 0.0
+  remasking: random
+  diffu_policy_objective: grpo
+  scale_rewards: false

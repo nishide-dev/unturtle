@@ -1,0 +1,42 @@
+model:
+  model: nishide-dev/A2D-Llama3-8B-dLLM
+  model_type: a2d
+  max_seq_length: 512
+  load_in_4bit: true
+
+data:
+  dataset: allenai/tulu-3-sft-mixture
+  dataset_text_field: text
+
+training:
+  training_type: lora
+  output_dir: ./outputs/a2d_llama_sft_cli
+  num_epochs: 2
+  learning_rate: 2.0e-5
+  batch_size: 2
+  gradient_accumulation_steps: 8
+  warmup_steps: 5
+  save_steps: 0
+  weight_decay: 0.01
+  random_seed: 3407
+  packing: false
+  gradient_checkpointing: unsloth
+
+diffusion:
+  alpha_scheduler: cosine
+  time_epsilon: 0.001
+  loss_weight_type: timestep
+  completion_only: true
+
+lora:
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.0
+  target_modules: q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj
+  use_rslora: false
+
+logging:
+  enable_wandb: false
+  wandb_project: unturtle-training
+  enable_tensorboard: false
+  tensorboard_dir: runs

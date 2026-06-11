@@ -68,6 +68,9 @@ markers = [
 [tool.ruff]
 target-version = "py311"
 force-exclude = true
+extend-exclude = [
+    "examples/demos/*.py",  # marimo notebooks: cell functions reference cross-cell names (F821 by design)
+]
 
 [tool.ruff.lint]
 select = [
@@ -104,6 +107,9 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = [
     "S101",   # assert is expected in tests
+]
+"examples/**" = [
+    "E402",   # deliberate import order: unsloth/unturtle patching must run before model imports
 ]
 
 [tool.ruff.format]
