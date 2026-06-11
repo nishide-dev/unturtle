@@ -243,7 +243,9 @@ def run_unturtle_validator_once(run: RunSpec) -> tuple[str, dict[str, Any], int 
         **build_validator_generation_kwargs(run.settings),
         mask_token_id=mask_token_id,
     )
-    outputs = model.generate(inputs=input_ids, generation_config=generation_config)
+    outputs = model.generate(
+        inputs=input_ids, generation_config=generation_config, algorithm="mdlm"
+    )
     generated_tokens = outputs[:, input_ids.shape[1] :]
     text = tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)[0]
     token_count = int(outputs.shape[1] - input_ids.shape[1])
