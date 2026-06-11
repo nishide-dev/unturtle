@@ -1,7 +1,7 @@
 # Generate API Unification — Design
 
 **Date:** 2026-06-11
-**Status:** Approved (design)
+**Status:** Approved (design) — amended 2026-06-12 (see Amendment)
 **Scope:** Single PR. Precursor sub-project to the DiffusionGemma backbone addition.
 
 ## Goal
@@ -244,4 +244,22 @@ confirm green.
 - Output (token IDs / model output) identical to current behavior. Only the generation entry
   is re-wired.
 - Bidirectional attention and MDLM loss semantics untouched.
-- TinyA2D's AR generation path is retained via `algorithm="ar"` (pre-conversion behavior not lost).
+- ~~TinyA2D's AR generation path is retained via `algorithm="ar"`~~ — dropped, see Amendment.
+
+## Amendment — 2026-06-12 (issue #22)
+
+`algorithm="ar"` is **dropped** from this design (decided during implementation review):
+
+- A converted Tiny-A2D checkpoint is a diffusion model; AR decoding of converted weights is
+  not a supported use case, and no in-repo consumer exists (benchmarks / eval / CLI are
+  diffusion-only).
+- Pre-conversion sanity checks can call `transformers.GenerationMixin.generate(model, ...)`
+  explicitly as an escape hatch.
+- Consequences: `_supports_ar` / `_AR_CAPABLE_MODEL_TYPES` / the `"ar"` branch in
+  `resolve_algorithm` are not implemented (Section 3's `_supports_ar` subsection is void).
+  `MaskedDiffusionBlockGenerationMixin` needs **no `generate` override** — the base mixin's
+  `generate` already precedes `transformers.GenerationMixin` in the TinyA2D MRO, so diffusion
+  wins by default (pinned by a regression test). `algorithm="ar"` now fails as an unknown
+  algorithm (`ValueError` from `resolve_algorithm`) for every model.
+- The `"ar"` concept can be reintroduced when a hybrid AR/diffusion backbone
+  (e.g. Nemotron-Diffusion) lands; the algorithm registry remains open for it.
