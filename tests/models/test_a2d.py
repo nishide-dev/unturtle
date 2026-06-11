@@ -681,19 +681,33 @@ class TestA2DGeneration:
         s_bd3lm = out_bd3lm.sequences if hasattr(out_bd3lm, "sequences") else out_bd3lm
         assert torch.equal(s_auto, s_bd3lm)
 
-    def test_generate_resolves_to_diffusion_mixin(self, llama_model):
+    @pytest.mark.parametrize(
+        "model_cls_name",
+        [
+            "TinyA2DLlamaLMHeadModel",
+            "TinyA2DQwen2LMHeadModel",
+            "TinyA2DQwen3LMHeadModel",
+        ],
+    )
+    def test_generate_resolves_to_diffusion_mixin(self, model_cls_name):
         from transformers.generation import GenerationMixin
 
+        from unturtle.models.conversion.a2d import tiny_a2d
         from unturtle.models.generation.diffusion_generation_utils import (
             MaskedDiffusionGenerationMixin,
         )
 
-        resolved = type(llama_model).generate
+        model_cls = getattr(tiny_a2d, model_cls_name)
+        resolved = model_cls.generate
+        # Intentionally strict identity pin: ANY override of generate on a TinyA2D
+        # class must be a conscious, reviewed decision (it risks shadowing the
+        # diffusion path with transformers' AR generate).
         assert resolved is MaskedDiffusionGenerationMixin.generate
         assert resolved is not GenerationMixin.generate
 
     def test_generate_ar_is_unknown_algorithm(self, llama_model):
         prompt = torch.tensor([[1, 2, 3, 4]])
+        # ValueError fires at algorithm resolution, before any masking/token work.
         with pytest.raises(ValueError, match="Unknown decoding algorithm"):
             llama_model.generate(prompt, algorithm="ar", max_new_tokens=4)
 
