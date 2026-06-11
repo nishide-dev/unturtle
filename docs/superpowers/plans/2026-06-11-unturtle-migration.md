@@ -36,7 +36,11 @@ NEW=/grouper/nishide.21066-1000003/projects/unturtle-new       # 新リポジト
 - `unturtle_studio/` 全部、`unturtle/eval/experimental/` 全部
 - `unturtle/models/{llada,dream,modernbert}.py`（非推奨エイリアス）、`unturtle/models/a2d/`
 - `tests/models/test_import_compat.py`、`tests/eval/test_lighteval_*.py`（3件）、`tests/install/`（3件）、`tests/examples/test_validate_studio_mdlm_chat.py`、`examples/validate_studio_mdlm_chat.py`
-- `install.sh`、`.github/workflows/{deploy-docs,release,stale}.yml`（必要になったら個別に再導入）
+- legacy の `install.sh`（Python 3.13 前提の upstream ラッパー）、`.github/workflows/{deploy-docs,release,stale}.yml`（必要になったら個別に再導入）
+  - ※ 新リポジトリには **uv 前提の薄い `install.sh` を新規作成**して置く（Task 1 で追加済み）。
+    実行順序が重要: torch（CUDA ビルドを TORCH_INDEX で選択、既定 cu128）→ build/test ツール →
+    `uv pip install -e ".[huggingface]"`。素の pip は unsloth の依存グラフで壊れた `regex` を
+    解決する事故が確認されたため非サポートと明記。
 
 ---
 
