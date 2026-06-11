@@ -105,12 +105,7 @@ class GenerationEvaluator(BaseEvaluator):
                 self.device
             )
 
-        diffusion_generate = getattr(self.model, "diffusion_generate", None)
-        if callable(diffusion_generate):
-            sequences = diffusion_generate(prompt_ids, **generation_kwargs)
-        else:
-            generate = self.model.generate
-            sequences = generate(prompt_ids, **generation_kwargs)
+        sequences = self.model.generate(prompt_ids, **generation_kwargs)
 
         if hasattr(sequences, "sequences"):
             sequences = sequences.sequences

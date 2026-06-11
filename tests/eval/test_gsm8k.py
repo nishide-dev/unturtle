@@ -54,7 +54,7 @@ class TestExtractNumericAnswer:
 
 
 # ---------------------------------------------------------------------------
-# Stub model — mimics diffusion_generate behaviour without real weights
+# Stub model — mimics generate behaviour without real weights
 # ---------------------------------------------------------------------------
 
 
@@ -86,9 +86,7 @@ class _CorrectAnswerModel(torch.nn.Module):
         self.dummy = torch.nn.Parameter(torch.zeros(1))
         self.calls = 0
 
-    def diffusion_generate(
-        self, input_ids, max_length=None, steps=None, temperature=None, **_kw
-    ):
+    def generate(self, input_ids, max_length=None, steps=None, temperature=None, **_kw):
         self.calls += 1
         pad = torch.full((input_ids.shape[0], 1), 7, dtype=input_ids.dtype)
         return torch.cat([input_ids, pad], dim=1)
@@ -210,7 +208,7 @@ class TestGSM8KEvaluator:
         metrics = evaluator.evaluate(num_examples=3)
         assert metrics["gsm8k_num_examples"] == 3.0
 
-    def test_evaluate_uses_diffusion_generate(self, monkeypatch):
+    def test_evaluate_uses_generate(self, monkeypatch):
         tok = _StubTokenizer()
         tok._answer = r"\boxed{2}"
         model = _CorrectAnswerModel()

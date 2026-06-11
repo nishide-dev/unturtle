@@ -34,7 +34,7 @@ class _StubModel:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
 
-    def diffusion_generate(self, input_ids, **kwargs):
+    def generate(self, input_ids, **kwargs):
         import torch
 
         self.calls.append(kwargs)
@@ -74,7 +74,7 @@ def test_build_harness_lm_requires_lm_eval(monkeypatch: pytest.MonkeyPatch) -> N
         )
 
 
-def test_generate_until_routes_through_diffusion_generate(
+def test_generate_until_routes_through_generate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _install_fake_lm_eval(monkeypatch)
@@ -91,7 +91,7 @@ def test_generate_until_routes_through_diffusion_generate(
     )
     out = lm.generate_until([_FakeInstance("Q: 2+2?", {"until": ["STOP"]})])
     assert isinstance(out, list) and len(out) == 1
-    assert model.calls, "diffusion_generate was not called"
+    assert model.calls, "generate was not called"
     assert "STOP" not in out[0]
     assert out[0].startswith("the answer is 42")
 

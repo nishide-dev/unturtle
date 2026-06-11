@@ -51,7 +51,7 @@ class GSM8KEvaluator(BaseEvaluator):
 
     Loads the HuggingFace ``gsm8k`` dataset, formats each question as a
     zero-shot chat prompt via ``apply_chat_template``, generates with
-    ``diffusion_generate``, extracts the numeric answer, and compares to
+    ``generate``, extracts the numeric answer, and compares to
     the gold answer.
 
     Metrics returned by :meth:`evaluate`:
@@ -95,28 +95,13 @@ class GSM8KEvaluator(BaseEvaluator):
         ).to(self.device)
         prompt_len = input_ids.shape[1]
 
-        diffusion_generate = getattr(self.model, "diffusion_generate", None)
         max_length = prompt_len + self.max_new_tokens
-        if callable(diffusion_generate):
-            sequences = diffusion_generate(
-                input_ids,
-                max_length=max_length,
-                steps=self.num_steps,
-                temperature=self.temperature,
-            )
-        else:
-            import warnings
-
-            warnings.warn(
-                f"{type(self.model).__name__} has no diffusion_generate method. "
-                "Falling back to model.generate — results are NOT diffusion-model results.",
-                stacklevel=2,
-            )
-            hf_kwargs: dict[str, Any] = {"max_length": max_length}
-            if self.temperature > 0.0:
-                hf_kwargs["do_sample"] = True
-                hf_kwargs["temperature"] = self.temperature
-            sequences = self.model.generate(input_ids, **hf_kwargs)
+        sequences = self.model.generate(
+            input_ids,
+            max_length=max_length,
+            steps=self.num_steps,
+            temperature=self.temperature,
+        )
 
         if hasattr(sequences, "sequences"):
             sequences = sequences.sequences
@@ -143,7 +128,7 @@ class GSM8KEvaluator(BaseEvaluator):
         num_examples: int | None = None,
         seed: int = 42,
     ) -> dict[str, float]:
-        # Generation runs one example at a time: diffusion_generate is
+        # Generation runs one example at a time: generate is
         # memory-intensive and does not support batch_size > 1 here.
         dataset = self._load_dataset(split, seed, num_examples)
 
