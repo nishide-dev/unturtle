@@ -7,87 +7,33 @@ from unturtle.fast_diffusion_model import FastDiffusionModel
 
 
 class _RecordingModel:
-    """Stub dLLM model: records the kwargs diffusion_generate receives."""
+    """Stub dLLM model: records the args its generate() receives."""
 
-    def __init__(self, *, cache_capable: bool = True) -> None:
-        self.calls: list[dict] = []
-        self._cache_capable = cache_capable
-
-    def _model_forward_with_cache(self, *a, **k):  # noqa: ANN002, ANN003
-        ...
-
-    def diffusion_generate(self, inputs=None, **kwargs):  # noqa: ANN001, ANN003
-        self.calls.append({"inputs": inputs, **kwargs})
-        return "GENERATED"
-
-
-class _NoCacheModel:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    def diffusion_generate(self, inputs=None, **kwargs):  # noqa: ANN001, ANN003
-        self.calls.append({"inputs": inputs, **kwargs})
+    def generate(self, inputs=None, *, algorithm="auto", **kwargs):  # noqa: ANN001, ANN003
+        self.calls.append({"inputs": inputs, "algorithm": algorithm, **kwargs})
         return "GENERATED"
 
 
-def test_generate_auto_selects_block_decode_for_cache_capable() -> None:
-    model = _RecordingModel(cache_capable=True)
-    out = FastDiffusionModel.generate(model, inputs="X", steps=8)
+def test_facade_forwards_inputs_and_algorithm() -> None:
+    model = _RecordingModel()
+    out = FastDiffusionModel.generate(model, inputs="X", algorithm="mdlm", steps=8)
     assert out == "GENERATED"
     call = model.calls[-1]
-    assert call["use_cache"] is True
-    assert call["use_block_diffusion"] is False
-    assert call["steps"] == 8
     assert call["inputs"] == "X"
+    assert call["algorithm"] == "mdlm"
+    assert call["steps"] == 8
 
 
-def test_generate_auto_falls_back_to_mdlm_without_cache() -> None:
-    model = _NoCacheModel()
-    FastDiffusionModel.generate(model, inputs="X")
-    call = model.calls[-1]
-    assert call["use_cache"] is False
-    assert call["use_block_diffusion"] is False
-
-
-def test_generate_explicit_mdlm_overrides_auto() -> None:
-    model = _RecordingModel(cache_capable=True)
-    FastDiffusionModel.generate(model, inputs="X", algorithm="mdlm")
-    call = model.calls[-1]
-    assert call["use_cache"] is False
-    assert call["use_block_diffusion"] is False
-
-
-def test_generate_explicit_bd3lm() -> None:
-    model = _RecordingModel(cache_capable=True)
-    FastDiffusionModel.generate(model, inputs="X", algorithm="bd3lm")
-    call = model.calls[-1]
-    assert call["use_block_diffusion"] is True
-    assert call["use_cache"] is False
-
-
-def test_generate_auto_with_use_block_diffusion_kwarg_picks_bd3lm() -> None:
-    model = _RecordingModel(cache_capable=True)
-    FastDiffusionModel.generate(model, inputs="X", use_block_diffusion=True)
-    call = model.calls[-1]
-    assert call["use_block_diffusion"] is True
-    assert call["use_cache"] is False
-
-
-def test_generate_unknown_algorithm_raises() -> None:
+def test_facade_default_algorithm_is_auto() -> None:
     model = _RecordingModel()
-    with pytest.raises(ValueError):
-        FastDiffusionModel.generate(model, inputs="X", algorithm="continuous_ddpm")
+    FastDiffusionModel.generate(model, inputs="X")
+    assert model.calls[-1]["algorithm"] == "auto"
 
 
-def test_generate_requires_diffusion_generate() -> None:
-    class _NotADLLM:
-        pass
-
-    with pytest.raises(TypeError):
-        FastDiffusionModel.generate(_NotADLLM(), inputs="X")
-
-
-def test_generate_passes_through_gen_kwargs() -> None:
+def test_facade_passes_through_gen_kwargs() -> None:
     model = _RecordingModel()
     FastDiffusionModel.generate(
         model, inputs="X", algorithm="block_decode", temperature=0.7, max_new_tokens=32
@@ -95,6 +41,14 @@ def test_generate_passes_through_gen_kwargs() -> None:
     call = model.calls[-1]
     assert call["temperature"] == 0.7
     assert call["max_new_tokens"] == 32
+
+
+def test_facade_requires_generate() -> None:
+    class _NotADLLM:
+        pass
+
+    with pytest.raises(TypeError, match="generate"):
+        FastDiffusionModel.generate(_NotADLLM(), inputs="X")
 
 
 def _tiny_a2d_model():
@@ -118,14 +72,9 @@ def _tiny_a2d_model():
     return model
 
 
-@pytest.mark.parametrize(
-    "algorithm,flags",
-    [
-        ("mdlm", {"use_cache": False, "use_block_diffusion": False}),
-        ("block_decode", {"use_cache": True, "use_block_diffusion": False}),
-    ],
-)
-def test_generate_parity_with_diffusion_generate(algorithm, flags) -> None:
+@pytest.mark.parametrize("algorithm", ["mdlm", "block_decode"])
+def test_facade_parity_with_direct_generate(algorithm) -> None:
+    """Facade output equals calling model.generate directly with the same algorithm."""
     model = _tiny_a2d_model()
     prompt = torch.tensor([[1, 2, 3, 4]])
     gen_kwargs = dict(
@@ -133,17 +82,17 @@ def test_generate_parity_with_diffusion_generate(algorithm, flags) -> None:
     )
 
     torch.manual_seed(0)
-    out_direct = model.diffusion_generate(inputs=prompt, **flags, **gen_kwargs)
+    out_direct = model.generate(inputs=prompt, algorithm=algorithm, **gen_kwargs)
 
     torch.manual_seed(0)
-    out_generate = FastDiffusionModel.generate(
+    out_facade = FastDiffusionModel.generate(
         model, inputs=prompt, algorithm=algorithm, **gen_kwargs
     )
 
     seq_direct = (
         out_direct.sequences if hasattr(out_direct, "sequences") else out_direct
     )
-    seq_generate = (
-        out_generate.sequences if hasattr(out_generate, "sequences") else out_generate
+    seq_facade = (
+        out_facade.sequences if hasattr(out_facade, "sequences") else out_facade
     )
-    assert torch.equal(seq_direct, seq_generate)
+    assert torch.equal(seq_direct, seq_facade)
