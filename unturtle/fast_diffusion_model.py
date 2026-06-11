@@ -114,16 +114,11 @@ def _warn_once(msg: str) -> None:
 
 # Model types that follow the standard LLaMA/Qwen2 layer hierarchy:
 # model.model.model.layers (through PeftModel → base_model → model)
-# The legacy ``a2d-*`` entries are deprecated load-compat for upstream checkpoints whose
-# config.json predates the TinyA2D rename (e.g. dllm-hub); tracked for removal in #301.
 _TINY_A2D_MODEL_TYPES = frozenset(
     [
         "tiny-a2d-llama",
         "tiny-a2d-qwen2",
         "tiny-a2d-qwen3",
-        "a2d-llama",
-        "a2d-qwen2",
-        "a2d-qwen3",
         "llama",
         "qwen2",
         "qwen3",
@@ -604,17 +599,6 @@ def _load_model_with_optional_4bit_fallback(
         return loader.from_pretrained(model_name, **fallback_kwargs)
 
 
-def _is_dllm_hub_qwen3_diffusion_repo(model_name: str) -> bool:
-    """True for dllm-hub Qwen3 diffusion checkpoints converted for Unturtle A2D.
-
-    ``AutoConfig.from_pretrained(..., trust_remote_code=True)`` on these repos
-    may import optional Hub code that declares a dependency on the ``dllm``
-    PyPI package. Loading via :class:`TinyA2DQwen3LMHeadModel` avoids that path.
-    """
-    m = model_name.strip().lower()
-    return m.startswith("dllm-hub/qwen3") and "diffusion" in m
-
-
 def _load_model_auto(
     model_name: str, load_kwargs: dict, trust_remote_code: bool
 ) -> Any:
@@ -659,8 +643,6 @@ def _load_model_auto(
         )
 
         _UNTURTLE_MODEL_CLASSES["tiny-a2d-llama"] = TinyA2DLlamaLMHeadModel
-        # Legacy load-compat: upstream checkpoints with model_type='a2d-llama' (#301).
-        _UNTURTLE_MODEL_CLASSES["a2d-llama"] = TinyA2DLlamaLMHeadModel
     except ImportError:
         pass
     try:
@@ -669,7 +651,6 @@ def _load_model_auto(
         )
 
         _UNTURTLE_MODEL_CLASSES["tiny-a2d-qwen2"] = TinyA2DQwen2LMHeadModel
-        _UNTURTLE_MODEL_CLASSES["a2d-qwen2"] = TinyA2DQwen2LMHeadModel
     except ImportError:
         pass
     try:
@@ -678,23 +659,8 @@ def _load_model_auto(
         )
 
         _UNTURTLE_MODEL_CLASSES["tiny-a2d-qwen3"] = TinyA2DQwen3LMHeadModel
-        _UNTURTLE_MODEL_CLASSES["a2d-qwen3"] = TinyA2DQwen3LMHeadModel
     except ImportError:
         pass
-
-    # Known Tiny-A2D Qwen3 diffusion repos: skip AutoConfig peek (Hub may require ``dllm``).
-    if (
-        _is_dllm_hub_qwen3_diffusion_repo(model_name)
-        and "tiny-a2d-qwen3" in _UNTURTLE_MODEL_CLASSES
-    ):
-        native_cls = _UNTURTLE_MODEL_CLASSES["tiny-a2d-qwen3"]
-        _logger.debug(
-            "FastDiffusionModel: using native %s for dllm-hub Qwen3 diffusion repo (skip AutoConfig peek)",
-            native_cls.__name__,
-        )
-        return _load_model_with_optional_4bit_fallback(
-            native_cls, model_name, load_kwargs
-        )
 
     # Peek at model_type without loading weights.
     try:
