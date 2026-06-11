@@ -114,16 +114,11 @@ def _warn_once(msg: str) -> None:
 
 # Model types that follow the standard LLaMA/Qwen2 layer hierarchy:
 # model.model.model.layers (through PeftModel → base_model → model)
-# The legacy ``a2d-*`` entries are deprecated load-compat for upstream checkpoints whose
-# config.json predates the TinyA2D rename (e.g. dllm-hub); tracked for removal in #301.
 _TINY_A2D_MODEL_TYPES = frozenset(
     [
         "tiny-a2d-llama",
         "tiny-a2d-qwen2",
         "tiny-a2d-qwen3",
-        "a2d-llama",
-        "a2d-qwen2",
-        "a2d-qwen3",
         "llama",
         "qwen2",
         "qwen3",
@@ -604,53 +599,29 @@ def _load_model_with_optional_4bit_fallback(
         return loader.from_pretrained(model_name, **fallback_kwargs)
 
 
-def _is_dllm_hub_qwen3_diffusion_repo(model_name: str) -> bool:
-    """True for dllm-hub Qwen3 diffusion checkpoints converted for Unturtle A2D.
+def _native_model_classes() -> dict[str, Any]:
+    """Build the ``model_type`` → unturtle native model class map.
 
-    ``AutoConfig.from_pretrained(..., trust_remote_code=True)`` on these repos
-    may import optional Hub code that declares a dependency on the ``dllm``
-    PyPI package. Loading via :class:`TinyA2DQwen3LMHeadModel` avoids that path.
+    These classes are the from-scratch / wrapper implementations Unturtle owns
+    (LLaDA, Dream, Tiny-A2D Llama/Qwen2/Qwen3). Loading through them bypasses any
+    ``trust_remote_code`` Hub modeling code, so fixes in the unturtle classes
+    (e.g. ``_tied_weights_keys``) always take effect.
     """
-    m = model_name.strip().lower()
-    return m.startswith("dllm-hub/qwen3") and "diffusion" in m
-
-
-def _load_model_auto(
-    model_name: str, load_kwargs: dict, trust_remote_code: bool
-) -> Any:
-    """Try to load a model via AutoModel, AutoModelForMaskedLM, AutoModelForCausalLM.
-
-    Registers unturtle model types so AutoConfig resolves them before trying.
-    Falls back through the chain and raises if all attempts fail.
-
-    Strategy: peek at the model_type in AutoConfig, and if it matches an unturtle
-    native class (llada, Dream/dream, tiny-a2d-llama, tiny-a2d-qwen2, tiny-a2d-qwen3), use that
-    class directly — bypassing
-    trust_remote_code so the Hub's potentially older modeling code is never loaded.
-    This ensures fixes in unturtle model classes (e.g. _tied_weights_keys) take effect.
-    """
-    from transformers import (
-        AutoModel,
-        AutoModelForCausalLM,
-        AutoModelForMaskedLM,
-    )
-
     import unturtle.models  # noqa: F401 — registers A2D/LLaDA/Dream AutoConfig entries
 
-    # Map model_type → unturtle model class (bypasses trust_remote_code Hub code).
-    _UNTURTLE_MODEL_CLASSES: dict[str, Any] = {}
+    classes: dict[str, Any] = {}
     try:
         from unturtle.models.backbones.llada import LLaDAModelLM
 
-        _UNTURTLE_MODEL_CLASSES["llada"] = LLaDAModelLM
+        classes["llada"] = LLaDAModelLM
     except ImportError:
         pass
     try:
         from unturtle.models.backbones.dream import DreamModel
 
-        _UNTURTLE_MODEL_CLASSES["dream"] = DreamModel
+        classes["dream"] = DreamModel
         # DreamConfig.model_type is "Dream" (capital D) — match Hub configs.
-        _UNTURTLE_MODEL_CLASSES["Dream"] = DreamModel
+        classes["Dream"] = DreamModel
     except ImportError:
         pass
     try:
@@ -658,9 +629,7 @@ def _load_model_auto(
             TinyA2DLlamaLMHeadModel,
         )
 
-        _UNTURTLE_MODEL_CLASSES["tiny-a2d-llama"] = TinyA2DLlamaLMHeadModel
-        # Legacy load-compat: upstream checkpoints with model_type='a2d-llama' (#301).
-        _UNTURTLE_MODEL_CLASSES["a2d-llama"] = TinyA2DLlamaLMHeadModel
+        classes["tiny-a2d-llama"] = TinyA2DLlamaLMHeadModel
     except ImportError:
         pass
     try:
@@ -668,8 +637,7 @@ def _load_model_auto(
             TinyA2DQwen2LMHeadModel,
         )
 
-        _UNTURTLE_MODEL_CLASSES["tiny-a2d-qwen2"] = TinyA2DQwen2LMHeadModel
-        _UNTURTLE_MODEL_CLASSES["a2d-qwen2"] = TinyA2DQwen2LMHeadModel
+        classes["tiny-a2d-qwen2"] = TinyA2DQwen2LMHeadModel
     except ImportError:
         pass
     try:
@@ -677,26 +645,24 @@ def _load_model_auto(
             TinyA2DQwen3LMHeadModel,
         )
 
-        _UNTURTLE_MODEL_CLASSES["tiny-a2d-qwen3"] = TinyA2DQwen3LMHeadModel
-        _UNTURTLE_MODEL_CLASSES["a2d-qwen3"] = TinyA2DQwen3LMHeadModel
+        classes["tiny-a2d-qwen3"] = TinyA2DQwen3LMHeadModel
     except ImportError:
         pass
+    return classes
 
-    # Known Tiny-A2D Qwen3 diffusion repos: skip AutoConfig peek (Hub may require ``dllm``).
-    if (
-        _is_dllm_hub_qwen3_diffusion_repo(model_name)
-        and "tiny-a2d-qwen3" in _UNTURTLE_MODEL_CLASSES
-    ):
-        native_cls = _UNTURTLE_MODEL_CLASSES["tiny-a2d-qwen3"]
-        _logger.debug(
-            "FastDiffusionModel: using native %s for dllm-hub Qwen3 diffusion repo (skip AutoConfig peek)",
-            native_cls.__name__,
-        )
-        return _load_model_with_optional_4bit_fallback(
-            native_cls, model_name, load_kwargs
-        )
 
-    # Peek at model_type without loading weights.
+def _load_native(
+    model_name: str, load_kwargs: dict, trust_remote_code: bool
+) -> Any | None:
+    """Load via an Unturtle native class when ``model_name``'s ``model_type`` is one.
+
+    Peeks at the config (no weights) and, if the ``model_type`` maps to a native
+    Unturtle class, loads through it directly — preserving the ``trust_remote_code``
+    bypass contract. Returns ``None`` when the model is *not* a native dLLM, so the
+    caller can delegate the load elsewhere. CUDA OOM propagates.
+    """
+    native_classes = _native_model_classes()
+
     try:
         peek_kwargs: dict[str, Any] = {}
         if "token" in load_kwargs:
@@ -705,8 +671,8 @@ def _load_model_auto(
             model_name, trust_remote_code=trust_remote_code, **peek_kwargs
         )
         model_type = getattr(config, "model_type", "")
-        if model_type in _UNTURTLE_MODEL_CLASSES:
-            native_cls = _UNTURTLE_MODEL_CLASSES[model_type]
+        if model_type in native_classes:
+            native_cls = native_classes[model_type]
             _logger.debug(
                 "FastDiffusionModel: using native unturtle class %s for model_type=%r",
                 native_cls.__name__,
@@ -716,9 +682,33 @@ def _load_model_auto(
                 native_cls, model_name, load_kwargs
             )
     except torch.cuda.OutOfMemoryError:
-        raise  # OOM should propagate, not fall through to slower AutoModel loaders
+        raise  # OOM should propagate, not fall through to slower loaders
     except Exception as exc:  # noqa: BLE001
         _logger.debug("FastDiffusionModel: native class lookup failed: %s", exc)
+
+    return None
+
+
+def _load_via_automodel(model_name: str, load_kwargs: dict) -> Any:
+    """Load a non-native (HF-registered) model_type via the AutoModel fallback chain.
+
+    This is the fallback path for backbones Unturtle does not implement natively:
+    loading/quantization is handled by ``transformers``' ``Auto*`` loaders. The
+    diffusion patch is applied afterwards by :func:`_patch_for_diffusion`, so the
+    resulting model behaves as a bidirectional dLLM regardless of which path
+    produced it. Raises if every loader fails.
+
+    NOTE: delegating this path to ``unsloth.FastModel.from_pretrained`` (so that
+    HF-registered dLLM backbones such as DiffusionGemma get unsloth's loading /
+    quantization / patch chain) is planned but deliberately NOT done during the
+    migration — the AutoModel chain is the tested behavioral contract. Tracked as
+    a follow-up issue.
+    """
+    from transformers import (
+        AutoModel,
+        AutoModelForCausalLM,
+        AutoModelForMaskedLM,
+    )
 
     loaders = [
         ("AutoModel", AutoModel),
@@ -739,6 +729,23 @@ def _load_model_auto(
         f"FastDiffusionModel: could not load {model_name!r} via any AutoModel variant. "
         f"Pass model_class= explicitly.\nLast error: {last_exc}"
     ) from last_exc
+
+
+def _load_model_auto(
+    model_name: str, load_kwargs: dict, trust_remote_code: bool
+) -> Any:
+    """Resolve and load a model: native dLLM class first, else HF delegation.
+
+    Native Unturtle backbones (llada / Dream / tiny-a2d-*) are loaded through their
+    own classes (``_load_native``), bypassing ``trust_remote_code`` Hub code. Any
+    other ``model_type`` is delegated to the ``transformers`` ``Auto*`` loaders via
+    ``_load_via_automodel``. Kept as a single module-level entry point for callers and
+    tests that patch it by name.
+    """
+    model = _load_native(model_name, load_kwargs, trust_remote_code)
+    if model is not None:
+        return model
+    return _load_via_automodel(model_name, load_kwargs)
 
 
 def _load_tokenizer(
@@ -794,6 +801,22 @@ def _propagate_max_seq_length(model: Any, max_seq_length: int) -> None:
     internal.max_seq_length = max_seq_length
     for module in model.modules():
         module.max_seq_length = max_seq_length
+
+
+def _patch_for_diffusion(model: Any, max_seq_length: int) -> Any:
+    """Apply the Unturtle diffusion patch shared by every load path.
+
+    Both the native loader and the unsloth/HF delegation path funnel through here,
+    as does the PEFT-adapter branch. It installs the apply_qkv/apply_o stubs (so the
+    bidirectional fast-forward and LoRA fast paths can attach), records
+    ``max_seq_length`` across the nested model, and extends RoPE when supported.
+    Returns the (mutated) model for call-site clarity.
+    """
+    _install_apply_stubs(model)
+    model.max_seq_length = max_seq_length
+    _propagate_max_seq_length(model, max_seq_length)
+    _extend_rope_if_possible(model, max_seq_length)
+    return model
 
 
 # ---------------------------------------------------------------------------
@@ -926,10 +949,7 @@ class FastDiffusionModel:
                     f"FastDiffusionModel: failed to load PEFT adapter from {_local!r} "
                     f"onto base model {_base_model_id!r}: {_e}"
                 ) from _e
-            _install_apply_stubs(model)
-            model.max_seq_length = max_seq_length
-            _propagate_max_seq_length(model, max_seq_length)
-            _extend_rope_if_possible(model, max_seq_length)
+            _patch_for_diffusion(model, max_seq_length)
             _logger.info(
                 "FastDiffusionModel: PEFT adapter loaded from %r.", str(_local)
             )
@@ -984,17 +1004,14 @@ class FastDiffusionModel:
                 "falling back to full-precision loading on CPU."
             )
 
-        # --- Resolve model class ---
+        # --- Resolve model class (explicit override → native dLLM → HF delegation) ---
         if model_class is None:
             model = _load_model_auto(model_name, load_kwargs, trust_remote_code)
         else:
             model = model_class.from_pretrained(model_name, **load_kwargs)
 
-        # --- Apply stubs and sequence length ---
-        _install_apply_stubs(model)
-        model.max_seq_length = max_seq_length
-        _propagate_max_seq_length(model, max_seq_length)
-        _extend_rope_if_possible(model, max_seq_length)
+        # --- Diffusion patch (shared across load paths) ---
+        _patch_for_diffusion(model, max_seq_length)
 
         # --- Tokenizer ---
         tokenizer = _load_tokenizer(model_name, trust_remote_code, token)
