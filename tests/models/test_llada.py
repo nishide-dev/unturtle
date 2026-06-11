@@ -154,6 +154,23 @@ class TestLLaDAGeneration:
         assert isinstance(model, LLaDAGenerationMixin)
         assert callable(model.diffusion_generate)
 
+    def test_generate_is_mixin_generate(self, model):
+        """MRO identity pin: LLaDAModelLM.generate is the diffusion mixin's generate.
+
+        GenerationMixin is not in the LLaDAModelLM MRO, so this pin guards against
+        a future base-class or mixin insertion that could re-route generate to
+        transformers' autoregressive path.
+        """
+        from transformers.generation import GenerationMixin
+
+        from unturtle.models.backbones.llada import LLaDAModelLM
+        from unturtle.models.generation.diffusion_generation_utils import (
+            MaskedDiffusionGenerationMixin,
+        )
+
+        assert LLaDAModelLM.generate is MaskedDiffusionGenerationMixin.generate
+        assert LLaDAModelLM.generate is not GenerationMixin.generate
+
     def test_prepare_inputs_for_generation_removed(self, model):
         """prepare_inputs_for_generation (AR protocol) must no longer exist."""
         assert not hasattr(model, "prepare_inputs_for_generation"), (
@@ -255,6 +272,30 @@ class TestLLaDAGeneration:
                 num_return_sequences=2,
             )
         assert out.shape == (B * 2, L + 1)
+
+    def test_llada_generate_runs_diffusion(self, model):
+        """model.generate(algorithm="mdlm") runs the diffusion denoising loop end-to-end."""
+        B, L_prompt, L_new = 1, 4, 4
+        L_total = L_prompt + L_new
+        prompt_ids = torch.tensor([[1, 2, 3, 4]])
+        mask_fill = torch.full((B, L_new), self.TINY_MASK_ID, dtype=torch.long)
+        input_ids_full = torch.cat([prompt_ids, mask_fill], dim=1)
+        with torch.no_grad():
+            out = model.generate(
+                input_ids_full,
+                algorithm="mdlm",
+                steps=3,
+                mask_token_id=self.TINY_MASK_ID,
+                max_length=L_total + 1,
+            )
+        seq = out.sequences if hasattr(out, "sequences") else out
+        assert seq.shape == (B, L_total + 1)
+
+    def test_llada_generate_ar_raises(self, model):
+        prompt = torch.tensor([[1, 2, 3, 4]])
+        # No "ar" algorithm exists; pure dLLMs reject it at algorithm resolution.
+        with pytest.raises(ValueError, match="Unknown decoding algorithm"):
+            model.generate(prompt, algorithm="ar", max_new_tokens=4)
 
 
 # ---------------------------------------------------------------------------

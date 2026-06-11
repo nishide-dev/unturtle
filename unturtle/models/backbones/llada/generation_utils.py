@@ -92,8 +92,8 @@ class LLaDAGenerationMixin(BlockDecodeMixin, MaskedDiffusionGenerationMixin):
         if mask_token_id is None:
             raise ValueError(
                 "`mask_token_id` must be set in `generation_config` or `model.config` before calling "
-                "`diffusion_generate()`.  Pass it explicitly: "
-                "`model.diffusion_generate(inputs, mask_token_id=<id>, ...)`"
+                "`generate()`.  Pass it explicitly: "
+                "`model.generate(inputs, mask_token_id=<id>, ...)`"
             )
 
         histories = [] if (return_dict_out and output_history) else None
