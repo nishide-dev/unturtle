@@ -77,25 +77,31 @@ git 管理外資産（`dev/local/`・`dev/papers/`・`.references/`）は手動�
 import パス修正のみでグリーンにしてから本体を移す。リファクタ量が大きいフェーズ
 （3・6）は「移植コミット → リファクタコミット」の2段構成で退路を残す。
 
+> 順序は実装計画作成時の依存調査で確定した: backbones は models/generation の mixin に
+> 依存するため generation が先。diffusion/trainer.py と eval の smoke 評価器は相互依存
+> クラスタなので同一フェーズ。eval/harness は FastDiffusionModel に依存するため後置。
+
 | # | 内容 | リファクタ方針 |
 |---|---|---|
 | 1 | 骨格: pyproject / CI / NOTICE / README | unsloth pin を**最新（DiffusionGemma 対応版）に引き上げてから開始**。legacy クローン側の venv で unsloth だけ最新に上げて fast テストを一度回し、壊れる箇所を後続フェーズのリファクタ対象として把握する |
 | 2 | kernels/ + utils/ | vendored の packing / attention_dispatch は unsloth_zoo に同等物があれば置換、なければ NOTICE 付きで維持 |
-| 3 | trainer.py + diffusion/ | `UnturtleTrainer` を `UnslothTrainer` 継承に書き換え、複製ロジックを削除。`DiffusionTrainer` はその上に。dllm 参照実装由来の構造（collator/scheduler 境界）も再点検 |
+| 3 | models/generation/ | 自己完結（他モジュールの依存先）。素直に移植 |
 | 4 | models/backbones/ | エイリアスなしで素直に移植 |
 | 5 | models/conversion/（tiny_a2d） | `a2d-*` load-compat なしで移植。dllm-hub 依存の名残（model_type 分岐等）を除去 |
-| 6 | models/generation/ + fast_diffusion_model.py + save.py | FastDiffusionModel を loader（HF 登録済みモデルは unsloth `FastModel` に委譲）と diffusion patcher に分離。native クラス（llada/dream）bypass と sampler registry は維持 |
-| 7 | eval/ | lighteval を除き素直に移植。`import unturtle.eval` が `lm_eval` を要求しない不変条件を維持 |
-| 8 | cli/ + benchmarks/ + docs | CLI 統合（`unturtle.cli`）、gap-map 更新（Nemotron-Labs-Diffusion tri-mode を DiffusionGemma と並ぶ新 backbone 候補として記載）、CLAUDE.md / AGENTS.md スリム化 |
+| 6 | trainer.py + diffusion/ + eval/（smoke 評価器） | `UnturtleTrainer` を `UnslothTrainer` 継承に書き換え、複製ロジックを削除。`DiffusionTrainer` はその上に。dllm 参照実装由来の構造（collator/scheduler 境界）も再点検 |
+| 7 | fast_diffusion_model.py + save.py + パッケージ re-export | FastDiffusionModel を loader（HF 登録済みモデルは unsloth `FastModel` に委譲）と diffusion patcher に分離。native クラス（llada/dream）bypass と sampler registry は維持 |
+| 8 | eval/harness/ | `import unturtle.eval` が `lm_eval` を要求しない不変条件を維持 |
+| 9 | cli/ + benchmarks/ + examples/ + docs | CLI 統合（`unturtle.cli`、studio コマンド除去）、gap-map 更新（Nemotron-Labs-Diffusion tri-mode を DiffusionGemma と並ぶ新 backbone 候補として記載）、CLAUDE.md / AGENTS.md スリム化 |
 
 ## テスト戦略
 
 - 各 PR の合格条件: 旧リポジトリの該当テストが import パス修正のみでグリーン。
   リファクタコミットは同一テストのグリーン維持が条件。
-- CI（GitHub Actions）: CPU の fast テスト（`-m "not slow"` 相当、マーカー維持）＋
-  `ruff check` / `ruff format --check`。
-- GPU 依存テスト（Triton / Flash / 実 checkpoint 系 `slow`+`gpu`）は CI に入れず、
-  **フェーズ3完了時・フェーズ6完了時・全移植完了時の計3回**、手元 GPU で手動実行して記録。
+- CI（GitHub Actions）は **lint-only**（`ruff check` / `ruff format --check`）。
+  unsloth が import 時に GPU を要求するため CPU ランナーではテストを collect できない
+  （legacy CI と同じ制約）。fast テストはローカル GPU で各 PR ごとに実行する。
+- GPU 依存テスト（Triton / Flash / 実 checkpoint 系 `slow`+`gpu`）は
+  **フェーズ6完了時・フェーズ7完了時・全移植完了時の計3回**、手元 GPU で手動実行して記録。
 - benchmarks/ は移植の最後に旧リポジトリと同条件で1回実行し、性能回帰がないことを確認
   （unsloth pin 引き上げの影響検出を兼ねる）。
 
