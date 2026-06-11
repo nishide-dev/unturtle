@@ -84,8 +84,8 @@ def _load_model_and_tokenizer(model_id: str, load_in_4bit: bool):
 
         warnings.warn(
             "unsloth is not installed; falling back to AutoModelForCausalLM. "
-            "diffusion_generate will not be available — benchmark results will use "
-            "model.generate and are NOT comparable to diffusion-model baselines.",
+            "the unified generate() path will not be available — benchmark results will use "
+            "AutoModelForCausalLM.generate and are NOT comparable to diffusion-model baselines.",
             stacklevel=2,
         )
     # Only ImportError triggers the fallback. All other errors (OOM, bad model

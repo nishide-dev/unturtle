@@ -27,14 +27,14 @@ def benchmark_generation(model, input_ids, gen_config, warmup=3, iters=10):
     # Warmup
     for _ in range(warmup):
         with torch.no_grad():
-            _ = model.diffusion_generate(inputs=input_ids, generation_config=gen_config)
+            _ = model.generate(inputs=input_ids, generation_config=gen_config)
 
     # Benchmark
     torch.cuda.synchronize() if torch.cuda.is_available() else None
     start = time.perf_counter()
     for _ in range(iters):
         with torch.no_grad():
-            _ = model.diffusion_generate(inputs=input_ids, generation_config=gen_config)
+            _ = model.generate(inputs=input_ids, generation_config=gen_config)
     torch.cuda.synchronize() if torch.cuda.is_available() else None
     elapsed = time.perf_counter() - start
 

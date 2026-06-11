@@ -235,9 +235,7 @@ def run_unturtle_once(run: RunSpec) -> tuple[str, dict[str, Any], int | None]:
         **generation_kwargs,
         mask_token_id=mask_token_id,
     )
-    outputs = model.diffusion_generate(
-        inputs=input_ids, generation_config=generation_config
-    )
+    outputs = model.generate(inputs=input_ids, generation_config=generation_config)
     text = tokenizer.batch_decode(
         outputs[:, input_ids.shape[1] :], skip_special_tokens=True
     )[0]

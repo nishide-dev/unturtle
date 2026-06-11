@@ -160,9 +160,7 @@ def generate(
     # --- Generate ---
     typer.echo("Generating...", err=True)
     try:
-        output = loaded_model.diffusion_generate(
-            input_ids, generation_config=gen_config
-        )
+        output = loaded_model.generate(input_ids, generation_config=gen_config)
     except Exception as e:
         typer.echo(f"Error: generation failed — {e}", err=True)
         raise typer.Exit(code=1)

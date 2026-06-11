@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from typing import Any
 
-#: Discrete masked-diffusion algorithms -> the diffusion_generate flag set each selects.
+#: Discrete masked-diffusion algorithms -> the generate() flag set each selects.
 DISCRETE_ALGORITHMS: dict[str, dict[str, bool]] = {
     "mdlm": {"use_cache": False, "use_block_diffusion": False},
     "block_decode": {"use_cache": True, "use_block_diffusion": False},
@@ -42,7 +42,7 @@ DISCRETE_ALGORITHMS: dict[str, dict[str, bool]] = {
 
 
 def algorithm_to_flags(algorithm: str) -> dict[str, bool]:
-    """Return the diffusion_generate flag set for a named discrete algorithm."""
+    """Return the generate() flag set for a named discrete algorithm."""
     try:
         return dict(DISCRETE_ALGORITHMS[algorithm])
     except KeyError as exc:
