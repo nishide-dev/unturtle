@@ -36,7 +36,11 @@ NEW=/grouper/nishide.21066-1000003/projects/unturtle-new       # 新リポジト
 - `unturtle_studio/` 全部、`unturtle/eval/experimental/` 全部
 - `unturtle/models/{llada,dream,modernbert}.py`（非推奨エイリアス）、`unturtle/models/a2d/`
 - `tests/models/test_import_compat.py`、`tests/eval/test_lighteval_*.py`（3件）、`tests/install/`（3件）、`tests/examples/test_validate_studio_mdlm_chat.py`、`examples/validate_studio_mdlm_chat.py`
-- `install.sh`、`.github/workflows/{deploy-docs,release,stale}.yml`（必要になったら個別に再導入）
+- legacy の `install.sh`（Python 3.13 前提の upstream ラッパー）、`.github/workflows/{deploy-docs,release,stale}.yml`（必要になったら個別に再導入）
+  - ※ 新リポジトリには **uv 前提の薄い `install.sh` を新規作成**して置く（Task 1 で追加済み）。
+    実行順序が重要: torch（CUDA ビルドを TORCH_INDEX で選択、既定 cu128）→ build/test ツール →
+    `uv pip install -e ".[huggingface]"`。素の pip は unsloth の依存グラフで壊れた `regex` を
+    解決する事故が確認されたため非サポートと明記。
 
 ---
 
@@ -160,10 +164,23 @@ dev = ["ruff>=0.9.0", "ty>=0.0.0a1", "pytest>=8.0"]
 ```bash
 # .gitignore は legacy をベースに studio 関連行を削除してコピー
 rsync -a $LEGACY/.gitignore $NEW/.gitignore
-# studio/ 行を削除し、.references/ dev/local/ が ignore されていることを確認
+# studio 関連行（"studio/backend/..." 等）を削除する
 grep -n "studio" $NEW/.gitignore   # → 該当行を削除
-grep -n "references\|dev/local" $NEW/.gitignore
 ```
+
+`.gitignore` には以下が**すべて ignore 対象として含まれていること**を確認し、欠けていれば追加する（特に `.references/` は legacy では追跡対象だったが、新リポジトリでは「未整理のローカル調査メモ」としてローカル資産化する決定）:
+
+```gitignore
+.venv
+dev/repos/
+dev/papers/
+dev/local/
+.references/
+```
+
+確認コマンド: `grep -n "references\|dev/local\|dev/papers\|dev/repos\|^\.venv" $NEW/.gitignore`。
+`.references/` が無ければ追記する。これにより Task 0 でコピーした調査資産（`dev/local`・`dev/papers`・`.references`）は untracked にならず `git status` がクリーンになる。
+（`.references/` の有用部分を `docs/` へ整理して昇格させるのは移植完了後の別作業。本移植では追跡しない。）
 
 `unturtle/_version.py` は legacy をそのままコピー（`__version__ = "0.1.0"`）。
 `unturtle/__init__.py` は**最小**で作成（本格的な re-export は Task 7 で legacy 版を移植）:
@@ -176,7 +193,8 @@ from unturtle._version import __version__
 __all__ = ["__version__"]
 ```
 
-`NOTICE`（vendored 出典の記録。fork-point は legacy 側で `git -C $LEGACY merge-base HEAD upstream/main` を実行して埋める）:
+`NOTICE`（vendored 出典の記録。fork-point は確定済み: `git -C $LEGACY merge-base HEAD upstream/main` =
+`a6c1f893fc87c0973f9c32e59ca3d7d54ffb9724`）:
 
 ```text
 Unturtle
@@ -186,7 +204,7 @@ This product includes software developed by the Unsloth team
 (https://github.com/unslothai/unsloth), licensed under the Apache License 2.0.
 
 The following files are derived from unslothai/unsloth (fork point:
-commit <merge-base hash>, 2026-03-28):
+commit a6c1f893fc87c0973f9c32e59ca3d7d54ffb9724, 2026-03-28):
 - unturtle/trainer.py
 - unturtle/utils/attention_dispatch.py
 - unturtle/utils/packing.py

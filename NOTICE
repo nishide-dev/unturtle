@@ -1,0 +1,32 @@
+Unturtle
+Copyright 2025-present nishide-dev & the Unturtle team.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+---
+
+This project is derived from Unsloth (https://github.com/unslothai/unsloth),
+Copyright 2023-present Daniel Han-Chen & the Unsloth team,
+licensed under the Apache License, Version 2.0.
+
+Fork point: commit a6c1f893fc87c0973f9c32e59ca3d7d54ffb9724 (2026-03-28)
+
+The following files are derived from the upstream Unsloth codebase
+and retain the original Apache 2.0 license header:
+
+  - unturtle/diffusion/trainer.py
+  - unturtle/utils/attention_dispatch.py
+  - unturtle/utils/packing.py
+  - unturtle/kernels/__init__.py
+
+All other files in this repository are original works by the Unturtle team.
