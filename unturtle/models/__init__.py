@@ -14,7 +14,7 @@
 
 """unturtle.models — Diffusion Language Model architectures.
 
-Public API (generation infrastructure — available now)::
+Public API (generation infrastructure + backbones — available now)::
 
     from unturtle.models.generation.cache import BlockKVCache
     from unturtle.models.generation.diffusion_generation_utils import (
@@ -23,11 +23,15 @@ Public API (generation infrastructure — available now)::
         MaskedDiffusionModelOutput,
         prepare_for_sampling,
     )
-
-Backbones and conversion methods will be exported here once Task 4 / Task 5 land:
-
     from unturtle.models.backbones.llada import LLaDAConfig, LLaDAModelLM
     from unturtle.models.backbones.dream import DreamConfig, DreamModel
+    from unturtle.models.backbones.modernbert import (
+        DiffusionModernBertConfig,
+        DiffusionModernBertForMaskedLM,
+    )
+
+Conversion methods will be exported here once Task 5 lands:
+
     from unturtle.models.conversion.a2d import (
         TinyA2DLlamaConfig, TinyA2DLlamaLMHeadModel,
         TinyA2DQwen2Config, TinyA2DQwen2LMHeadModel,
@@ -35,6 +39,28 @@ Backbones and conversion methods will be exported here once Task 4 / Task 5 land
     )
 """
 
+from .backbones.dream import (
+    DreamConfig,
+    DreamGenerationConfig,
+    DreamGenerationMixin,
+    DreamModel,
+)
+from .backbones.llada import (
+    LLaDAConfig,
+    LLaDAGenerationConfig,
+    LLaDAGenerationMixin,
+    LLaDAModel,
+    LLaDAModelLM,
+)
+from .backbones.modernbert import (
+    # Backward compat aliases
+    A2DModernBertConfig,
+    A2DModernBertForMaskedLM,
+    A2DModernBertModel,
+    DiffusionModernBertConfig,
+    DiffusionModernBertForMaskedLM,
+    DiffusionModernBertModel,
+)
 from .generation.cache import BlockKVCache
 from .generation.diffusion_generation_utils import (
     MaskedDiffusionGenerationConfig,
@@ -44,10 +70,30 @@ from .generation.diffusion_generation_utils import (
 )
 
 __all__ = [
+    # generation infrastructure
     "BlockKVCache",
     "MaskedDiffusionGenerationConfig",
     "MaskedDiffusionGenerationMixin",
     "MaskedDiffusionModelOutput",
     "prepare_for_sampling",
-    # Backbones (Task 4) and conversion (Task 5) exports will be added here.
+    # LLaDA backbone
+    "LLaDAConfig",
+    "LLaDAGenerationConfig",
+    "LLaDAGenerationMixin",
+    "LLaDAModel",
+    "LLaDAModelLM",
+    # Dream backbone
+    "DreamConfig",
+    "DreamGenerationConfig",
+    "DreamGenerationMixin",
+    "DreamModel",
+    # ModernBERT diffusion backbone
+    "DiffusionModernBertConfig",
+    "DiffusionModernBertModel",
+    "DiffusionModernBertForMaskedLM",
+    # ModernBERT backward compat aliases (A2D-prefixed)
+    "A2DModernBertConfig",
+    "A2DModernBertModel",
+    "A2DModernBertForMaskedLM",
+    # Conversion (Task 5) exports will be added here.
 ]
