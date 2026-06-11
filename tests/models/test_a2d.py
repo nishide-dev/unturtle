@@ -681,6 +681,22 @@ class TestA2DGeneration:
         s_bd3lm = out_bd3lm.sequences if hasattr(out_bd3lm, "sequences") else out_bd3lm
         assert torch.equal(s_auto, s_bd3lm)
 
+    def test_generate_resolves_to_diffusion_mixin(self, llama_model):
+        from transformers.generation import GenerationMixin
+
+        from unturtle.models.generation.diffusion_generation_utils import (
+            MaskedDiffusionGenerationMixin,
+        )
+
+        resolved = type(llama_model).generate
+        assert resolved is MaskedDiffusionGenerationMixin.generate
+        assert resolved is not GenerationMixin.generate
+
+    def test_generate_ar_is_unknown_algorithm(self, llama_model):
+        prompt = torch.tensor([[1, 2, 3, 4]])
+        with pytest.raises(ValueError, match="Unknown decoding algorithm"):
+            llama_model.generate(prompt, algorithm="ar", max_new_tokens=4)
+
 
 # ---------------------------------------------------------------------------
 # RoPE unit tests
