@@ -81,13 +81,9 @@ from unturtle.models.backbones.modernbert._fast_forward import (
     ModernBertAttention_fast_forward,
     _install_modernbert_stubs,
 )
-
-try:
-    from unturtle.models.conversion.a2d.tiny_a2d._fast_forward import (
-        TinyA2DAttention_fast_forward,
-    )
-except ImportError:
-    TinyA2DAttention_fast_forward = None  # type: ignore[assignment]  # Task 5 not yet ported
+from unturtle.models.conversion.a2d.tiny_a2d._fast_forward import (
+    TinyA2DAttention_fast_forward,
+)
 from unturtle.models.generation.sampler import (
     algorithm_to_flags,
     resolve_algorithm,
@@ -171,7 +167,7 @@ def _patch_a2d_peft(
 
     for layer in layers:
         # --- fast attention (bidirectional) — GPU only ---
-        if on_cuda and TinyA2DAttention_fast_forward is not None:
+        if on_cuda:
             layer.self_attn.forward = types.MethodType(
                 TinyA2DAttention_fast_forward, layer.self_attn
             )

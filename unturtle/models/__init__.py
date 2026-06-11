@@ -14,29 +14,15 @@
 
 """unturtle.models — Diffusion Language Model architectures.
 
-Public API (generation infrastructure + backbones — available now)::
-
-    from unturtle.models.generation.cache import BlockKVCache
-    from unturtle.models.generation.diffusion_generation_utils import (
-        MaskedDiffusionGenerationConfig,
-        MaskedDiffusionGenerationMixin,
-        MaskedDiffusionModelOutput,
-        prepare_for_sampling,
-    )
-    from unturtle.models.backbones.llada import LLaDAConfig, LLaDAModelLM
-    from unturtle.models.backbones.dream import DreamConfig, DreamModel
-    from unturtle.models.backbones.modernbert import (
-        DiffusionModernBertConfig,
-        DiffusionModernBertForMaskedLM,
-    )
-
-Conversion methods will be exported here once Task 5 lands:
+Public API::
 
     from unturtle.models.conversion.a2d import (
         TinyA2DLlamaConfig, TinyA2DLlamaLMHeadModel,
         TinyA2DQwen2Config, TinyA2DQwen2LMHeadModel,
         TinyA2DQwen3Config, TinyA2DQwen3LMHeadModel,
     )
+    from unturtle.models.backbones.llada import LLaDAConfig, LLaDAModelLM
+    from unturtle.models.backbones.dream import DreamConfig, DreamModel
 """
 
 from .backbones.dream import (
@@ -61,6 +47,19 @@ from .backbones.modernbert import (
     DiffusionModernBertForMaskedLM,
     DiffusionModernBertModel,
 )
+from .conversion.a2d import (
+    TinyA2DGenerationConfig,
+    TinyA2DGenerationMixin,
+    TinyA2DLlamaConfig,
+    TinyA2DLlamaLMHeadModel,
+    TinyA2DLlamaModel,
+    TinyA2DQwen2Config,
+    TinyA2DQwen2LMHeadModel,
+    TinyA2DQwen2Model,
+    TinyA2DQwen3Config,
+    TinyA2DQwen3LMHeadModel,
+    TinyA2DQwen3Model,
+)
 from .generation.cache import BlockKVCache
 from .generation.diffusion_generation_utils import (
     MaskedDiffusionGenerationConfig,
@@ -76,6 +75,18 @@ __all__ = [
     "MaskedDiffusionGenerationMixin",
     "MaskedDiffusionModelOutput",
     "prepare_for_sampling",
+    # Tiny-A2D conversion method
+    "TinyA2DGenerationConfig",
+    "TinyA2DGenerationMixin",
+    "TinyA2DLlamaConfig",
+    "TinyA2DLlamaModel",
+    "TinyA2DLlamaLMHeadModel",
+    "TinyA2DQwen2Config",
+    "TinyA2DQwen2Model",
+    "TinyA2DQwen2LMHeadModel",
+    "TinyA2DQwen3Config",
+    "TinyA2DQwen3Model",
+    "TinyA2DQwen3LMHeadModel",
     # LLaDA backbone
     "LLaDAConfig",
     "LLaDAGenerationConfig",
@@ -95,5 +106,4 @@ __all__ = [
     "A2DModernBertConfig",
     "A2DModernBertModel",
     "A2DModernBertForMaskedLM",
-    # Conversion (Task 5) exports will be added here.
 ]
