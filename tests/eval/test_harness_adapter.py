@@ -94,6 +94,10 @@ def test_generate_until_routes_through_generate(
     assert model.calls, "generate was not called"
     assert "STOP" not in out[0]
     assert out[0].startswith("the answer is 42")
+    # Verify steps, temperature, and mask_token_id are forwarded correctly
+    assert model.calls[-1]["steps"] == 4
+    assert model.calls[-1]["temperature"] == 0.0
+    assert model.calls[-1]["mask_token_id"] is None
 
 
 def test_generate_until_handles_string_until(
