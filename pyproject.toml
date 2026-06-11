@@ -1,0 +1,114 @@
+[build-system]
+requires = ["setuptools==80.9.0", "setuptools-scm==9.2.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "unturtle"
+dynamic = ["version"]
+description = "dLLM method layer on top of unsloth — conversion, objectives, inference acceleration, and canonical evaluation for diffusion language models"
+readme = "README.md"
+requires-python = ">=3.9,<3.15"
+license = "Apache-2.0"
+keywords = ["ai", "llm", "diffusion", "dllm", "machine learning", "pytorch", "triton"]
+authors = [
+    {name = "nishide-dev"},
+]
+classifiers = [
+    "Programming Language :: Python",
+    "Environment :: GPU",
+    "Environment :: GPU :: NVIDIA CUDA",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "unsloth>=2026.6.2",
+    "typer>=0.12.0",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+]
+
+[tool.setuptools.dynamic]
+version = {attr = "unturtle._version.__version__"}
+
+[tool.setuptools]
+include-package-data = true
+
+[project.scripts]
+unturtle = "unturtle.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["unturtle*"]
+
+[project.optional-dependencies]
+huggingface = [
+    "transformers>=4.51.3",
+    "datasets>=3.4.1",
+    "accelerate>=0.34.1",
+    "peft>=0.18.0",
+    "unsloth_zoo>=2026.6.2",
+    "huggingface_hub>=0.34.0",
+    "hf_transfer",
+    "trl",
+]
+eval = [
+    "lm-eval>=0.4.5",
+]
+dev = [
+    "ruff>=0.9.0",
+    "ty>=0.0.0a1",
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: long-running or environment-sensitive tests excluded from fast suites",
+    "benchmark: performance-oriented tests that may be timing-sensitive",
+    "gpu: requires a CUDA-capable GPU; excluded from CPU fast suites",
+]
+
+[tool.ruff]
+target-version = "py311"
+force-exclude = true
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+]
+ignore = [
+    # --- intentional style choices ---
+    "E501",   # line too long — not enforced, formatter handles wrapping
+    "E731",   # lambda assignment — used intentionally in several places
+    "E741",   # ambiguous variable names — common in ML (l, O, I)
+    # --- wildcard imports are pervasive in vendored/unsloth code ---
+    "F403",   # star import used
+    "F405",   # may be from star import
+    # --- lazy imports inside functions are the pattern throughout this codebase ---
+    "F401",   # imported but unused (re-exports handled via __all__)
+    # --- these would require large-scale refactors not in scope ---
+    "UP006",  # use `list` instead of `List` — deferred
+    "UP007",  # use `X | Y` instead of `Union[X, Y]` — deferred
+    "UP035",  # typing module deprecated — deferred
+    "UP042",  # replace `class StrEnum(str, Enum)` with `StrEnum` — shim exists for <3.11
+    "UP045",  # use `X | None` instead of `Optional[X]` — deferred
+    # --- bugbear rules that are too noisy for current codebase state ---
+    "B006",   # mutable default argument — widespread, fix separately
+    "B008",   # function call in default argument (e.g. Depends()) — false positives
+    "B028",   # no explicit stacklevel in warnings.warn — deferred
+    "B904",   # raise from inside except — deferred
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101",   # assert is expected in tests
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.ty.environment]
+python-version = "3.11"

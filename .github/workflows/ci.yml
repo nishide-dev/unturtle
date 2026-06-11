@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+# Note: test collection is intentionally excluded from this workflow.
+# unsloth performs GPU-specific patching at import time; test collection
+# fails on CPU runners without a real CUDA device. Tests are run
+# separately in GPU environments.
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install "ruff>=0.9.0"
+
+      - name: ruff check
+        run: |
+          targets=""
+          for d in unturtle/ benchmarks/ tests/; do [ -d "$d" ] && targets="$targets $d"; done
+          ruff check $targets
+
+      - name: ruff format --check
+        run: |
+          targets=""
+          for d in unturtle/ benchmarks/ tests/; do [ -d "$d" ] && targets="$targets $d"; done
+          ruff format --check $targets
