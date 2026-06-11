@@ -142,6 +142,7 @@ class TestDreamGenerationUtils:
     def test_cache_block_decode_trim_mode(self, config):
         from unturtle.models.backbones.dream import DreamGenerationConfig, DreamModel
 
+        torch.manual_seed(0)
         model = DreamModel(config).cpu().eval()
         inputs = torch.tensor([[2, 3, 4, 5]])
         generation_config = DreamGenerationConfig(
@@ -161,6 +162,7 @@ class TestDreamGenerationUtils:
     def test_cache_block_decode_dual_cache_mode(self, config):
         from unturtle.models.backbones.dream import DreamGenerationConfig, DreamModel
 
+        torch.manual_seed(0)
         model = DreamModel(config).cpu().eval()
         inputs = torch.tensor([[2, 3, 4, 5], [6, 7, 8, 9]])
         generation_config = DreamGenerationConfig(
@@ -209,6 +211,7 @@ class TestDreamGenerationUtils:
     def test_cache_block_decode_accepts_additive_attention_mask(self, config):
         from unturtle.models.backbones.dream import DreamGenerationConfig, DreamModel
 
+        torch.manual_seed(0)
         model = DreamModel(config).cpu().eval()
         inputs = torch.tensor([[2, 3, 4, 5]])
         additive_mask = torch.zeros(1, 1, 8, 8)
