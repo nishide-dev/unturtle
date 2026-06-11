@@ -70,8 +70,9 @@ class TestBlockDecodeBenchmark:
         # Warmup
         for _ in range(warmup_runs):
             with torch.no_grad():
-                benchmark_model.diffusion_generate(
+                benchmark_model.generate(
                     inputs=prompt,
+                    algorithm="mdlm",  # explicit: auto would resolve block_decode and overwrite use_cache=False
                     max_new_tokens=32,
                     steps=16,
                     use_cache=False,
@@ -83,8 +84,9 @@ class TestBlockDecodeBenchmark:
         start = time.perf_counter()
         for _ in range(test_runs):
             with torch.no_grad():
-                benchmark_model.diffusion_generate(
+                benchmark_model.generate(
                     inputs=prompt,
+                    algorithm="mdlm",  # explicit: auto would resolve block_decode and overwrite use_cache=False
                     max_new_tokens=32,
                     steps=16,
                     use_cache=False,
@@ -96,7 +98,7 @@ class TestBlockDecodeBenchmark:
         # Warmup cache
         for _ in range(warmup_runs):
             with torch.no_grad():
-                benchmark_model.diffusion_generate(
+                benchmark_model.generate(
                     inputs=prompt,
                     max_new_tokens=32,
                     steps=16,
@@ -110,7 +112,7 @@ class TestBlockDecodeBenchmark:
         start = time.perf_counter()
         for _ in range(test_runs):
             with torch.no_grad():
-                benchmark_model.diffusion_generate(
+                benchmark_model.generate(
                     inputs=prompt,
                     max_new_tokens=32,
                     steps=16,

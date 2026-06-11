@@ -50,7 +50,7 @@ class TestA2DBlockDecode:
         prompt = torch.tensor([[1, 2, 3, 4, 5]])
 
         with torch.no_grad():
-            output = tiny_model.diffusion_generate(
+            output = tiny_model.generate(
                 inputs=prompt,
                 max_new_tokens=16,
                 steps=4,
@@ -71,14 +71,15 @@ class TestA2DBlockDecode:
         steps = 3
 
         with torch.no_grad():
-            output_no_cache = tiny_model.diffusion_generate(
+            output_no_cache = tiny_model.generate(
                 inputs=prompt,
+                algorithm="mdlm",  # explicit: auto would resolve block_decode and overwrite use_cache=False
                 max_new_tokens=max_new,
                 steps=steps,
                 use_cache=False,
                 mask_token_id=MASK_TOKEN_ID,
             )
-            output_with_cache = tiny_model.diffusion_generate(
+            output_with_cache = tiny_model.generate(
                 inputs=prompt,
                 max_new_tokens=max_new,
                 steps=steps,
@@ -98,7 +99,7 @@ class TestA2DBlockDecode:
         prompt = torch.tensor([[1, 2, 3, 4, 5]]).cuda()
 
         with torch.no_grad():
-            output = tiny_model.diffusion_generate(
+            output = tiny_model.generate(
                 inputs=prompt,
                 max_new_tokens=16,
                 steps=4,
@@ -139,8 +140,9 @@ class TestA2DBlockDecodeEquivalence:
 
         torch.manual_seed(123)
         with torch.no_grad():
-            output1 = tiny_model.diffusion_generate(
+            output1 = tiny_model.generate(
                 inputs=prompt,
+                algorithm="mdlm",  # explicit: auto would resolve block_decode and overwrite use_cache=False
                 max_new_tokens=8,
                 steps=4,
                 use_cache=False,
@@ -150,8 +152,9 @@ class TestA2DBlockDecodeEquivalence:
 
         torch.manual_seed(123)
         with torch.no_grad():
-            output2 = tiny_model.diffusion_generate(
+            output2 = tiny_model.generate(
                 inputs=prompt,
+                algorithm="mdlm",  # explicit: auto would resolve block_decode and overwrite use_cache=False
                 max_new_tokens=8,
                 steps=4,
                 use_cache=False,
@@ -176,7 +179,7 @@ class TestA2DBlockDecodeEquivalence:
         max_new = 12
 
         with torch.no_grad():
-            output = tiny_model.diffusion_generate(
+            output = tiny_model.generate(
                 inputs=prompt,
                 max_new_tokens=max_new,
                 steps=6,  # num_blocks=3; steps must be divisible by num_blocks
@@ -201,7 +204,7 @@ class TestA2DBlockDecodeEquivalence:
         max_new = 8
 
         with torch.no_grad():
-            output = tiny_model.diffusion_generate(
+            output = tiny_model.generate(
                 inputs=prompt,
                 max_new_tokens=max_new,
                 steps=4,

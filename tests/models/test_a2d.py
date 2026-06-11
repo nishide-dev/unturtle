@@ -448,12 +448,12 @@ class TestFlashVarlenCompaction:
 
 
 # ---------------------------------------------------------------------------
-# A2D generation (diffusion_generate)
+# A2D generation (generate)
 # ---------------------------------------------------------------------------
 
 
 class TestA2DGeneration:
-    """Tests for TinyA2DGenerationMixin.diffusion_generate on tiny CPU models."""
+    """Tests for TinyA2DGenerationMixin.generate on tiny CPU models."""
 
     MASK_TOKEN_ID = 999
 
@@ -479,11 +479,11 @@ class TestA2DGeneration:
         model = TinyA2DLlamaLMHeadModel(llama_config).eval()
         return model
 
-    def test_has_diffusion_generate(self, llama_model):
+    def test_has_generate(self, llama_model):
         from unturtle.models.conversion.a2d.tiny_a2d import TinyA2DGenerationMixin
 
         assert isinstance(llama_model, TinyA2DGenerationMixin)
-        assert callable(llama_model.diffusion_generate)
+        assert callable(llama_model.generate)
 
     def test_output_shape(self, llama_model, llama_config):
         """Output shape should be [B, max_length].
@@ -498,7 +498,7 @@ class TestA2DGeneration:
         mask_fill = torch.full((B, L_new), self.MASK_TOKEN_ID, dtype=torch.long)
         input_ids_full = torch.cat([prompt_ids, mask_fill], dim=1)
         with torch.no_grad():
-            out = llama_model.diffusion_generate(
+            out = llama_model.generate(
                 input_ids_full,
                 steps=3,
                 mask_token_id=self.MASK_TOKEN_ID,
@@ -514,7 +514,7 @@ class TestA2DGeneration:
         mask_fill = torch.full((B, L_new), self.MASK_TOKEN_ID, dtype=torch.long)
         input_ids_full = torch.cat([prompt_ids, mask_fill], dim=1)
         with torch.no_grad():
-            out = llama_model.diffusion_generate(
+            out = llama_model.generate(
                 input_ids_full,
                 steps=3,
                 mask_token_id=self.MASK_TOKEN_ID,
@@ -522,7 +522,7 @@ class TestA2DGeneration:
             )
         # Original prompt positions were NOT mask tokens → should be preserved
         assert (out[0, :L_prompt] == prompt_ids[0]).all(), (
-            "Prompt tokens should not be overwritten by diffusion_generate"
+            "Prompt tokens should not be overwritten by generate"
         )
 
     def test_deterministic_with_seed(self, llama_model, llama_config):
@@ -531,7 +531,7 @@ class TestA2DGeneration:
         input_ids = torch.full((B, L), self.MASK_TOKEN_ID, dtype=torch.long)
         with torch.no_grad():
             torch.manual_seed(42)
-            out1 = llama_model.diffusion_generate(
+            out1 = llama_model.generate(
                 input_ids.clone(),
                 steps=2,
                 mask_token_id=self.MASK_TOKEN_ID,
@@ -539,7 +539,7 @@ class TestA2DGeneration:
                 max_length=L + 1,
             )
             torch.manual_seed(42)
-            out2 = llama_model.diffusion_generate(
+            out2 = llama_model.generate(
                 input_ids.clone(),
                 steps=2,
                 mask_token_id=self.MASK_TOKEN_ID,
@@ -553,7 +553,7 @@ class TestA2DGeneration:
         B, L = 1, 6
         input_ids = torch.full((B, L), self.MASK_TOKEN_ID, dtype=torch.long)
         with torch.no_grad():
-            out = llama_model.diffusion_generate(
+            out = llama_model.generate(
                 input_ids,
                 steps=1,
                 mask_token_id=self.MASK_TOKEN_ID,
@@ -570,7 +570,7 @@ class TestA2DGeneration:
         B, L = 1, 4
         input_ids = torch.full((B, L), self.MASK_TOKEN_ID, dtype=torch.long)
         with torch.no_grad():
-            out = llama_model.diffusion_generate(
+            out = llama_model.generate(
                 input_ids,
                 steps=2,
                 mask_token_id=self.MASK_TOKEN_ID,
@@ -585,7 +585,7 @@ class TestA2DGeneration:
         B, L = 1, 6
         input_ids = torch.full((B, L), self.MASK_TOKEN_ID, dtype=torch.long)
         with torch.no_grad():
-            out = llama_model.diffusion_generate(
+            out = llama_model.generate(
                 input_ids,
                 steps=3,
                 mask_token_id=self.MASK_TOKEN_ID,
@@ -599,7 +599,7 @@ class TestA2DGeneration:
         B, L = 1, 6
         input_ids = torch.full((B, L), self.MASK_TOKEN_ID, dtype=torch.long)
         with torch.no_grad():
-            out = llama_model.diffusion_generate(
+            out = llama_model.generate(
                 input_ids,
                 steps=2,
                 mask_token_id=self.MASK_TOKEN_ID,
@@ -615,7 +615,7 @@ class TestA2DGeneration:
         attention_mask = torch.ones((B, L), dtype=torch.long)
         attention_mask[1, -2:] = 0  # simulate padding in second sample
         with torch.no_grad():
-            out = llama_model.diffusion_generate(
+            out = llama_model.generate(
                 input_ids,
                 attention_mask=attention_mask,
                 steps=2,
@@ -1145,9 +1145,7 @@ class TestA2DBlockDecode:
         )
 
         with torch.no_grad():
-            output = tiny_model.diffusion_generate(
-                inputs=input_ids, generation_config=gen_config
-            )
+            output = tiny_model.generate(inputs=input_ids, generation_config=gen_config)
 
         # Basic shape check
         assert output.shape[0] == 1
@@ -1181,7 +1179,7 @@ class TestA2DBlockDecode:
             temperature=0.0,
         )
         with torch.no_grad():
-            output = tiny_model.diffusion_generate(
+            output = tiny_model.generate(
                 inputs=input_ids, generation_config=gen_config_block
             )
 
@@ -1227,9 +1225,7 @@ class TestA2DBlockDecode:
 
         monkeypatch.setattr(tiny_model, "_block_decode_loop", fake_block_decode_loop)
 
-        output = tiny_model.diffusion_generate(
-            inputs=input_ids, generation_config=gen_config
-        )
+        output = tiny_model.generate(inputs=input_ids, generation_config=gen_config)
 
         assert captured == {"use_replace_cache": False}
         assert output.shape == (1, 12)
@@ -1333,7 +1329,7 @@ class TestA2DBlockDiffusionGeneration:
         block_size = 4
         max_new_tokens = 8
         with torch.no_grad():
-            out = tiny_model.diffusion_generate(
+            out = tiny_model.generate(
                 inputs=prompt,
                 use_block_diffusion=True,
                 bd3lm_block_size=block_size,
@@ -1350,7 +1346,7 @@ class TestA2DBlockDiffusionGeneration:
         prompt = torch.tensor([[1, 2, 3, 4]])
         padded_prompt_len = 4  # 4 is multiple of block_size=4
         with torch.no_grad():
-            out = tiny_model.diffusion_generate(
+            out = tiny_model.generate(
                 inputs=prompt,
                 use_block_diffusion=True,
                 bd3lm_block_size=4,
@@ -1374,7 +1370,7 @@ class TestA2DBlockDiffusionGeneration:
         max_new_tokens = 4
         padded_prompt_len = math.ceil(prompt.shape[1] / block_size) * block_size
         with torch.no_grad():
-            out = tiny_model.diffusion_generate(
+            out = tiny_model.generate(
                 inputs=prompt,
                 use_block_diffusion=True,
                 bd3lm_block_size=block_size,
@@ -1397,7 +1393,7 @@ class TestA2DBlockDiffusionGeneration:
         max_new_tokens = 4
         padded_prompt_len = math.ceil(prompt.shape[1] / block_size) * block_size
         with torch.no_grad():
-            out = tiny_model.diffusion_generate(
+            out = tiny_model.generate(
                 inputs=prompt,
                 use_block_diffusion=True,
                 bd3lm_block_size=block_size,
@@ -1415,7 +1411,7 @@ class TestA2DBlockDiffusionGeneration:
         prompt = torch.tensor([[7, 8, 9]])
 
         with torch.no_grad():
-            out = tiny_model.diffusion_generate(
+            out = tiny_model.generate(
                 inputs=prompt,
                 use_block_diffusion=True,
                 bd3lm_block_size=4,
@@ -1436,7 +1432,7 @@ class TestA2DBlockDiffusionGeneration:
         prompt = torch.tensor([[7, 8, 9, 10]])
 
         with torch.no_grad():
-            out = tiny_model.diffusion_generate(
+            out = tiny_model.generate(
                 inputs=prompt,
                 use_block_diffusion=True,
                 bd3lm_block_size=4,
@@ -1507,7 +1503,7 @@ class TestA2DBlockDiffusionGeneration:
 
         prompt = torch.tensor([[1, 2, 3, 4]])
         with torch.no_grad():
-            out = tiny_model.diffusion_generate(
+            out = tiny_model.generate(
                 inputs=prompt,
                 use_block_diffusion=True,
                 bd3lm_block_size=2,
@@ -1551,7 +1547,7 @@ class TestA2DBlockDiffusionGeneration:
         monkeypatch.setattr(tiny_model, "forward", fake_forward)
 
         with torch.no_grad():
-            out = tiny_model.diffusion_generate(
+            out = tiny_model.generate(
                 inputs=torch.tensor([[1, 2, 3, 4]]),
                 use_block_diffusion=True,
                 bd3lm_block_size=2,
@@ -1590,7 +1586,7 @@ class TestA2DBlockDiffusionGeneration:
 
         prompt = torch.tensor([[1, 2, 3, 10], [5, 6, 7, 8]])
         with torch.no_grad():
-            out = tiny_model.diffusion_generate(
+            out = tiny_model.generate(
                 inputs=prompt,
                 use_block_diffusion=True,
                 bd3lm_block_size=2,
@@ -1630,7 +1626,7 @@ class TestA2DBlockDiffusionGeneration:
             stream_calls.append((step, total, x.shape))
 
         with torch.no_grad():
-            tiny_model.diffusion_generate(
+            tiny_model.generate(
                 inputs=prompt,
                 use_block_diffusion=True,
                 bd3lm_block_size=block_size,
@@ -1666,7 +1662,7 @@ class TestA2DBlockDiffusionGeneration:
             step_calls.append((step, total))
 
         with torch.no_grad():
-            tiny_model.diffusion_generate(
+            tiny_model.generate(
                 inputs=prompt,
                 use_block_diffusion=True,
                 bd3lm_block_size=block_size,
@@ -1694,7 +1690,7 @@ class TestA2DBlockDiffusionGeneration:
             assert torch.equal(x[0, : prompt.shape[1]], prompt[0])
 
         with torch.no_grad():
-            tiny_model.diffusion_generate(
+            tiny_model.generate(
                 inputs=prompt,
                 use_block_diffusion=True,
                 bd3lm_block_size=4,
@@ -1725,7 +1721,7 @@ class TestA2DBlockDiffusionGeneration:
             raise RuntimeError("step callback boom")
 
         with torch.no_grad():
-            out = tiny_model.diffusion_generate(
+            out = tiny_model.generate(
                 inputs=prompt,
                 use_block_diffusion=True,
                 bd3lm_block_size=4,

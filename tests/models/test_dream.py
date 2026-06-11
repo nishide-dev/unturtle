@@ -137,7 +137,7 @@ class TestDreamGenerationUtils:
         from unturtle.models.backbones.dream import DreamGenerationMixin
 
         assert DreamGenerationMixin is not None
-        assert hasattr(DreamGenerationMixin, "diffusion_generate")
+        assert hasattr(DreamGenerationMixin, "generate")
 
     def test_cache_block_decode_trim_mode(self, config):
         from unturtle.models.backbones.dream import DreamGenerationConfig, DreamModel
@@ -154,9 +154,7 @@ class TestDreamGenerationUtils:
             pad_token_id=config.pad_token_id,
         )
         with torch.no_grad():
-            out = model.diffusion_generate(
-                inputs=inputs, generation_config=generation_config
-            )
+            out = model.generate(inputs=inputs, generation_config=generation_config)
         assert out.shape == (1, 8)
         assert not torch.any(out == config.mask_token_id)
 
@@ -175,9 +173,7 @@ class TestDreamGenerationUtils:
             pad_token_id=config.pad_token_id,
         )
         with torch.no_grad():
-            out = model.diffusion_generate(
-                inputs=inputs, generation_config=generation_config
-            )
+            out = model.generate(inputs=inputs, generation_config=generation_config)
         assert out.shape == (2, 8)
         assert not torch.any(out == config.mask_token_id)
 
@@ -227,7 +223,7 @@ class TestDreamGenerationUtils:
             pad_token_id=config.pad_token_id,
         )
         with torch.no_grad():
-            out = model.diffusion_generate(
+            out = model.generate(
                 inputs=inputs,
                 attention_mask=additive_mask,
                 generation_config=generation_config,
@@ -260,9 +256,7 @@ class TestDreamGenerationUtils:
             pad_token_id=config.pad_token_id,
         )
         with torch.no_grad():
-            _ = model.diffusion_generate(
-                inputs=inputs, generation_config=generation_config
-            )
+            _ = model.generate(inputs=inputs, generation_config=generation_config)
         assert model.seen_logits is not None
 
     def test_dual_cache_query_start_includes_previous_token(self, config):
@@ -290,9 +284,7 @@ class TestDreamGenerationUtils:
             pad_token_id=config.pad_token_id,
         )
         with torch.no_grad():
-            _ = model.diffusion_generate(
-                inputs=inputs, generation_config=generation_config
-            )
+            _ = model.generate(inputs=inputs, generation_config=generation_config)
 
         assert 3 in model.forward_lengths
 
