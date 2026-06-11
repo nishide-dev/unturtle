@@ -624,6 +624,63 @@ class TestA2DGeneration:
             )
         assert out.shape == (B, L + 1)
 
+    def test_generate_accepts_algorithm_kwarg(self, llama_model):
+        B, L_prompt, L_new = 1, 4, 4
+        L_total = L_prompt + L_new
+        prompt_ids = torch.tensor([[1, 2, 3, 4]])
+        mask_fill = torch.full((B, L_new), self.MASK_TOKEN_ID, dtype=torch.long)
+        input_ids_full = torch.cat([prompt_ids, mask_fill], dim=1)
+        with torch.no_grad():
+            out = llama_model.generate(
+                input_ids_full,
+                algorithm="mdlm",
+                steps=3,
+                mask_token_id=self.MASK_TOKEN_ID,
+                max_length=L_total + 1,
+            )
+        seq = out.sequences if hasattr(out, "sequences") else out
+        assert seq.shape == (B, L_total + 1)
+
+    def test_generate_auto_matches_block_decode(self, llama_model):
+        B, L_prompt, L_new = 1, 4, 4
+        L_total = L_prompt + L_new
+        prompt_ids = torch.tensor([[1, 2, 3, 4]])
+        mask_fill = torch.full((B, L_new), self.MASK_TOKEN_ID, dtype=torch.long)
+        input_ids_full = torch.cat([prompt_ids, mask_fill], dim=1)
+        gen = dict(steps=3, mask_token_id=self.MASK_TOKEN_ID, max_length=L_total + 1)
+
+        torch.manual_seed(0)
+        out_auto = llama_model.generate(input_ids_full, **gen)
+        torch.manual_seed(0)
+        out_block = llama_model.generate(
+            input_ids_full, algorithm="block_decode", **gen
+        )
+
+        s_auto = out_auto.sequences if hasattr(out_auto, "sequences") else out_auto
+        s_block = out_block.sequences if hasattr(out_block, "sequences") else out_block
+        assert torch.equal(s_auto, s_block)
+
+    def test_generate_auto_with_use_block_diffusion_resolves_bd3lm(self, llama_model):
+        # auto + use_block_diffusion=True must follow the same path as explicit bd3lm
+        prompt = torch.tensor([[1, 2, 3, 4]])
+        gen = dict(
+            use_block_diffusion=True,
+            bd3lm_block_size=4,
+            max_new_tokens=4,
+            steps=2,
+            mask_token_id=self.MASK_TOKEN_ID,
+            pad_token_id=0,
+        )
+
+        torch.manual_seed(0)
+        out_auto = llama_model.generate(prompt, **gen)
+        torch.manual_seed(0)
+        out_bd3lm = llama_model.generate(prompt, algorithm="bd3lm", **gen)
+
+        s_auto = out_auto.sequences if hasattr(out_auto, "sequences") else out_auto
+        s_bd3lm = out_bd3lm.sequences if hasattr(out_bd3lm, "sequences") else out_bd3lm
+        assert torch.equal(s_auto, s_bd3lm)
+
 
 # ---------------------------------------------------------------------------
 # RoPE unit tests
