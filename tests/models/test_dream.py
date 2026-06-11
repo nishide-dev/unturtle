@@ -296,6 +296,25 @@ class TestDreamGenerationUtils:
 
         assert 3 in model.forward_lengths
 
+    def test_dream_generate_accepts_algorithm(self, config):
+        from unturtle.models.backbones.dream import DreamGenerationConfig, DreamModel
+
+        model = DreamModel(config).cpu().eval()
+        inputs = torch.tensor([[2, 3, 4, 5]])
+        generation_config = DreamGenerationConfig(
+            max_new_tokens=4,
+            steps=4,
+            block_length=2,
+            mask_token_id=config.mask_token_id,
+            pad_token_id=config.pad_token_id,
+        )
+        with torch.no_grad():
+            out = model.generate(
+                inputs=inputs, algorithm="mdlm", generation_config=generation_config
+            )
+        seq = out.sequences if hasattr(out, "sequences") else out
+        assert seq.shape == (1, 8)
+
 
 class TestDreamFastRoPE:
     """Tests for DreamAttention_fast_forward Triton RoPE path."""

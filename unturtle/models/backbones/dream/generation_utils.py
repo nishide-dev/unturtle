@@ -362,12 +362,25 @@ class DreamGenerationMixin(BlockDecodeMixin):
         generation_config._mask_token_tensor = mask_token_tensor
 
     @torch.no_grad()
-    def diffusion_generate(
+    def generate(
         self,
         inputs: Optional[torch.Tensor] = None,
+        *,
+        algorithm: str = "auto",
         generation_config: Optional[DreamGenerationConfig] = None,
         **kwargs,
     ) -> Union[DreamModelOutput, torch.LongTensor]:
+        from unturtle.models.generation.sampler import (
+            algorithm_to_flags,
+            resolve_algorithm,
+        )
+
+        bd3lm_requested = bool(kwargs.get("use_block_diffusion", False)) or (
+            algorithm == "bd3lm"
+        )
+        resolved = resolve_algorithm(algorithm, self, bd3lm_requested=bd3lm_requested)
+        kwargs = {**kwargs, **algorithm_to_flags(resolved)}
+
         # 1. Handle `generation_config` and kwargs that might update it, and validate the `.generate()` call
         generation_config = self._prepare_generation_config(generation_config, **kwargs)
         generation_tokens_hook_func = kwargs.pop("generation_tokens_hook_func", None)
