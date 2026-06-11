@@ -164,7 +164,7 @@ class DreamGenerationConfig(GenerationConfig):
 
         self.validate(is_init=True)
 
-    def validate(self, is_init: bool = False):
+    def validate(self, is_init: bool = False, **kwargs):
         if self.parallel_decode and not self.use_cache:
             raise ValueError("`parallel_decode=True` requires `use_cache=True`.")
         if self.parallel_decode and self.alg == "origin":

@@ -41,6 +41,10 @@ echo "==> installing build/test tooling"
 uv pip install "setuptools==80.9.0" "setuptools-scm==9.2.0" pytest ruff bitsandbytes
 
 echo "==> installing unturtle (editable) + huggingface extras"
+# unsloth 2026.6.x pins transformers<=5.5.0, but DiffusionGemma and upcoming models
+# require transformers>=5.8.0.  Install transformers first so uv keeps the newer
+# build; unsloth/unsloth_zoo have no runtime version enforcement (verified 2026-06-11).
+uv pip install "transformers>=5.8.0"
 uv pip install -e ".[huggingface]"
 
 if [[ "${1:-}" == "--eval" ]]; then
