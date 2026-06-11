@@ -226,3 +226,6 @@ dev/benchmark*.py
 dev/**/*.md
 .serena/
 **/superpowers/
+# but the tracked design docs are exempt:
+!docs/superpowers/
+!docs/superpowers/**

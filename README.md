@@ -24,10 +24,14 @@ unturtle              dLLM method layer (this repo)
 ## Quick start
 
 ```bash
-uv venv .venv --python 3.12
-uv pip install torch --index-url https://download.pytorch.org/whl/cu124
-uv pip install -e ".[huggingface]"
+./install.sh          # uv venv + CUDA-matched torch + editable install (+ verification)
+./install.sh --eval   # additionally install the lm-eval-harness extra
 ```
+
+See the header of [`install.sh`](install.sh) for `TORCH_INDEX` / `PYTHON_VERSION`
+overrides. Plain `pip` is not supported — use `uv` (the script handles ordering:
+torch must be installed before the editable install so the CUDA-matched build
+is preserved).
 
 ## Legacy repository
 

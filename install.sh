@@ -7,9 +7,13 @@
 #
 # Requirements:
 #   - uv (https://docs.astral.sh/uv/)
-#   - NVIDIA GPU + driver. The torch CUDA build is selected via TORCH_INDEX;
-#     the default cu128 works with any CUDA 12.x driver (>= 525). If your
-#     driver supports CUDA 13, you may use the default PyPI wheels instead:
+#   - NVIDIA GPU + driver. The torch CUDA build is selected via TORCH_INDEX.
+#     The default cu128 runs on CUDA 12.x drivers via CUDA minor-version
+#     compatibility (empirically verified on driver 555 / CUDA 12.5). If the
+#     final verification step reports "CUDA not available", retry with an
+#     older build matching your driver, e.g.:
+#     TORCH_INDEX=https://download.pytorch.org/whl/cu124 ./install.sh
+#     If your driver supports CUDA 13, the default PyPI wheels also work:
 #     TORCH_INDEX=https://pypi.org/simple ./install.sh
 #
 # NOTE: plain `pip install -e ".[huggingface]"` is NOT supported — pip's
@@ -25,7 +29,7 @@ PYTHON_VERSION="${PYTHON_VERSION:-3.12}"
 command -v uv >/dev/null || { echo "error: uv not found — install from https://docs.astral.sh/uv/"; exit 1; }
 
 echo "==> creating venv (.venv, python ${PYTHON_VERSION})"
-uv venv .venv --python "${PYTHON_VERSION}"
+uv venv .venv --python "${PYTHON_VERSION}" --allow-existing
 
 # torch must be installed BEFORE the editable install so that uv keeps the
 # CUDA-matched build instead of re-resolving torch from PyPI (which may ship

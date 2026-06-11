@@ -31,12 +31,12 @@ jobs:
 
       - name: ruff check
         run: |
-          targets=""
-          for d in unturtle/ benchmarks/ tests/; do [ -d "$d" ] && targets="$targets $d"; done
+          targets="unturtle/"
+          for d in benchmarks/ tests/; do [ -d "$d" ] && targets="$targets $d"; done
           ruff check $targets
 
       - name: ruff format --check
         run: |
-          targets=""
-          for d in unturtle/ benchmarks/ tests/; do [ -d "$d" ] && targets="$targets $d"; done
+          targets="unturtle/"
+          for d in benchmarks/ tests/; do [ -d "$d" ] && targets="$targets $d"; done
           ruff format --check $targets
