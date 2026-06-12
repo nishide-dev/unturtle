@@ -370,6 +370,15 @@ class DreamGenerationMixin(BlockDecodeMixin):
         generation_config: Optional[DreamGenerationConfig] = None,
         **kwargs,
     ) -> Union[DreamModelOutput, torch.LongTensor]:
+        """Run masked-diffusion generation.
+
+        ``algorithm`` selects the decode path: ``"auto"`` (default) resolves to
+        ``"block_decode"`` when the model supports it, else ``"mdlm"``;
+        ``"mdlm"`` and ``"block_decode"`` are also accepted explicitly.
+        ``"bd3lm"`` raises ``ValueError`` — Dream does not implement
+        ``_sample_block_diffusion``.  The resolved algorithm's flags are injected
+        into kwargs, overriding any conflicting ``generation_config`` fields.
+        """
         from unturtle.models.generation.sampler import (
             algorithm_to_flags,
             resolve_algorithm,

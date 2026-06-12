@@ -80,26 +80,13 @@ def _load_model_and_tokenizer(model_id: str, load_in_4bit: bool):
         FastLanguageModel.for_inference(model)
         return model, tokenizer
     except ImportError:
-        import warnings
-
-        warnings.warn(
-            "unsloth is not installed; falling back to AutoModelForCausalLM. "
-            "the unified generate() path will not be available — benchmark results will use "
-            "AutoModelForCausalLM.generate and are NOT comparable to diffusion-model baselines.",
-            stacklevel=2,
+        raise SystemExit(
+            "unsloth (and the dLLM generate path) is required for this benchmark — "
+            "run ./install.sh to set up the environment. "
+            "Plain AutoModelForCausalLM cannot run the diffusion evaluator: "
+            "GSM8KEvaluator passes diffusion-specific kwargs (steps=, temperature=) "
+            "to model.generate() which raises on a plain AR model."
         )
-    # Only ImportError triggers the fallback. All other errors (OOM, bad model
-    # ID, for_inference failures) propagate so they are not silently swallowed.
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_id,
-        load_in_4bit=load_in_4bit,
-        device_map="auto",
-    )
-    model.eval()
-    return model, tokenizer
 
 
 def _model_slug(model_id: str) -> str:

@@ -1185,8 +1185,9 @@ class FastDiffusionModel:
         Sets ``model.eval()`` and disables gradient checkpointing so that
         inference is as fast as possible.  Returns the model for convenience.
 
-        Note: dLLMs do not use KV cache, so there is no cache-enabling step
-        unlike ``FastLanguageModel.for_inference`` for AR models.
+        Note: plain MDLM does not use KV cache; block-decode models manage their
+        own dLLM cache internally.  Either way, no external cache-enabling step
+        is needed here, unlike ``FastLanguageModel.for_inference`` for AR models.
 
         Usage::
 
