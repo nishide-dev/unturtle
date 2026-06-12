@@ -29,11 +29,15 @@ Native bidirectional backbones:
   - Dream  (unturtle.models.backbones.dream)
   - ModernBERT diffusion  (unturtle.models.backbones.modernbert)
 
+Canvas block-diffusion backbones (self-conditioned, not masked-diffusion):
+  - DiffusionGemma  (unturtle.models.backbones.diffusion_gemma)
+
 AR backbones reachable via the A2D conversion method live under
 ``unturtle.models.conversion`` (see unturtle.models.conversion.a2d) — they are a
 conversion *method*, not a peer architecture, so they are not re-exported here.
 """
 
+from .diffusion_gemma import UnturtleDiffusionGemmaForBlockDiffusion
 from .dream import DreamConfig, DreamModel
 from .llada import LLaDAConfig, LLaDAModel, LLaDAModelLM
 from .modernbert import (
@@ -43,6 +47,7 @@ from .modernbert import (
 )
 
 __all__ = [
+    "UnturtleDiffusionGemmaForBlockDiffusion",
     "DreamConfig",
     "DreamModel",
     "LLaDAConfig",
