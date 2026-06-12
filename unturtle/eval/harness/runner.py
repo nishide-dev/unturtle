@@ -64,6 +64,7 @@ def run_harness_evaluation(
         max_new_tokens=config.max_new_tokens,
         temperature=config.temperature,
         use_chat_template=config.use_chat_template,
+        algorithm=config.algorithm,
     )
 
     results = simple_evaluate(

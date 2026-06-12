@@ -38,6 +38,7 @@ class DecodingConfig:
     temperature: float
     use_chat_template: bool
     fewshot: int
+    algorithm: str = "mdlm"
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize for recording alongside benchmark results."""
@@ -45,12 +46,15 @@ class DecodingConfig:
 
 
 # NOTE: only hyperparameters that actually take effect in the adapter/generation path are
-# recorded here, so a recorded config never misrepresents the real decoding. The adapter
-# explicitly pins algorithm="mdlm" so the no-cache MDLM decode path (pre-unification
-# default) is preserved; adding an "algorithm" field to DecodingConfig is deliberately
-# deferred until a canonical path switch is intentionally recorded. Knobs the dLLM paper
-# highlights but that are not yet wired into generation (e.g. eos-suppression,
-# parallel-decode width) will be added when the generation path honors them.
+# recorded here, so a recorded config never misrepresents the real decoding. The
+# ``algorithm`` field selects the decode path: "mdlm" (default) uses the no-cache MDLM
+# path with steps/temperature/mask_token_id; "block_ar" uses the DiffusionGemma
+# block-autoregressive path with max_denoising_steps (temperature is recorded in the
+# config for documentation but is NOT forwarded on the block_ar path — entropy knobs
+# stay at upstream defaults). Each recorded config is stored alongside its score so the
+# decode path is always unambiguous. Knobs the dLLM paper highlights but not yet wired
+# into generation (e.g. eos-suppression, parallel-decode width) will be added when the
+# generation path honors them.
 
 
 # Canonical decoding configs. Keyed by (model_family, task).
@@ -73,6 +77,17 @@ _DECODING_CONFIGS: dict[tuple[str, str], DecodingConfig] = {
         temperature=0.0,
         use_chat_template=True,
         fewshot=8,
+    ),
+    ("diffusion_gemma", "gsm8k"): DecodingConfig(
+        model_family="diffusion_gemma",
+        task="gsm8k",
+        max_new_tokens=256,
+        num_steps=48,
+        # temperature recorded for documentation; NOT forwarded on block_ar path
+        temperature=0.0,
+        use_chat_template=True,
+        fewshot=0,
+        algorithm="block_ar",
     ),
 }
 
