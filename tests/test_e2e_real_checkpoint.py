@@ -270,16 +270,30 @@ class TestAdapterSaveReload:
         adapter_dir = tmp_path / "adapter"
         peft_model.save_pretrained(str(adapter_dir))
 
-        # Reload: fresh from_pretrained + load adapter
+        # Reload: fresh from_pretrained + load adapter.
+        #
+        # The comparison must be SYMMETRIC: the save side went through
+        # get_peft_model (prepare_model_for_kbit_training + PEFT wrap +
+        # patch_peft_model), and each of those steps deterministically changes
+        # the 4bit/bf16 forward numerics (kernel dispatch / dequant path) even
+        # with LoRA B=0 — measured 0.79 max logit diff on LLaDA-8B when the
+        # reload side skips them (issue #16: NOT a save/reload weight bug; the
+        # adapter weights round-trip exactly).
         base_model2, _ = FastDiffusionModel.from_pretrained(
             _DEFAULT_CHECKPOINT,
             max_seq_length=64,
             load_in_4bit=True,
             trust_remote_code=True,
         )
+        from peft import prepare_model_for_kbit_training
+
+        base_model2 = prepare_model_for_kbit_training(
+            base_model2, use_gradient_checkpointing=False
+        )
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             reloaded = PeftModel.from_pretrained(base_model2, str(adapter_dir))
+        FastDiffusionModel.patch_peft_model(reloaded, lora_dropout=0, bias="none")
         reloaded.eval()
 
         with torch.no_grad():
