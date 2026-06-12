@@ -595,6 +595,29 @@ def _load_model_with_optional_4bit_fallback(
         return loader.from_pretrained(model_name, **fallback_kwargs)
 
 
+#: model_type → callable returning the wrapper class to swap in after a
+#: FastModel load (FastModel loads upstream classes; wrappers add only a
+#: ``generate`` shim, so ``__class__`` swap is safe). Filled by backbone modules.
+_POST_LOAD_CLASS_SWAPS: dict[str, Any] = {}
+
+
+def _apply_post_load_class_swap(model: Any) -> None:
+    """Swap model's class to the registered wrapper, if any.
+
+    When ``unsloth.FastModel`` loads a model it returns the upstream
+    ``transformers`` class.  Backbone modules can register a resolver in
+    :data:`_POST_LOAD_CLASS_SWAPS` so that the thin Unturtle wrapper class is
+    installed via ``__class__`` assignment after loading.
+    """
+    model_type = getattr(getattr(model, "config", None), "model_type", None)
+    resolver = _POST_LOAD_CLASS_SWAPS.get(model_type)
+    if resolver is None:
+        return
+    wrapper_cls = resolver()
+    if not isinstance(model, wrapper_cls):
+        model.__class__ = wrapper_cls
+
+
 def _native_model_classes() -> dict[str, Any]:
     """Build the ``model_type`` → unturtle native model class map.
 
@@ -688,17 +711,14 @@ def _load_native(
 def _load_via_automodel(model_name: str, load_kwargs: dict) -> Any:
     """Load a non-native (HF-registered) model_type via the AutoModel fallback chain.
 
-    This is the fallback path for backbones Unturtle does not implement natively:
-    loading/quantization is handled by ``transformers``' ``Auto*`` loaders. The
-    diffusion patch is applied afterwards by :func:`_patch_for_diffusion`, so the
-    resulting model behaves as a bidirectional dLLM regardless of which path
-    produced it. Raises if every loader fails.
+    This is the offline / unsloth-unavailable fallback path: loading/quantization is
+    handled by ``transformers``' ``Auto*`` loaders.  The diffusion patch is applied
+    afterwards by :func:`_patch_for_diffusion`, so the resulting model behaves as a
+    bidirectional dLLM regardless of which path produced it.  Raises if every loader
+    fails.
 
-    NOTE: delegating this path to ``unsloth.FastModel.from_pretrained`` (so that
-    HF-registered dLLM backbones such as DiffusionGemma get unsloth's loading /
-    quantization / patch chain) is planned but deliberately NOT done during the
-    migration — the AutoModel chain is the tested behavioral contract. Tracked as
-    a follow-up issue.
+    The primary non-native path is :func:`_load_via_fastmodel` (unsloth FastModel);
+    this function is only reached when that path is unavailable or raises.
     """
     from transformers import (
         AutoModel,
@@ -727,21 +747,86 @@ def _load_via_automodel(model_name: str, load_kwargs: dict) -> Any:
     ) from last_exc
 
 
+def _import_fastmodel() -> Any:
+    """Import hook for unsloth FastModel (separate function for testability)."""
+    from unsloth import FastModel
+
+    return FastModel
+
+
+def _load_via_fastmodel(
+    model_name: str, load_kwargs: dict, *, load_in_4bit: bool
+) -> tuple[Any, Any] | None:
+    """Load a non-native model_type via ``unsloth.FastModel.from_pretrained``.
+
+    Returns ``(model, tokenizer)`` on success, or ``None`` when unsloth is
+    unavailable or the load fails — the caller then falls back to the Auto*
+    chain (offline / local-stub paths keep working).
+
+    FastModel owns quantization on this path; ``quantization_config`` is not
+    forwarded.  ``load_in_4bit`` is threaded through explicitly from the
+    caller so the user's original intent is preserved.
+    """
+    try:
+        fast_model_cls = _import_fastmodel()
+    except Exception as exc:  # noqa: BLE001
+        _logger.debug("FastDiffusionModel: unsloth FastModel unavailable: %s", exc)
+        return None
+    try:
+        fm_kwargs: dict[str, Any] = {}
+        # FastModel uses `dtype=` not `torch_dtype=`
+        if "torch_dtype" in load_kwargs:
+            fm_kwargs["dtype"] = load_kwargs["torch_dtype"]
+        for key in ("token", "device_map", "trust_remote_code"):
+            if key in load_kwargs:
+                fm_kwargs[key] = load_kwargs[key]
+        # FastModel owns quantization — pass load_in_4bit explicitly from the caller.
+        fm_kwargs["load_in_4bit"] = load_in_4bit
+        model, tokenizer = fast_model_cls.from_pretrained(model_name, **fm_kwargs)
+        return model, tokenizer
+    except torch.cuda.OutOfMemoryError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        _logger.debug("FastDiffusionModel: FastModel load failed: %s", exc)
+        _warn_once(
+            "FastDiffusionModel: unsloth FastModel failed to load "
+            f"{model_name!r} ({exc}) — falling back to the transformers Auto* "
+            "chain (no unsloth quantization/patches on this load)."
+        )
+        return None
+
+
 def _load_model_auto(
-    model_name: str, load_kwargs: dict, trust_remote_code: bool
-) -> Any:
-    """Resolve and load a model: native dLLM class first, else HF delegation.
+    model_name: str,
+    load_kwargs: dict,
+    trust_remote_code: bool,
+    *,
+    load_in_4bit: bool = False,
+) -> tuple[Any, Any | None]:
+    """Resolve and load a model: native dLLM class first, FastModel, then HF Auto*.
+
+    Returns ``(model, tokenizer_or_none)``.  The tokenizer is non-``None`` only
+    when ``unsloth.FastModel`` was used (it returns a tokenizer alongside the
+    model).  On the native or Auto* paths the tokenizer is ``None`` and the
+    caller must load it separately.
 
     Native Unturtle backbones (llada / Dream / tiny-a2d-*) are loaded through their
-    own classes (``_load_native``), bypassing ``trust_remote_code`` Hub code. Any
-    other ``model_type`` is delegated to the ``transformers`` ``Auto*`` loaders via
-    ``_load_via_automodel``. Kept as a single module-level entry point for callers and
-    tests that patch it by name.
+    own classes (``_load_native``), bypassing ``trust_remote_code`` Hub code.  Any
+    other ``model_type`` tries ``unsloth.FastModel.from_pretrained`` first (so
+    HF-registered dLLM backbones such as DiffusionGemma get unsloth's loading /
+    quantization / patch chain), then falls back to the ``transformers`` ``Auto*``
+    loaders when unsloth is unavailable or the load fails.  Kept as a single
+    module-level entry point for callers and tests that patch it by name.
     """
     model = _load_native(model_name, load_kwargs, trust_remote_code)
     if model is not None:
-        return model
-    return _load_via_automodel(model_name, load_kwargs)
+        return model, None
+
+    result = _load_via_fastmodel(model_name, load_kwargs, load_in_4bit=load_in_4bit)
+    if result is not None:
+        return result  # (model, tokenizer)
+
+    return _load_via_automodel(model_name, load_kwargs), None
 
 
 def _load_tokenizer(
@@ -1000,17 +1085,30 @@ class FastDiffusionModel:
                 "falling back to full-precision loading on CPU."
             )
 
-        # --- Resolve model class (explicit override → native dLLM → HF delegation) ---
+        # --- Resolve model class (explicit override → native dLLM → FastModel → Auto*) ---
+        fm_tokenizer: Any | None = None
         if model_class is None:
-            model = _load_model_auto(model_name, load_kwargs, trust_remote_code)
+            model, fm_tokenizer = _load_model_auto(
+                model_name,
+                load_kwargs,
+                trust_remote_code,
+                load_in_4bit=load_in_4bit and not is_on_cpu,
+            )
         else:
             model = model_class.from_pretrained(model_name, **load_kwargs)
+
+        # --- Post-load class swap (e.g. DiffusionGemma wrapper) ---
+        _apply_post_load_class_swap(model)
 
         # --- Diffusion patch (shared across load paths) ---
         _patch_for_diffusion(model, max_seq_length)
 
-        # --- Tokenizer ---
-        tokenizer = _load_tokenizer(model_name, trust_remote_code, token)
+        # --- Tokenizer (prefer FastModel's tokenizer; fall back to separate load) ---
+        tokenizer = (
+            fm_tokenizer
+            if fm_tokenizer is not None
+            else _load_tokenizer(model_name, trust_remote_code, token)
+        )
 
         return model, tokenizer
 
