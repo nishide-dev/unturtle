@@ -91,6 +91,60 @@ def _tiny_model():
     return model
 
 
+def _tiny_upstream_model():
+    """Build a minimal upstream DiffusionGemmaForBlockDiffusion (not wrapped).
+
+    Uses the same tiny config as _tiny_model() but returns the upstream class
+    directly, for testing class swap behavior.
+    """
+    from transformers import Gemma4VisionConfig
+    from transformers.models.diffusion_gemma import (
+        DiffusionGemmaConfig,
+        DiffusionGemmaForBlockDiffusion,
+        DiffusionGemmaTextConfig,
+    )
+
+    vis_cfg = Gemma4VisionConfig(
+        hidden_size=32,
+        intermediate_size=64,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        head_dim=16,
+        max_position_embeddings=64,
+        pooling_kernel_size=2,
+        patch_size=4,
+        position_embedding_size=16,
+    )
+
+    text_cfg = DiffusionGemmaTextConfig(
+        vocab_size=256,
+        hidden_size=32,
+        intermediate_size=64,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        num_global_key_value_heads=2,
+        head_dim=16,
+        global_head_dim=16,
+        max_position_embeddings=64,
+        sliding_window=64,
+        num_experts=2,
+        top_k_experts=1,
+        moe_intermediate_size=32,
+    )
+
+    cfg = DiffusionGemmaConfig(
+        text_config=text_cfg,
+        vision_config=vis_cfg,
+        canvas_length=16,
+    )
+
+    model = DiffusionGemmaForBlockDiffusion(cfg)
+    model.eval()
+    return model
+
+
 def _tiny_gen_cfg(max_denoising_steps: int = 2, max_new_tokens: int = 8):
     from transformers.models.diffusion_gemma import DiffusionGemmaGenerationConfig
 
@@ -190,3 +244,26 @@ def test_generate_keyword_input_ids():
     seq = out.sequences if hasattr(out, "sequences") else out
     assert seq.shape[0] == 1
     assert seq.shape[-1] >= prompt.shape[-1]
+
+
+def test_class_swap_registered_for_diffusion_gemma():
+    from unturtle import fast_diffusion_model as fdm
+    from unturtle.models.backbones.diffusion_gemma import (
+        UnturtleDiffusionGemmaForBlockDiffusion,
+    )
+
+    resolver = fdm._POST_LOAD_CLASS_SWAPS.get("diffusion_gemma")
+    assert resolver is not None
+    assert resolver() is UnturtleDiffusionGemmaForBlockDiffusion
+
+
+def test_post_load_swap_installs_shim():
+    from unturtle import fast_diffusion_model as fdm
+    from unturtle.models.backbones.diffusion_gemma import (
+        UnturtleDiffusionGemmaForBlockDiffusion,
+    )
+
+    model = _tiny_upstream_model()
+    assert type(model) is not UnturtleDiffusionGemmaForBlockDiffusion
+    fdm._apply_post_load_class_swap(model)
+    assert type(model) is UnturtleDiffusionGemmaForBlockDiffusion

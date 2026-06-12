@@ -601,6 +601,17 @@ def _load_model_with_optional_4bit_fallback(
 _POST_LOAD_CLASS_SWAPS: dict[str, Any] = {}
 
 
+def _resolve_diffusion_gemma_wrapper() -> Any:
+    from unturtle.models.backbones.diffusion_gemma import (
+        UnturtleDiffusionGemmaForBlockDiffusion,
+    )
+
+    return UnturtleDiffusionGemmaForBlockDiffusion
+
+
+_POST_LOAD_CLASS_SWAPS["diffusion_gemma"] = _resolve_diffusion_gemma_wrapper
+
+
 def _apply_post_load_class_swap(model: Any) -> None:
     """Swap model's class to the registered wrapper, if any.
 
