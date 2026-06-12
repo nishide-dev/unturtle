@@ -4,6 +4,13 @@
 
 **Goal:** Remove `diffusion_generate` entirely and unify the dLLM inference entry on transformers-standard `model.generate()`, with diffusion as the default behavior and TinyA2D retaining AR via `algorithm="ar"`.
 
+> **Amendment 2026-06-12 (issue #22):** `algorithm="ar"` / `_supports_ar` are **dropped**
+> (see the design spec amendment). Deltas: Task 1 ships only the sampler test coverage +
+> docstring update (no `_supports_ar`, no `"ar"` branch); Task 3 adds **no** `generate`
+> override — only an MRO regression test that TinyA2D `generate` runs diffusion by default;
+> Task 5's "ar raises" test asserts the unknown-algorithm `ValueError` instead; Tasks 6/11
+> do not document an `"ar"` algorithm choice.
+
 **Architecture:** The algorithm→flags resolution moves out of the `FastDiffusionModel.generate` facade and down into the model's `generate()` method (renamed from `diffusion_generate`). `MaskedDiffusionGenerationMixin.generate` handles diffusion-only paths; `MaskedDiffusionBlockGenerationMixin` (TinyA2D-only) overrides `generate` to add an `algorithm="ar"` branch that delegates to transformers' AR generate. `sampler.py` gains `_supports_ar` and an `"ar"` concept in `resolve_algorithm`. No backward-compat alias is kept (repository is being rebuilt).
 
 **Tech Stack:** Python 3.12, PyTorch, transformers 5.11, pytest. Venv at `.venv/`, run tests with `.venv/bin/python -m pytest`.

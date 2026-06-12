@@ -186,7 +186,7 @@ class MaskedDiffusionBlockGenerationMixin(
         if mask_id is None:
             raise ValueError(
                 "`mask_token_id` must be set in `generation_config` or `model.config` "
-                "before calling `diffusion_generate(use_block_diffusion=True)`."
+                "before calling `generate(algorithm='bd3lm')`."
             )
 
         pad_id = generation_config.pad_token_id
@@ -195,7 +195,7 @@ class MaskedDiffusionBlockGenerationMixin(
         if pad_id is None:
             raise ValueError(
                 "`pad_token_id` must be set in `generation_config` or `model.config` "
-                "before calling `diffusion_generate(use_block_diffusion=True)`."
+                "before calling `generate(algorithm='bd3lm')`."
             )
 
         eos_id = generation_config.eos_token_id

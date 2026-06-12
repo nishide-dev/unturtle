@@ -112,12 +112,12 @@ class TestLLaDAModel:
 
 
 # ---------------------------------------------------------------------------
-# LLaDA generation (diffusion_generate)
+# LLaDA generation (generate)
 # ---------------------------------------------------------------------------
 
 
 class TestLLaDAGeneration:
-    """Tests for LLaDAGenerationMixin.diffusion_generate on tiny CPU models."""
+    """Tests for LLaDAGenerationMixin.generate on tiny CPU models."""
 
     MASK_TOKEN_ID = 126336  # LLaDA default; overridden via config below
 
@@ -148,11 +148,28 @@ class TestLLaDAGeneration:
 
     TINY_MASK_ID = 511
 
-    def test_has_diffusion_generate(self, model):
+    def test_has_generate(self, model):
         from unturtle.models.backbones.llada import LLaDAGenerationMixin
 
         assert isinstance(model, LLaDAGenerationMixin)
-        assert callable(model.diffusion_generate)
+        assert callable(model.generate)
+
+    def test_generate_is_mixin_generate(self, model):
+        """MRO identity pin: LLaDAModelLM.generate is the diffusion mixin's generate.
+
+        GenerationMixin is not in the LLaDAModelLM MRO, so this pin guards against
+        a future base-class or mixin insertion that could re-route generate to
+        transformers' autoregressive path.
+        """
+        from transformers.generation import GenerationMixin
+
+        from unturtle.models.backbones.llada import LLaDAModelLM
+        from unturtle.models.generation.diffusion_generation_utils import (
+            MaskedDiffusionGenerationMixin,
+        )
+
+        assert LLaDAModelLM.generate is MaskedDiffusionGenerationMixin.generate
+        assert LLaDAModelLM.generate is not GenerationMixin.generate
 
     def test_prepare_inputs_for_generation_removed(self, model):
         """prepare_inputs_for_generation (AR protocol) must no longer exist."""
@@ -165,7 +182,7 @@ class TestLLaDAGeneration:
         B, L = 2, 10
         input_ids = torch.full((B, L), self.TINY_MASK_ID, dtype=torch.long)
         with torch.no_grad():
-            out = model.diffusion_generate(
+            out = model.generate(
                 input_ids,
                 steps=2,
                 mask_token_id=self.TINY_MASK_ID,
@@ -179,7 +196,7 @@ class TestLLaDAGeneration:
         input_ids = torch.full((B, L), self.TINY_MASK_ID, dtype=torch.long)
         with torch.no_grad():
             torch.manual_seed(42)
-            out1 = model.diffusion_generate(
+            out1 = model.generate(
                 input_ids.clone(),
                 steps=2,
                 mask_token_id=self.TINY_MASK_ID,
@@ -187,7 +204,7 @@ class TestLLaDAGeneration:
                 max_length=L + 1,
             )
             torch.manual_seed(42)
-            out2 = model.diffusion_generate(
+            out2 = model.generate(
                 input_ids.clone(),
                 steps=2,
                 mask_token_id=self.TINY_MASK_ID,
@@ -204,7 +221,7 @@ class TestLLaDAGeneration:
             with pytest.raises(ValueError, match="mask_token_id"):
                 B, L = 1, 4
                 input_ids = torch.zeros((B, L), dtype=torch.long)
-                model.diffusion_generate(input_ids, steps=1, max_length=L + 1)
+                model.generate(input_ids, steps=1, max_length=L + 1)
         finally:
             model.config.mask_token_id = original
 
@@ -220,7 +237,7 @@ class TestLLaDAGeneration:
         attention_mask = torch.ones((B, L), dtype=torch.long)
         attention_mask[1, -2:] = 0  # simulate padding in second sample
         with torch.no_grad():
-            out = model.diffusion_generate(
+            out = model.generate(
                 input_ids,
                 attention_mask=attention_mask,
                 steps=2,
@@ -229,8 +246,8 @@ class TestLLaDAGeneration:
             )
         assert out.shape == (B, L + 1)
 
-    def test_generate_redirects_to_diffusion_generate(self, model):
-        """model.generate() must route to diffusion_generate(), not HF AR generate()."""
+    def test_generate_runs_diffusion_by_default(self, model):
+        """model.generate() must run the diffusion denoising loop, not HF AR generate()."""
         B, L = 1, 6
         input_ids = torch.full((B, L), self.TINY_MASK_ID, dtype=torch.long)
         with torch.no_grad():
@@ -247,7 +264,7 @@ class TestLLaDAGeneration:
         B, L = 1, 6
         input_ids = torch.full((B, L), self.TINY_MASK_ID, dtype=torch.long)
         with torch.no_grad():
-            out = model.diffusion_generate(
+            out = model.generate(
                 input_ids,
                 steps=2,
                 mask_token_id=self.TINY_MASK_ID,
@@ -255,6 +272,42 @@ class TestLLaDAGeneration:
                 num_return_sequences=2,
             )
         assert out.shape == (B * 2, L + 1)
+
+    def test_llada_generate_runs_diffusion(self, model):
+        """model.generate(algorithm="mdlm") runs the diffusion denoising loop end-to-end."""
+        B, L_prompt, L_new = 1, 4, 4
+        L_total = L_prompt + L_new
+        prompt_ids = torch.tensor([[1, 2, 3, 4]])
+        mask_fill = torch.full((B, L_new), self.TINY_MASK_ID, dtype=torch.long)
+        input_ids_full = torch.cat([prompt_ids, mask_fill], dim=1)
+        with torch.no_grad():
+            out = model.generate(
+                input_ids_full,
+                algorithm="mdlm",
+                steps=3,
+                mask_token_id=self.TINY_MASK_ID,
+                max_length=L_total + 1,
+            )
+        seq = out.sequences if hasattr(out, "sequences") else out
+        assert seq.shape == (B, L_total + 1)
+
+    def test_llada_generate_ar_raises(self, model):
+        prompt = torch.tensor([[1, 2, 3, 4]])
+        # No "ar" algorithm exists; pure dLLMs reject it at algorithm resolution.
+        with pytest.raises(ValueError, match="Unknown decoding algorithm"):
+            model.generate(prompt, algorithm="ar", max_new_tokens=4)
+
+    def test_llada_generate_bd3lm_raises(self, model):
+        """LLaDA does not implement BD3LM; explicit algorithm='bd3lm' must raise ValueError."""
+        prompt = torch.full((1, 4), self.TINY_MASK_ID, dtype=torch.long)
+        with pytest.raises(ValueError, match="BD3LM"):
+            model.generate(
+                prompt,
+                algorithm="bd3lm",
+                steps=2,
+                mask_token_id=self.TINY_MASK_ID,
+                max_length=8,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -877,7 +930,7 @@ class TestLLaDABlockDecode:
         )
 
         with torch.no_grad():
-            output = tiny_model.diffusion_generate(
+            output = tiny_model.generate(
                 inputs=input_ids,
                 generation_config=gen_config,
             )
@@ -914,7 +967,7 @@ class TestLLaDABlockDecode:
 
         torch.manual_seed(42)
         with torch.no_grad():
-            output_with_cache = tiny_model.diffusion_generate(
+            output_with_cache = tiny_model.generate(
                 inputs=input_ids.clone(),
                 generation_config=gen_config_with_cache,
             )
@@ -946,9 +999,7 @@ class TestLLaDABlockDecode:
         )
 
         with torch.no_grad():
-            output = tiny_model.diffusion_generate(
-                inputs=input_ids, generation_config=gen_config
-            )
+            output = tiny_model.generate(inputs=input_ids, generation_config=gen_config)
 
         assert output.shape == (1, 16)
         assert not torch.any(output[:, 8:] == tiny_config.mask_token_id)
@@ -989,9 +1040,7 @@ class TestLLaDABlockDecode:
         )
 
         with torch.no_grad():
-            output = tiny_model.diffusion_generate(
-                inputs=input_ids, generation_config=gen_config
-            )
+            output = tiny_model.generate(inputs=input_ids, generation_config=gen_config)
 
         assert output.shape == (1, 16)
         assert not torch.any(output[:, 8:] == tiny_config.mask_token_id)
@@ -1017,9 +1066,7 @@ class TestLLaDABlockDecode:
         )
 
         with torch.no_grad():
-            output = tiny_model.diffusion_generate(
-                inputs=input_ids, generation_config=gen_config
-            )
+            output = tiny_model.generate(inputs=input_ids, generation_config=gen_config)
 
         assert output.shape == (1, 16)
         assert not torch.any(output[:, 8:] == tiny_config.mask_token_id)
@@ -1060,9 +1107,7 @@ class TestLLaDABlockDecode:
         )
 
         with torch.no_grad():
-            output = tiny_model.diffusion_generate(
-                inputs=input_ids, generation_config=gen_config
-            )
+            output = tiny_model.generate(inputs=input_ids, generation_config=gen_config)
 
         assert output.shape == (1, 16)
         assert not torch.any(output[:, 8:] == tiny_config.mask_token_id)

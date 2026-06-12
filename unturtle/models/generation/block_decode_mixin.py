@@ -78,6 +78,13 @@ class BlockDecodeMixin:
         block_length = getattr(generation_config, "block_length", None)
         steps = generation_config.steps
         mask_token_id = generation_config.mask_token_id
+        if mask_token_id is None:
+            mask_token_id = getattr(self.config, "mask_token_id", None)
+        if mask_token_id is None:
+            raise ValueError(
+                "`mask_token_id` must be set in `generation_config` or `model.config` before calling "
+                "`generate()` with `use_cache=True`."
+            )
         use_replace_cache = getattr(generation_config, "use_replace_cache", False)
         alg = generation_config.alg
         temperature = getattr(generation_config, "temperature", 1.0)

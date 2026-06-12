@@ -137,11 +137,12 @@ class TestDreamGenerationUtils:
         from unturtle.models.backbones.dream import DreamGenerationMixin
 
         assert DreamGenerationMixin is not None
-        assert hasattr(DreamGenerationMixin, "diffusion_generate")
+        assert hasattr(DreamGenerationMixin, "generate")
 
     def test_cache_block_decode_trim_mode(self, config):
         from unturtle.models.backbones.dream import DreamGenerationConfig, DreamModel
 
+        torch.manual_seed(0)
         model = DreamModel(config).cpu().eval()
         inputs = torch.tensor([[2, 3, 4, 5]])
         generation_config = DreamGenerationConfig(
@@ -154,15 +155,14 @@ class TestDreamGenerationUtils:
             pad_token_id=config.pad_token_id,
         )
         with torch.no_grad():
-            out = model.diffusion_generate(
-                inputs=inputs, generation_config=generation_config
-            )
+            out = model.generate(inputs=inputs, generation_config=generation_config)
         assert out.shape == (1, 8)
         assert not torch.any(out == config.mask_token_id)
 
     def test_cache_block_decode_dual_cache_mode(self, config):
         from unturtle.models.backbones.dream import DreamGenerationConfig, DreamModel
 
+        torch.manual_seed(0)
         model = DreamModel(config).cpu().eval()
         inputs = torch.tensor([[2, 3, 4, 5], [6, 7, 8, 9]])
         generation_config = DreamGenerationConfig(
@@ -175,9 +175,7 @@ class TestDreamGenerationUtils:
             pad_token_id=config.pad_token_id,
         )
         with torch.no_grad():
-            out = model.diffusion_generate(
-                inputs=inputs, generation_config=generation_config
-            )
+            out = model.generate(inputs=inputs, generation_config=generation_config)
         assert out.shape == (2, 8)
         assert not torch.any(out == config.mask_token_id)
 
@@ -213,6 +211,7 @@ class TestDreamGenerationUtils:
     def test_cache_block_decode_accepts_additive_attention_mask(self, config):
         from unturtle.models.backbones.dream import DreamGenerationConfig, DreamModel
 
+        torch.manual_seed(0)
         model = DreamModel(config).cpu().eval()
         inputs = torch.tensor([[2, 3, 4, 5]])
         additive_mask = torch.zeros(1, 1, 8, 8)
@@ -227,7 +226,7 @@ class TestDreamGenerationUtils:
             pad_token_id=config.pad_token_id,
         )
         with torch.no_grad():
-            out = model.diffusion_generate(
+            out = model.generate(
                 inputs=inputs,
                 attention_mask=additive_mask,
                 generation_config=generation_config,
@@ -260,9 +259,7 @@ class TestDreamGenerationUtils:
             pad_token_id=config.pad_token_id,
         )
         with torch.no_grad():
-            _ = model.diffusion_generate(
-                inputs=inputs, generation_config=generation_config
-            )
+            _ = model.generate(inputs=inputs, generation_config=generation_config)
         assert model.seen_logits is not None
 
     def test_dual_cache_query_start_includes_previous_token(self, config):
@@ -290,11 +287,43 @@ class TestDreamGenerationUtils:
             pad_token_id=config.pad_token_id,
         )
         with torch.no_grad():
-            _ = model.diffusion_generate(
-                inputs=inputs, generation_config=generation_config
-            )
+            _ = model.generate(inputs=inputs, generation_config=generation_config)
 
         assert 3 in model.forward_lengths
+
+    def test_dream_generate_accepts_algorithm(self, config):
+        from unturtle.models.backbones.dream import DreamGenerationConfig, DreamModel
+
+        model = DreamModel(config).cpu().eval()
+        inputs = torch.tensor([[2, 3, 4, 5]])
+        generation_config = DreamGenerationConfig(
+            max_new_tokens=4,
+            steps=4,
+            block_length=2,
+            mask_token_id=config.mask_token_id,
+            pad_token_id=config.pad_token_id,
+        )
+        with torch.no_grad():
+            out = model.generate(
+                inputs=inputs, algorithm="mdlm", generation_config=generation_config
+            )
+        seq = out.sequences if hasattr(out, "sequences") else out
+        assert seq.shape == (1, 8)
+
+    def test_dream_generate_bd3lm_raises(self, config):
+        """Dream does not implement BD3LM; explicit algorithm='bd3lm' must raise ValueError."""
+        from unturtle.models.backbones.dream import DreamModel
+
+        model = DreamModel(config).cpu().eval()
+        inputs = torch.tensor([[2, 3, 4, 5]])
+        with pytest.raises(ValueError, match="BD3LM"):
+            model.generate(
+                inputs=inputs,
+                algorithm="bd3lm",
+                steps=2,
+                mask_token_id=config.mask_token_id,
+                max_new_tokens=4,
+            )
 
 
 class TestDreamFastRoPE:

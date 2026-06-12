@@ -49,7 +49,7 @@ class TestConfidenceParallelDecode:
         prompt = torch.tensor([[1, 2, 3, 4, 5]])
 
         with torch.no_grad():
-            output = tiny_model.diffusion_generate(
+            output = tiny_model.generate(
                 inputs=prompt,
                 max_new_tokens=16,
                 steps=4,
@@ -70,7 +70,7 @@ class TestConfidenceParallelDecode:
         steps = 4
 
         with torch.no_grad():
-            output_non_parallel = tiny_model.diffusion_generate(
+            output_non_parallel = tiny_model.generate(
                 inputs=prompt,
                 max_new_tokens=max_new,
                 steps=steps,
@@ -79,7 +79,7 @@ class TestConfidenceParallelDecode:
                 alg="maskgit_plus",
                 mask_token_id=100,
             )
-            output_parallel = tiny_model.diffusion_generate(
+            output_parallel = tiny_model.generate(
                 inputs=prompt,
                 max_new_tokens=max_new,
                 steps=steps,
@@ -100,7 +100,7 @@ class TestConfidenceParallelDecode:
         # (confidence values are typically 0.01-0.2 for vocab=128)
         torch.manual_seed(123)
         with torch.no_grad():
-            output_low = tiny_model.diffusion_generate(
+            output_low = tiny_model.generate(
                 inputs=prompt,
                 max_new_tokens=12,
                 steps=8,  # More steps for convergence
@@ -114,7 +114,7 @@ class TestConfidenceParallelDecode:
 
         torch.manual_seed(123)
         with torch.no_grad():
-            output_high = tiny_model.diffusion_generate(
+            output_high = tiny_model.generate(
                 inputs=prompt,
                 max_new_tokens=12,
                 steps=8,
@@ -163,7 +163,7 @@ class TestConfidenceParallelDecode:
 
         prompt = torch.tensor([[1, 2, 3, 4]])
         with torch.no_grad():
-            output = tiny_model.diffusion_generate(
+            output = tiny_model.generate(
                 inputs=prompt,
                 max_new_tokens=8,
                 steps=2,
@@ -186,7 +186,7 @@ class TestConfidenceParallelDecode:
         algorithms = ["maskgit_plus", "topk_margin", "entropy"]
         for alg in algorithms:
             with torch.no_grad():
-                output = tiny_model.diffusion_generate(
+                output = tiny_model.generate(
                     inputs=prompt,
                     max_new_tokens=8,
                     steps=4,
@@ -205,7 +205,7 @@ class TestConfidenceParallelDecode:
         prompt = torch.tensor([[1, 2, 3, 4, 5]]).cuda()
 
         with torch.no_grad():
-            output = tiny_model.diffusion_generate(
+            output = tiny_model.generate(
                 inputs=prompt,
                 max_new_tokens=16,
                 steps=4,
@@ -227,8 +227,9 @@ class TestConfidenceParallelDecode:
         with pytest.raises(
             ValueError, match="parallel_decode=True.*requires.*use_cache=True"
         ):
-            tiny_model.diffusion_generate(
+            tiny_model.generate(
                 inputs=prompt,
+                algorithm="mdlm",  # explicit: auto would resolve block_decode and overwrite use_cache=False, preventing the ValueError
                 max_new_tokens=8,
                 steps=4,
                 use_cache=False,
@@ -246,7 +247,7 @@ class TestConfidenceParallelDecode:
             pytest.raises(ValueError, match="does not support `alg='origin'`"),
             torch.no_grad(),
         ):
-            tiny_model.diffusion_generate(
+            tiny_model.generate(
                 inputs=prompt,
                 max_new_tokens=8,
                 steps=4,

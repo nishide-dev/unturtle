@@ -533,7 +533,7 @@ def test_describe_backend_path_returns_approved_task3_labels():
     assert (
         describe_backend_path("aligned-warm", "unturtle") == "block_diffusion_generator"
     )
-    assert describe_backend_path("validator-warm", "unturtle") == "diffusion_generate"
+    assert describe_backend_path("validator-warm", "unturtle") == "generate"
     assert describe_backend_path("aligned-warm", "dllm") == "bd3lm_sampler"
     assert describe_backend_path("validator-warm", "dllm") == "bd3lm_sampler"
 

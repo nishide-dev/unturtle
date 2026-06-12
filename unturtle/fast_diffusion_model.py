@@ -84,10 +84,6 @@ from unturtle.models.backbones.modernbert._fast_forward import (
 from unturtle.models.conversion.a2d.tiny_a2d._fast_forward import (
     TinyA2DAttention_fast_forward,
 )
-from unturtle.models.generation.sampler import (
-    algorithm_to_flags,
-    resolve_algorithm,
-)
 from unturtle.save import patch_saving_functions, prepare_model_for_kbit_training
 
 _logger = logging.getLogger(__name__)
@@ -1189,8 +1185,9 @@ class FastDiffusionModel:
         Sets ``model.eval()`` and disables gradient checkpointing so that
         inference is as fast as possible.  Returns the model for convenience.
 
-        Note: dLLMs do not use KV cache, so there is no cache-enabling step
-        unlike ``FastLanguageModel.for_inference`` for AR models.
+        Note: plain MDLM does not use KV cache; block-decode models manage their
+        own dLLM cache internally.  Either way, no external cache-enabling step
+        is needed here, unlike ``FastLanguageModel.for_inference`` for AR models.
 
         Usage::
 
@@ -1216,46 +1213,28 @@ class FastDiffusionModel:
         algorithm: str = "auto",
         **kwargs: Any,
     ) -> Any:
-        """Generate from a dLLM with an explicit decoding algorithm.
+        """Generate from a dLLM via its unified ``generate`` entry point.
 
-        High-level, unsloth-style inference entry. ``algorithm`` selects the decoding path:
-
-          - ``"auto"`` (default): fastest discrete algorithm the model supports —
-            block-decode (Fast-dLLM) when available, else MDLM; BD3LM when requested.
-          - ``"mdlm"`` / ``"block_decode"`` / ``"bd3lm"``: force a named path
-            (benchmarking / research / algorithm comparison).
-
-        Delegates to ``model.diffusion_generate(...)`` with the flag set the chosen
-        algorithm implies, so output is identical to calling ``diffusion_generate`` with
-        those flags directly. ``**kwargs`` (steps, temperature, max_new_tokens, ...) are
-        forwarded unchanged.
+        Thin facade that forwards to ``model.generate(inputs, algorithm=...)``.
+        Algorithm resolution (auto/mdlm/block_decode/bd3lm) happens inside the
+        model's ``generate``. Output is whatever ``model.generate`` returns.
 
         Args:
-            model: A dLLM model exposing ``diffusion_generate`` (e.g. from
+            model: A dLLM model exposing ``generate`` (e.g. from
                 ``FastDiffusionModel.from_pretrained``).
             inputs: Prompt token IDs (``[B, L]``).
             algorithm: ``"auto"`` | ``"mdlm"`` | ``"block_decode"`` | ``"bd3lm"``.
-            **kwargs: Forwarded to ``diffusion_generate`` / the generation config.
+            **kwargs: Forwarded to ``model.generate`` / the generation config.
 
         Returns:
-            Whatever ``model.diffusion_generate`` returns (token IDs or model output).
+            Whatever ``model.generate`` returns (token IDs or model output).
         """
-        if not callable(getattr(model, "diffusion_generate", None)):
+        if not callable(getattr(model, "generate", None)):
             raise TypeError(
-                f"{type(model).__name__} has no `diffusion_generate` method; "
+                f"{type(model).__name__} has no `generate` method; "
                 "FastDiffusionModel.generate requires a dLLM model."
             )
-
-        bd3lm_requested = bool(kwargs.get("use_block_diffusion", False)) or (
-            algorithm == "bd3lm"
-        )
-        resolved = resolve_algorithm(algorithm, model, bd3lm_requested=bd3lm_requested)
-        flags = algorithm_to_flags(resolved)
-
-        # Explicit algorithm flags win over any conflicting legacy flags in kwargs,
-        # so the named algorithm is authoritative.
-        call_kwargs = {**kwargs, **flags}
-        return model.diffusion_generate(inputs=inputs, **call_kwargs)
+        return model.generate(inputs, algorithm=algorithm, **kwargs)
 
     @staticmethod
     def for_training(model: Any, use_gradient_checkpointing: bool | str = True) -> Any:

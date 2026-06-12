@@ -157,11 +157,16 @@ def generate(
         typer.echo(f"Error: invalid generation config — {e}", err=True)
         raise typer.Exit(code=1)
 
+    # Derive algorithm from config flags so auto-resolution cannot override
+    # the user's explicit use_cache intent. use_cache=True opts into block-decode;
+    # the default (False) keeps the MDLM no-cache path.
+    algorithm = "block_decode" if use_cache else "mdlm"
+
     # --- Generate ---
     typer.echo("Generating...", err=True)
     try:
-        output = loaded_model.diffusion_generate(
-            input_ids, generation_config=gen_config
+        output = loaded_model.generate(
+            input_ids, generation_config=gen_config, algorithm=algorithm
         )
     except Exception as e:
         typer.echo(f"Error: generation failed — {e}", err=True)

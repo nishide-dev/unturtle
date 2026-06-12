@@ -52,9 +52,7 @@ class TinyDiffusionModel(torch.nn.Module):
         self.dummy = torch.nn.Parameter(torch.zeros(1))
         self.config = type("Config", (), {"mask_token_id": mask_token_id})()
 
-    def diffusion_generate(
-        self, input_ids, max_length=None, attention_mask=None, **_kwargs
-    ):
+    def generate(self, input_ids, max_length=None, attention_mask=None, **_kwargs):
         self.calls += 1
         self.last_attention_mask = (
             attention_mask.clone() if attention_mask is not None else None
@@ -170,7 +168,7 @@ class TestGenerationEvaluator:
         }
         assert metrics["gen_num_examples"] == 1.0
 
-    def test_generation_uses_diffusion_generate(self):
+    def test_generation_uses_generate(self):
         model = TinyDiffusionModel()
         evaluator = GenerationEvaluator(model=model, tokenizer=None)
         dataset = [{"input_ids": [1, 2, 3, 0], "references": [7]}]

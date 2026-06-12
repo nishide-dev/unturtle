@@ -517,7 +517,7 @@ def _diffusion_step_block(
 
 @dataclass
 class MaskedDiffusionModelOutput(ModelOutput):
-    """Output of :meth:`MaskedDiffusionGenerationMixin.diffusion_generate`."""
+    """Output of :meth:`MaskedDiffusionGenerationMixin.generate`."""
 
     sequences: torch.LongTensor = None
     history: Optional[Tuple[torch.LongTensor, ...]] = None
@@ -699,10 +699,10 @@ class MaskedDiffusionGenerationConfig(GenerationConfig):
 class MaskedDiffusionGenerationMixin:
     """Generation mixin for MDLM-style masked diffusion LMs.
 
-    Provides :meth:`diffusion_generate` which implements the iterative masked-
-    token denoising loop.  The mixin is designed to be mixed into model classes
-    as the *first* base class so that its :meth:`diffusion_generate` takes
-    precedence over HuggingFace's autoregressive ``generate``.
+    Provides :meth:`generate` which implements the iterative masked-token
+    denoising loop with algorithm dispatch.  The mixin is designed to be mixed
+    into model classes as the *first* base class so that its :meth:`generate`
+    takes precedence over HuggingFace's autoregressive ``generate``.
 
     Subclasses must implement a HF-compatible ``forward(input_ids, ...)`` that
     returns an object with a ``.logits`` attribute of shape ``[B, L, V]``.
@@ -813,19 +813,31 @@ class MaskedDiffusionGenerationMixin:
     # ------------------------------------------------------------------
 
     @torch.no_grad()
-    def diffusion_generate(
+    def generate(
         self,
         inputs: Optional[torch.Tensor] = None,
+        *,
+        algorithm: str = "auto",
         generation_config: Optional[MaskedDiffusionGenerationConfig] = None,
         **kwargs,
     ) -> Union[MaskedDiffusionModelOutput, torch.LongTensor]:
-        """Generate sequences via MDLM-style iterative masked-token denoising.
+        """Generate sequences via masked diffusion.
+
+        ``algorithm`` selects the discrete decoding path (``"auto"`` |
+        ``"mdlm"`` | ``"block_decode"`` | ``"bd3lm"``). The resolved
+        algorithm's flags (``use_cache`` / ``use_block_diffusion``) are
+        injected before the denoising loop runs.
 
         Parameters
         ----------
         inputs : LongTensor of shape ``[B, L]``
             Prompt token IDs.  Completion positions should already be filled
             with ``mask_token_id``.
+        algorithm : str, optional
+            Decoding algorithm to use.  ``"auto"`` (default) picks the
+            fastest discrete path the model supports: block-decode when
+            available, else plain MDLM; BD3LM when
+            ``use_block_diffusion=True`` is set in kwargs.
         generation_config : MaskedDiffusionGenerationConfig, optional
             Generation parameters.  If ``None``, model defaults are used.
         **kwargs
@@ -839,6 +851,18 @@ class MaskedDiffusionGenerationMixin:
             :class:`MaskedDiffusionModelOutput`; otherwise returns the
             token-ID tensor directly.
         """
+        from unturtle.models.generation.sampler import (
+            algorithm_to_flags,
+            resolve_algorithm,
+        )
+
+        bd3lm_requested = bool(kwargs.get("use_block_diffusion", False)) or (
+            algorithm == "bd3lm"
+        )
+        resolved = resolve_algorithm(algorithm, self, bd3lm_requested=bd3lm_requested)
+        flags = algorithm_to_flags(resolved)
+        kwargs = {**kwargs, **flags}
+
         generation_config = self._prepare_generation_config(generation_config, **kwargs)
 
         assert inputs is not None, "`inputs` (input_ids) must be provided"
@@ -861,7 +885,7 @@ class MaskedDiffusionGenerationMixin:
 
         if not is_torchdynamo_compiling() and self.device.type != input_ids.device.type:
             warnings.warn(
-                "You are calling .diffusion_generate() with `input_ids` on a different device type than the model."
+                "You are calling .generate() with `input_ids` on a different device type than the model."
                 f" `input_ids` is on {input_ids.device.type}, model is on {self.device.type}.",
                 UserWarning,
             )
@@ -916,8 +940,8 @@ class MaskedDiffusionGenerationMixin:
         if mask_token_id is None:
             raise ValueError(
                 "`mask_token_id` must be set in `generation_config` or `model.config` before calling "
-                "`diffusion_generate()`.  Pass it explicitly: "
-                "`model.diffusion_generate(inputs, mask_token_id=<id>, ...)`"
+                "`generate()`.  Pass it explicitly: "
+                "`model.generate(inputs, mask_token_id=<id>, ...)`"
             )
 
         histories = [] if (return_dict_out and output_history) else None
@@ -1104,7 +1128,7 @@ class MaskedDiffusionGenerationMixin:
         if mask_token_id is None:
             raise ValueError(
                 "`mask_token_id` must be set in `generation_config` or `model.config` before calling "
-                "`diffusion_generate()` with `use_cache=True`."
+                "`generate()` with `use_cache=True`."
             )
 
         # Warn if output_history is requested (not yet supported in cache path)

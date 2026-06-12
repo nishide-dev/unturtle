@@ -21,7 +21,6 @@ requires ``lm_eval``.
 
 from __future__ import annotations
 
-import warnings
 from typing import Any
 
 
@@ -74,7 +73,7 @@ def build_harness_lm(
     lm_base = _import_lm_base()
 
     class UnturtleHarnessLM(lm_base):  # type: ignore[misc, valid-type]
-        """Routes lm-eval ``generate_until`` through ``diffusion_generate``."""
+        """Routes lm-eval ``generate_until`` through ``generate``."""
 
         def __init__(self) -> None:
             super().__init__()
@@ -112,22 +111,17 @@ def build_harness_lm(
                     getattr(self._model, "config", None), "mask_token_id", None
                 )
 
-            diffusion_generate = getattr(self._model, "diffusion_generate", None)
-            if callable(diffusion_generate):
-                sequences = diffusion_generate(
-                    input_ids,
-                    max_length=max_length,
-                    mask_token_id=mask_token_id,
-                    steps=self._num_steps,
-                    temperature=self._temperature,
-                )
-            else:
-                warnings.warn(
-                    f"{type(self._model).__name__} has no diffusion_generate method. "
-                    "Falling back to model.generate — results are NOT diffusion results.",
-                    stacklevel=2,
-                )
-                sequences = self._model.generate(input_ids, max_length=max_length)
+            # algorithm="mdlm": pins pre-unification no-cache MDLM so recorded
+            # DecodingConfigs keep describing the real decode path; switching the
+            # canonical path to block-decode must be an explicit, recorded decision.
+            sequences = self._model.generate(
+                input_ids,
+                algorithm="mdlm",
+                max_length=max_length,
+                mask_token_id=mask_token_id,
+                steps=self._num_steps,
+                temperature=self._temperature,
+            )
 
             if hasattr(sequences, "sequences"):
                 sequences = sequences.sequences

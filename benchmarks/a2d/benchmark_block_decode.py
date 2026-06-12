@@ -25,16 +25,22 @@ from unturtle.models.generation.diffusion_generation_utils import (
 def benchmark_generation(model, input_ids, gen_config, warmup=3, iters=10):
     """Benchmark generation with warmup."""
     # Warmup
+    use_cache = gen_config.use_cache if hasattr(gen_config, "use_cache") else False
+    algorithm = "block_decode" if use_cache else "mdlm"
     for _ in range(warmup):
         with torch.no_grad():
-            _ = model.diffusion_generate(inputs=input_ids, generation_config=gen_config)
+            _ = model.generate(
+                inputs=input_ids, generation_config=gen_config, algorithm=algorithm
+            )
 
     # Benchmark
     torch.cuda.synchronize() if torch.cuda.is_available() else None
     start = time.perf_counter()
     for _ in range(iters):
         with torch.no_grad():
-            _ = model.diffusion_generate(inputs=input_ids, generation_config=gen_config)
+            _ = model.generate(
+                inputs=input_ids, generation_config=gen_config, algorithm=algorithm
+            )
     torch.cuda.synchronize() if torch.cuda.is_available() else None
     elapsed = time.perf_counter() - start
 

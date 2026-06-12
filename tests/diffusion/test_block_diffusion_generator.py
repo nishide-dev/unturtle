@@ -91,7 +91,7 @@ class TestPrepareForSampling:
 
 
 # ---------------------------------------------------------------------------
-# BD3LM generation via model.diffusion_generate(use_block_diffusion=True)
+# BD3LM generation via model.generate(use_block_diffusion=True)
 # ---------------------------------------------------------------------------
 
 
@@ -102,7 +102,7 @@ class TestBD3LMViaModelAPI:
         max_new_tokens = 4
         padded_prompt_len = math.ceil(prompt.shape[1] / block_size) * block_size
         with torch.no_grad():
-            out = tiny_model.diffusion_generate(
+            out = tiny_model.generate(
                 inputs=prompt,
                 use_block_diffusion=True,
                 bd3lm_block_size=block_size,
@@ -120,7 +120,7 @@ class TestBD3LMViaModelAPI:
         max_new_tokens = 8
         padded_prompt_len = math.ceil(prompt.shape[1] / block_size) * block_size
         with torch.no_grad():
-            out = tiny_model.diffusion_generate(
+            out = tiny_model.generate(
                 inputs=prompt,
                 use_block_diffusion=True,
                 bd3lm_block_size=block_size,
@@ -137,7 +137,7 @@ class TestBD3LMViaModelAPI:
         max_new_tokens = 8
         padded_prompt_len = math.ceil(prompt.shape[1] / block_size) * block_size
         with torch.no_grad():
-            out = tiny_model.diffusion_generate(
+            out = tiny_model.generate(
                 inputs=prompt,
                 use_block_diffusion=True,
                 bd3lm_block_size=block_size,
@@ -155,7 +155,7 @@ class TestBD3LMViaModelAPI:
         max_new_tokens = 4
         padded_prompt_len = math.ceil(prompt.shape[1] / block_size) * block_size
         with torch.no_grad():
-            out = tiny_model.diffusion_generate(
+            out = tiny_model.generate(
                 inputs=prompt,
                 use_block_diffusion=True,
                 bd3lm_block_size=block_size,
@@ -175,7 +175,7 @@ class TestBD3LMViaModelAPI:
         max_new_tokens = 4
         padded_prompt_len = math.ceil(prompt.shape[1] / block_size) * block_size
         with torch.no_grad():
-            out = tiny_model.diffusion_generate(
+            out = tiny_model.generate(
                 inputs=prompt,
                 use_block_diffusion=True,
                 bd3lm_block_size=block_size,
@@ -196,7 +196,7 @@ class TestBD3LMViaModelAPI:
         max_new_tokens = 8
         padded_prompt_len = math.ceil(prompt.shape[1] / block_size) * block_size
         with torch.no_grad():
-            out = tiny_model.diffusion_generate(
+            out = tiny_model.generate(
                 inputs=prompt,
                 use_block_diffusion=True,
                 bd3lm_block_size=block_size,
@@ -260,7 +260,7 @@ def test_diffusion_stream_callback_called_with_x_snapshot():
         return_dict=False,
         stream_callback=stream_cb,
     )
-    _ = model.diffusion_generate(prompt, generation_config=cfg)
+    _ = model.generate(prompt, generation_config=cfg)
 
     assert [c[0] for c in called] == [1, 2, 3]
     assert all(c[1] == 3 for c in called)
