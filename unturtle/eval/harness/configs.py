@@ -82,7 +82,7 @@ _DECODING_CONFIGS: dict[tuple[str, str], DecodingConfig] = {
         model_family="diffusion_gemma",
         task="gsm8k",
         max_new_tokens=256,
-        num_steps=48,
+        num_steps=48,  # pinned for DG/gsm8k reproducibility (coincides with the upstream default today)
         # temperature recorded for documentation; NOT forwarded on block_ar path
         temperature=0.0,
         use_chat_template=True,
