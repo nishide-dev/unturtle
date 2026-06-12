@@ -1511,7 +1511,7 @@ class TestFromPretrainedAdapterDetection:
             patch.object(_peft_mod, "PeftModel", mock_peft_cls),
             patch(
                 "unturtle.fast_diffusion_model._load_model_auto",
-                return_value=tiny_model,
+                return_value=(tiny_model, None),
             ) as mock_load_auto,
             patch(
                 "unturtle.fast_diffusion_model.AutoTokenizer.from_pretrained",
@@ -1539,3 +1539,107 @@ class TestFromPretrainedAdapterDetection:
         # The returned model is the PEFT-wrapped model
         assert result_model is fake_peft_model
         assert result_tok is fake_tokenizer
+
+
+# ---------------------------------------------------------------------------
+# FastModel delegation — _load_via_fastmodel
+# ---------------------------------------------------------------------------
+
+
+class TestFastModelDelegation:
+    def test_non_native_model_type_delegates_to_fastmodel(self, monkeypatch):
+        """A model_type outside the native dict goes through unsloth FastModel."""
+        calls = {}
+
+        class _FakeFastModel:
+            @staticmethod
+            def from_pretrained(model_name, **kwargs):
+                calls["model_name"] = model_name
+                calls["kwargs"] = kwargs
+                return "FM_MODEL", "FM_TOKENIZER"
+
+        from unturtle import fast_diffusion_model as fdm
+
+        monkeypatch.setattr(fdm, "_import_fastmodel", lambda: _FakeFastModel)
+        out = fdm._load_via_fastmodel(
+            "some/hub-model", {"torch_dtype": "bf16"}, load_in_4bit=True
+        )
+        assert out == ("FM_MODEL", "FM_TOKENIZER")
+        assert calls["model_name"] == "some/hub-model"
+        assert calls["kwargs"].get("load_in_4bit") is True
+
+    def test_fastmodel_failure_falls_back_to_automodel(self, monkeypatch):
+        from unturtle import fast_diffusion_model as fdm
+
+        def _boom():
+            raise ImportError("no unsloth")
+
+        monkeypatch.setattr(fdm, "_import_fastmodel", _boom)
+        assert fdm._load_via_fastmodel("x", {}, load_in_4bit=False) is None
+
+    def test_load_model_auto_tries_fastmodel_before_automodel(self, monkeypatch):
+        from unturtle import fast_diffusion_model as fdm
+
+        order = []
+        monkeypatch.setattr(
+            fdm, "_load_native", lambda *a, **k: (order.append("native"), None)[1]
+        )
+        monkeypatch.setattr(
+            fdm,
+            "_load_via_fastmodel",
+            lambda *a, **k: (order.append("fastmodel"), ("M", "T"))[1],
+        )
+        monkeypatch.setattr(
+            fdm,
+            "_load_via_automodel",
+            lambda *a, **k: (order.append("automodel"), "AM")[1],
+        )
+        out = fdm._load_model_auto("x", {}, trust_remote_code=False)
+        assert out == ("M", "T")
+        assert order == ["native", "fastmodel"]  # automodel never called
+
+    def test_load_model_auto_falls_through_to_automodel(self, monkeypatch):
+        from unturtle import fast_diffusion_model as fdm
+
+        monkeypatch.setattr(fdm, "_load_native", lambda *a, **k: None)
+        monkeypatch.setattr(fdm, "_load_via_fastmodel", lambda *a, **k: None)
+        monkeypatch.setattr(fdm, "_load_via_automodel", lambda *a, **k: "AM")
+        model, tok = fdm._load_model_auto("x", {}, trust_remote_code=False)
+        assert model == "AM"
+        assert tok is None
+
+
+# ---------------------------------------------------------------------------
+# Post-load class-swap registry — _POST_LOAD_CLASS_SWAPS / _apply_post_load_class_swap
+# ---------------------------------------------------------------------------
+
+
+class TestPostLoadClassSwap:
+    def test_registered_resolver_swaps_class(self):
+        from unturtle import fast_diffusion_model as fdm
+
+        class _Base:
+            class config:
+                model_type = "swaptest"
+
+        class _Wrapper(_Base):
+            pass
+
+        fdm._POST_LOAD_CLASS_SWAPS["swaptest"] = lambda: _Wrapper
+        try:
+            m = _Base()
+            fdm._apply_post_load_class_swap(m)
+            assert type(m) is _Wrapper
+        finally:
+            del fdm._POST_LOAD_CLASS_SWAPS["swaptest"]
+
+    def test_unregistered_model_type_untouched(self):
+        from unturtle import fast_diffusion_model as fdm
+
+        class _Other:
+            class config:
+                model_type = "nobody-registered-this"
+
+        m = _Other()
+        fdm._apply_post_load_class_swap(m)
+        assert type(m) is _Other
