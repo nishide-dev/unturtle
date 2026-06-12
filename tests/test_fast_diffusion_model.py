@@ -1643,3 +1643,19 @@ class TestPostLoadClassSwap:
         m = _Other()
         fdm._apply_post_load_class_swap(m)
         assert type(m) is _Other
+
+    def test_unregistered_model_keeps_instance_generate(self):
+        """Unregistered model types must NOT have their instance-level generate removed."""
+        from unturtle import fast_diffusion_model as fdm
+
+        class _Other:
+            class config:
+                model_type = "nobody-registered-this"
+
+        sentinel = object()
+
+        m = _Other()
+        m.generate = sentinel  # type: ignore[attr-defined]
+        fdm._apply_post_load_class_swap(m)
+        # Unregistered — instance attribute must be preserved
+        assert m.__dict__.get("generate") is sentinel

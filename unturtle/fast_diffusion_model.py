@@ -619,6 +619,14 @@ def _apply_post_load_class_swap(model: Any) -> None:
     ``transformers`` class.  Backbone modules can register a resolver in
     :data:`_POST_LOAD_CLASS_SWAPS` so that the thin Unturtle wrapper class is
     installed via ``__class__`` assignment after loading.
+
+    After the class swap (or when the model is already the wrapper class),
+    any instance-level ``generate`` attribute is removed.  unsloth FastModel
+    installs ``unsloth_base_fast_generate`` as an instance attribute (saving
+    the original as ``self._old_generate``), which would shadow the wrapper
+    class's unified ``generate`` shim AND forces ``cache_implementation=
+    "static"``, crashing DiffusionGemma's flex-attention canvas block loop.
+    Dropping the instance attribute lets the class-level shim win.
     """
     model_type = getattr(getattr(model, "config", None), "model_type", None)
     resolver = _POST_LOAD_CLASS_SWAPS.get(model_type)
@@ -627,6 +635,14 @@ def _apply_post_load_class_swap(model: Any) -> None:
     wrapper_cls = resolver()
     if not isinstance(model, wrapper_cls):
         model.__class__ = wrapper_cls
+    # unsloth FastModel installs an instance-level fast-generate wrapper
+    # (saving the original as `_old_generate`). It would shadow the wrapper
+    # class's unified `generate` shim AND forces cache_implementation="static",
+    # which breaks DiffusionGemma's canvas flex-attention block mask. Drop the
+    # instance attribute so the class-level shim (verbatim upstream delegation)
+    # wins. This runs whether the class was just swapped or was already the
+    # wrapper (covers re-entrant / double-swap scenarios).
+    model.__dict__.pop("generate", None)
 
 
 def _native_model_classes() -> dict[str, Any]:

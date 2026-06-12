@@ -267,3 +267,25 @@ def test_post_load_swap_installs_shim():
     assert type(model) is not UnturtleDiffusionGemmaForBlockDiffusion
     fdm._apply_post_load_class_swap(model)
     assert type(model) is UnturtleDiffusionGemmaForBlockDiffusion
+
+
+def test_post_load_swap_removes_instance_generate_patch():
+    """unsloth installs an instance-level generate; the swap must drop it so the shim wins."""
+    from unturtle import fast_diffusion_model as fdm
+    from unturtle.models.backbones.diffusion_gemma import (
+        UnturtleDiffusionGemmaForBlockDiffusion,
+    )
+
+    model = _tiny_upstream_model()
+    sentinel_called = []
+
+    def _fake_unsloth_generate(*a, **k):
+        sentinel_called.append(True)
+
+    model.generate = _fake_unsloth_generate  # instance-level patch, like unsloth
+    fdm._apply_post_load_class_swap(model)
+    assert "generate" not in model.__dict__
+    assert type(model) is UnturtleDiffusionGemmaForBlockDiffusion
+    # bound method now resolves to the shim, not the sentinel
+    assert model.generate.__func__ is UnturtleDiffusionGemmaForBlockDiffusion.generate
+    assert not sentinel_called
