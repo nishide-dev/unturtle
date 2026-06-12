@@ -96,8 +96,11 @@ class GSM8KEvaluator(BaseEvaluator):
         prompt_len = input_ids.shape[1]
 
         max_length = prompt_len + self.max_new_tokens
+        # algorithm="mdlm": pins pre-unification no-cache MDLM so recorded
+        # DecodingConfigs keep describing the real decode path.
         sequences = self.model.generate(
             input_ids,
+            algorithm="mdlm",
             max_length=max_length,
             steps=self.num_steps,
             temperature=self.temperature,

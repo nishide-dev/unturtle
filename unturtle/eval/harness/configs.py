@@ -45,8 +45,11 @@ class DecodingConfig:
 
 
 # NOTE: only hyperparameters that actually take effect in the adapter/generation path are
-# recorded here, so a recorded config never misrepresents the real decoding. Knobs the dLLM
-# paper highlights but that are not yet wired into generation (e.g. eos-suppression,
+# recorded here, so a recorded config never misrepresents the real decoding. The adapter
+# explicitly pins algorithm="mdlm" so the no-cache MDLM decode path (pre-unification
+# default) is preserved; adding an "algorithm" field to DecodingConfig is deliberately
+# deferred until a canonical path switch is intentionally recorded. Knobs the dLLM paper
+# highlights but that are not yet wired into generation (e.g. eos-suppression,
 # parallel-decode width) will be added when the generation path honors them.
 
 

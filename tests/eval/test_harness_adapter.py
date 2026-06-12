@@ -34,10 +34,10 @@ class _StubModel:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
 
-    def generate(self, input_ids, **kwargs):
+    def generate(self, input_ids, *, algorithm="auto", **kwargs):
         import torch
 
-        self.calls.append(kwargs)
+        self.calls.append({"algorithm": algorithm, **kwargs})
         new = torch.tensor([[101, 102, 103]])
         return torch.cat([input_ids, new], dim=1)
 
@@ -94,10 +94,11 @@ def test_generate_until_routes_through_generate(
     assert model.calls, "generate was not called"
     assert "STOP" not in out[0]
     assert out[0].startswith("the answer is 42")
-    # Verify steps, temperature, and mask_token_id are forwarded correctly
+    # Verify steps, temperature, mask_token_id, and algorithm pin are forwarded correctly
     assert model.calls[-1]["steps"] == 4
     assert model.calls[-1]["temperature"] == 0.0
     assert model.calls[-1]["mask_token_id"] is None
+    assert model.calls[-1]["algorithm"] == "mdlm"
 
 
 def test_generate_until_handles_string_until(

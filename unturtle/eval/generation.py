@@ -105,6 +105,12 @@ class GenerationEvaluator(BaseEvaluator):
                 self.device
             )
 
+        # Pin algorithm="mdlm" when no generation_config is supplied so the
+        # no-cache MDLM path (pre-unification default) is preserved and recorded
+        # DecodingConfigs stay accurate.  Callers that pass a generation_config
+        # object keep auto semantics — the config carries its own algorithm intent.
+        if "generation_config" not in generation_kwargs:
+            generation_kwargs["algorithm"] = "mdlm"
         sequences = self.model.generate(prompt_ids, **generation_kwargs)
 
         if hasattr(sequences, "sequences"):

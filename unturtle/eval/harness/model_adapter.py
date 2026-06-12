@@ -111,8 +111,12 @@ def build_harness_lm(
                     getattr(self._model, "config", None), "mask_token_id", None
                 )
 
+            # algorithm="mdlm": pins pre-unification no-cache MDLM so recorded
+            # DecodingConfigs keep describing the real decode path; switching the
+            # canonical path to block-decode must be an explicit, recorded decision.
             sequences = self._model.generate(
                 input_ids,
+                algorithm="mdlm",
                 max_length=max_length,
                 mask_token_id=mask_token_id,
                 steps=self._num_steps,
