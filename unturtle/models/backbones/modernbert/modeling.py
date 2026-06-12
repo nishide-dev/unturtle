@@ -69,6 +69,8 @@ class DiffusionModernBertForMaskedLM(
     """
 
     config_class = DiffusionModernBertConfig
+    # Encoder backbone returns no past_key_values; block-decode cache hook unusable.
+    supports_block_decode = False
 
     def __init__(self, config: DiffusionModernBertConfig):
         super().__init__(config)

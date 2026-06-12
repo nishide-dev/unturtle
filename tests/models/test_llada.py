@@ -297,6 +297,18 @@ class TestLLaDAGeneration:
         with pytest.raises(ValueError, match="Unknown decoding algorithm"):
             model.generate(prompt, algorithm="ar", max_new_tokens=4)
 
+    def test_llada_generate_bd3lm_raises(self, model):
+        """LLaDA does not implement BD3LM; explicit algorithm='bd3lm' must raise ValueError."""
+        prompt = torch.full((1, 4), self.TINY_MASK_ID, dtype=torch.long)
+        with pytest.raises(ValueError, match="BD3LM"):
+            model.generate(
+                prompt,
+                algorithm="bd3lm",
+                steps=2,
+                mask_token_id=self.TINY_MASK_ID,
+                max_length=8,
+            )
+
 
 # ---------------------------------------------------------------------------
 # LLaDA Triton RoPE fast path (_make_llada_fast_rope_forward)

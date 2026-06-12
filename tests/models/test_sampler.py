@@ -31,6 +31,32 @@ class _PlainDiffusion:
     """Stub without the cache hook."""
 
 
+class _CacheCapableOptOut:
+    """Stub with the cache hook but supports_block_decode = False (encoder-style opt-out)."""
+
+    supports_block_decode = False
+
+    def _model_forward_with_cache(self, *a, **k):  # noqa: ANN002, ANN003
+        ...
+
+
+class _BD3LMCapable:
+    """Stub with both block-decode and BD3LM capability."""
+
+    def _model_forward_with_cache(self, *a, **k):  # noqa: ANN002, ANN003
+        ...
+
+    def _sample_block_diffusion(self, *a, **k):  # noqa: ANN002, ANN003
+        ...
+
+
+class _BD3LMOnly:
+    """Stub with BD3LM but no block-decode cache hook."""
+
+    def _sample_block_diffusion(self, *a, **k):  # noqa: ANN002, ANN003
+        ...
+
+
 def test_known_algorithms_present() -> None:
     assert set(DISCRETE_ALGORITHMS) == {"mdlm", "block_decode", "bd3lm"}
 
@@ -69,7 +95,7 @@ def test_resolve_auto_picks_block_decode_when_capable() -> None:
 
 
 def test_resolve_auto_picks_bd3lm_when_requested() -> None:
-    assert resolve_algorithm("auto", _CacheCapable(), bd3lm_requested=True) == "bd3lm"
+    assert resolve_algorithm("auto", _BD3LMCapable(), bd3lm_requested=True) == "bd3lm"
 
 
 def test_resolve_auto_falls_back_to_mdlm_without_cache_capability() -> None:
@@ -114,3 +140,58 @@ def test_algorithm_to_flags_unchanged() -> None:
 def test_resolve_ar_is_unknown_algorithm() -> None:
     with pytest.raises(ValueError, match="Unknown decoding algorithm"):
         resolve_algorithm("ar", _PlainDiffusion(), bd3lm_requested=False)
+
+
+# ---------------------------------------------------------------------------
+# Defect 1 & 2: capability checks
+# ---------------------------------------------------------------------------
+
+
+def test_auto_opts_out_via_supports_block_decode_false() -> None:
+    """auto resolves to mdlm when model has the hook but supports_block_decode=False."""
+    assert (
+        resolve_algorithm("auto", _CacheCapableOptOut(), bd3lm_requested=False)
+        == "mdlm"
+    )
+
+
+def test_explicit_block_decode_non_capable_raises() -> None:
+    """explicit 'block_decode' on a non-capable model raises ValueError."""
+    with pytest.raises(ValueError, match="block-decode"):
+        resolve_algorithm("block_decode", _NoCache(), bd3lm_requested=False)
+
+
+def test_explicit_block_decode_opted_out_raises() -> None:
+    """explicit 'block_decode' on an opted-out model raises ValueError."""
+    with pytest.raises(ValueError, match="block-decode"):
+        resolve_algorithm("block_decode", _CacheCapableOptOut(), bd3lm_requested=False)
+
+
+def test_explicit_bd3lm_without_capability_raises() -> None:
+    """explicit 'bd3lm' on a model without _sample_block_diffusion raises ValueError."""
+    with pytest.raises(ValueError, match="BD3LM"):
+        resolve_algorithm("bd3lm", _CacheCapable(), bd3lm_requested=False)
+
+
+def test_auto_bd3lm_requested_without_capability_raises() -> None:
+    """auto + bd3lm_requested=True on a model without _sample_block_diffusion raises ValueError."""
+    with pytest.raises(ValueError, match="BD3LM"):
+        resolve_algorithm("auto", _CacheCapable(), bd3lm_requested=True)
+
+
+def test_auto_bd3lm_requested_with_capability_resolves() -> None:
+    """auto + bd3lm_requested=True resolves to 'bd3lm' when model has _sample_block_diffusion."""
+    assert resolve_algorithm("auto", _BD3LMCapable(), bd3lm_requested=True) == "bd3lm"
+
+
+def test_explicit_bd3lm_with_capability_resolves() -> None:
+    """explicit 'bd3lm' resolves correctly when model has _sample_block_diffusion."""
+    assert resolve_algorithm("bd3lm", _BD3LMCapable(), bd3lm_requested=False) == "bd3lm"
+
+
+def test_explicit_block_decode_with_capability_resolves() -> None:
+    """explicit 'block_decode' resolves correctly on a capable model."""
+    assert (
+        resolve_algorithm("block_decode", _CacheCapable(), bd3lm_requested=False)
+        == "block_decode"
+    )

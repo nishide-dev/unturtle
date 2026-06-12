@@ -310,6 +310,21 @@ class TestDreamGenerationUtils:
         seq = out.sequences if hasattr(out, "sequences") else out
         assert seq.shape == (1, 8)
 
+    def test_dream_generate_bd3lm_raises(self, config):
+        """Dream does not implement BD3LM; explicit algorithm='bd3lm' must raise ValueError."""
+        from unturtle.models.backbones.dream import DreamModel
+
+        model = DreamModel(config).cpu().eval()
+        inputs = torch.tensor([[2, 3, 4, 5]])
+        with pytest.raises(ValueError, match="BD3LM"):
+            model.generate(
+                inputs=inputs,
+                algorithm="bd3lm",
+                steps=2,
+                mask_token_id=config.mask_token_id,
+                max_new_tokens=4,
+            )
+
 
 class TestDreamFastRoPE:
     """Tests for DreamAttention_fast_forward Triton RoPE path."""
