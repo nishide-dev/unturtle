@@ -42,9 +42,11 @@ unturtle       dLLM method layer: conversion, objective trainers, inference acce
 
 A concrete dLLM is a point in three independent axes. Place new code on the right axis:
 
-- **Backbone architecture** (`unturtle.models.backbones.{llada,dream,modernbert}`):
+- **Backbone architecture** (`unturtle.models.backbones.{llada,dream,modernbert,diffusion_gemma}`):
   native diffusion backbones Unturtle implements. LLaDA/Dream are full from-scratch
-  implementations; ModernBERT-diffusion wraps the upstream bidirectional encoder.
+  implementations; ModernBERT-diffusion wraps the upstream bidirectional encoder;
+  DiffusionGemma wraps the upstream `transformers` implementation — self-conditioned canvas
+  block diffusion, NOT masked diffusion (no mask token).
 - **Conversion method** (`unturtle.models.conversion`): how a non-diffusion backbone
   becomes a dLLM — a *method*, not a model. `a2d` is the AR→Diffusion family; the
   implemented recipe is **Tiny-A2D** (`unturtle.models.conversion.a2d.tiny_a2d`, classes
@@ -66,7 +68,7 @@ See `docs/dllm-gap-map.md` for the implemented-vs-missing method map and the roa
 │   ├── diffusion/          # trainer, collator, scheduler, GRPO
 │   ├── kernels/            # Triton kernels / fast LoRA
 │   ├── models/
-│   │   ├── backbones/      # native diffusion backbones: llada / dream / modernbert
+│   │   ├── backbones/      # native diffusion backbones: llada / dream / modernbert / diffusion_gemma
 │   │   ├── conversion/     # methods: a2d/ (family) → tiny_a2d/ (recipe)
 │   │   └── generation/     # shared infra: cache / block-decode / generation mixins
 │   ├── eval/               # smoke evaluators + lm-evaluation-harness adapter
@@ -173,19 +175,25 @@ must not require it (the adapter/runner import `lm_eval` lazily).
 
 `model.generate(inputs, algorithm="auto", **kwargs)` is the unified dLLM inference entry
 (transformers-standard name; diffusion is the default behavior). `algorithm` is explicit:
-`"auto"` (default — fastest discrete path the model supports: BD3LM when requested via the
-`use_block_diffusion=True` KWARG, else block-decode when available, else MDLM), or force
-`"mdlm"` / `"block_decode"` / `"bd3lm"`. The resolved algorithm's flags
-(`use_cache` / `use_block_diffusion`) are injected into kwargs and override
+`"auto"` (default — fastest discrete path the model supports: `"block_ar"` when the model
+supports it, else BD3LM when requested via the `use_block_diffusion=True` KWARG, else
+block-decode when available, else MDLM), or force `"mdlm"` / `"block_decode"` /
+`"bd3lm"` / `"block_ar"`. `"block_ar"` is self-conditioned canvas block diffusion
+(DiffusionGemma-style; no mask token); it is distinct from `"bd3lm"`, which is Unturtle's
+masked block diffusion (requires a mask token, TinyA2D family). The resolved algorithm's
+flags (`use_cache` / `use_block_diffusion`) are injected into kwargs and override
 `generation_config` fields — pin `algorithm="mdlm"` explicitly when the no-cache MDLM
 path is the intent on a block-decode-capable model. Explicit algorithm choices are
-capability-checked and raise `ValueError` immediately for unsupported combinations:
-`"bd3lm"` requires the model to implement `_sample_block_diffusion` (TinyA2D family today;
-Dream and LLaDA raise). `FastDiffusionModel.generate(model, inputs, algorithm=..., **kwargs)`
+capability-checked and raise `ValueError` immediately for unsupported combinations (e.g.
+`"bd3lm"` on DiffusionGemma, or `"block_ar"` on a masked-diffusion model). `FastDiffusionModel.generate(model, inputs, algorithm=..., **kwargs)`
 remains as a thin forwarder (unsloth-style facade, behaviorally identical to calling
-`model.generate` directly). Decoding algorithms are registered in
-`unturtle/models/generation/sampler.py`
-(discrete-masked-only today; the registry is open for future continuous-diffusion algorithms).
+`model.generate` directly). CLI `generate` is masked-dLLM-only (derives `mdlm` /
+`block_decode` from `--use-cache`); it cannot drive DiffusionGemma (no mask token — it
+fails at mask-token resolution) — use `model.generate(algorithm="block_ar")` directly for
+block-AR inference. Decoding algorithms are registered in
+`unturtle/models/generation/sampler.py` (masked loops mdlm/block_decode/bd3lm are
+discrete-masked-only; `block_ar` covers the canvas family; the registry is open for
+future continuous-diffusion algorithms).
 
 ## Issue, branch, commit, PR workflow
 

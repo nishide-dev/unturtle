@@ -64,6 +64,7 @@ def build_harness_lm(
     max_new_tokens: int,
     temperature: float,
     use_chat_template: bool,
+    algorithm: str = "mdlm",
 ) -> Any:
     """Build an lm_eval LM wrapping an Unturtle diffusion model.
 
@@ -83,6 +84,7 @@ def build_harness_lm(
             self._max_new_tokens = max_new_tokens
             self._temperature = temperature
             self._use_chat_template = use_chat_template
+            self._algorithm = algorithm
 
         def _build_prompt(self, context: str) -> str:
             apply = getattr(self._tokenizer, "apply_chat_template", None)
@@ -105,23 +107,32 @@ def build_harness_lm(
             max_new = int(gen_kwargs.get("max_gen_toks", self._max_new_tokens))
             max_length = prompt_len + max_new
 
-            mask_token_id = getattr(self._tokenizer, "mask_token_id", None)
-            if mask_token_id is None:
-                mask_token_id = getattr(
-                    getattr(self._model, "config", None), "mask_token_id", None
+            if self._algorithm == "block_ar":
+                # DiffusionGemma block-AR path: no mask_token_id, no temperature
+                # forwarding (entropy knobs stay at upstream defaults); num_steps maps
+                # to max_denoising_steps.
+                sequences = self._model.generate(
+                    input_ids,
+                    algorithm="block_ar",
+                    max_new_tokens=max_new,
+                    max_denoising_steps=self._num_steps,
                 )
-
-            # algorithm="mdlm": pins pre-unification no-cache MDLM so recorded
-            # DecodingConfigs keep describing the real decode path; switching the
-            # canonical path to block-decode must be an explicit, recorded decision.
-            sequences = self._model.generate(
-                input_ids,
-                algorithm="mdlm",
-                max_length=max_length,
-                mask_token_id=mask_token_id,
-                steps=self._num_steps,
-                temperature=self._temperature,
-            )
+            else:
+                # Masked-diffusion families (mdlm default; explicit pin recorded with
+                # the score so the config never misrepresents the decode path).
+                mask_token_id = getattr(self._tokenizer, "mask_token_id", None)
+                if mask_token_id is None:
+                    mask_token_id = getattr(
+                        getattr(self._model, "config", None), "mask_token_id", None
+                    )
+                sequences = self._model.generate(
+                    input_ids,
+                    algorithm=self._algorithm,
+                    max_length=max_length,
+                    mask_token_id=mask_token_id,
+                    steps=self._num_steps,
+                    temperature=self._temperature,
+                )
 
             if hasattr(sequences, "sequences"):
                 sequences = sequences.sequences

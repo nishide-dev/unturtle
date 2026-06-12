@@ -102,3 +102,32 @@ def test_runner_requires_lm_eval(monkeypatch: pytest.MonkeyPatch) -> None:
             model_family="a2d_qwen3",
             task="gsm8k",
         )
+
+
+def test_runner_threads_algorithm_to_build_harness_lm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DecodingConfig.algorithm is passed through to build_harness_lm."""
+    captured: dict[str, Any] = {}
+    _install_fake_lm_eval(monkeypatch, captured)
+    _patch_loader(monkeypatch)
+
+    import unturtle.eval.harness.runner as runner_mod
+
+    class _StubHarnessLM:
+        pass
+
+    def capturing_build_harness_lm(**kwargs):  # noqa: ANN003
+        captured.update(kwargs)
+        return _StubHarnessLM()
+
+    monkeypatch.setattr(runner_mod, "build_harness_lm", capturing_build_harness_lm)
+
+    from unturtle.eval.harness.runner import run_harness_evaluation
+
+    run_harness_evaluation(
+        model_name="dummy/model",
+        model_family="diffusion_gemma",
+        task="gsm8k",
+    )
+    assert captured["algorithm"] == "block_ar"

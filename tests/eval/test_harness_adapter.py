@@ -170,3 +170,78 @@ def test_loglikelihood_raises_not_implemented(
         lm.loglikelihood([_FakeInstance("ctx", {})])
     with pytest.raises(NotImplementedError):
         lm.loglikelihood_rolling([_FakeInstance("ctx", {})])
+
+
+# ---------------------------------------------------------------------------
+# block_ar algorithm path tests
+# ---------------------------------------------------------------------------
+
+
+def test_block_ar_algorithm_uses_correct_kwargs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """block_ar path forwards algorithm, max_new_tokens, max_denoising_steps only."""
+    _install_fake_lm_eval(monkeypatch)
+    from unturtle.eval.harness.model_adapter import build_harness_lm
+
+    model = _StubModel()
+    lm = build_harness_lm(
+        model=model,
+        tokenizer=_StubTokenizer(),
+        num_steps=48,
+        max_new_tokens=256,
+        temperature=0.0,
+        use_chat_template=False,
+        algorithm="block_ar",
+    )
+    lm.generate_until([_FakeInstance("Q: 2+2?", {"until": []})])
+    assert model.calls, "generate was not called"
+    call = model.calls[-1]
+    assert call["algorithm"] == "block_ar"
+    assert call["max_denoising_steps"] == 48
+    assert "max_new_tokens" in call
+    # block_ar must NOT forward masked-diffusion-specific kwargs
+    for forbidden in ("steps", "mask_token_id", "temperature", "max_length"):
+        assert forbidden not in call, (
+            f"unexpected kwarg in block_ar call: {forbidden!r}"
+        )
+
+
+def test_mdlm_default_algorithm_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default path (no algorithm arg) still uses mdlm + masked kwargs."""
+    _install_fake_lm_eval(monkeypatch)
+    from unturtle.eval.harness.model_adapter import build_harness_lm
+
+    model = _StubModel()
+    lm = build_harness_lm(
+        model=model,
+        tokenizer=_StubTokenizer(),
+        num_steps=4,
+        max_new_tokens=8,
+        temperature=0.5,
+        use_chat_template=False,
+    )
+    lm.generate_until([_FakeInstance("Q", {"until": []})])
+    call = model.calls[-1]
+    assert call["algorithm"] == "mdlm"
+    assert call["steps"] == 4
+    assert call["temperature"] == 0.5
+    assert "mask_token_id" in call
+    assert "max_length" in call
+
+
+def test_decoding_config_algorithm_field() -> None:
+    """DecodingConfig has algorithm field; existing entries default to 'mdlm'."""
+    from unturtle.eval.harness.configs import DecodingConfig, get_decoding_config
+
+    # Existing entries default to mdlm
+    cfg_a2d = get_decoding_config("a2d_qwen3", "gsm8k")
+    assert cfg_a2d.algorithm == "mdlm"
+
+    # diffusion_gemma entry uses block_ar
+    cfg_dg = get_decoding_config("diffusion_gemma", "gsm8k")
+    assert cfg_dg.algorithm == "block_ar"
+    assert cfg_dg.num_steps == 48
+    assert cfg_dg.max_new_tokens == 256

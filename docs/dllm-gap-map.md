@@ -35,7 +35,7 @@ unimportant, but not this library's job.
 | Training objectives | MDLM, BD3LM | ✅ | `unturtle/diffusion/trainer.py`, `block_diffusion_trainer.py` | core | maintain |
 | AR→Diffusion conversion | A2D family; Tiny-A2D recipe (DiffuLLaMA / TESS-2 / SDAR family) | ✅ | `unturtle/models/conversion/a2d/tiny_a2d/` | core | maintain |
 | Encoder backbones | ModernBERT-chat | ✅ | `unturtle/models/backbones/modernbert/` | medium | maintain |
-| Block-AR diffusion backbone | **DiffusionGemma** (Google, 26B-A4B MoE, block-AR diffusion; `transformers` `models/diffusion_gemma` wrapper) | ❌ (candidate) | — | high | **P1** |
+| Block-AR diffusion backbone | **DiffusionGemma** (Google, 26B-A4B MoE, block-AR diffusion; `transformers` `models/diffusion_gemma` wrapper) | ✅ (#25) | `unturtle/models/backbones/diffusion_gemma/` | high | maintain |
 | Tri-mode AR+diffusion backbone | **Nemotron-Labs-Diffusion** (NVIDIA 3B/8B/14B, AR + diffusion + self-spec; HF weights public) | ❌ (candidate) | — | medium | evaluate |
 | Evaluation discipline | lm-eval-harness, hyperparam sensitivity | ✅ | `unturtle/eval/harness/` | high | maintain |
 | High-level generation entry | `FastDiffusionModel.generate(algorithm=…)` | ✅ | `unturtle/models/generation/sampler.py` + `fast_diffusion_model.py` | high | maintain |
@@ -58,6 +58,8 @@ unimportant, but not this library's job.
 - Taxonomy axis-split (PR #292), eval canonicalization (PR #294), gap-map (PR #296),
   physical taxonomy migration (PR #298), high-level `FastDiffusionModel.generate` +
   algorithm registry (PR #300).
+- DiffusionGemma backbone wrapper + `block_ar` algorithm (self-conditioned canvas block
+  diffusion; no mask token) + `("diffusion_gemma","gsm8k")` DecodingConfig entry (#25).
 
 ### First roadmap after the clean migration
 
@@ -67,7 +69,7 @@ sequence is:
 1. **DiffusionGemma backbone** — wrap the upstream `transformers` `models/diffusion_gemma`
    implementation as a native block-AR diffusion backbone. Pairs with the `FastModel`
    delegation work (#15): models that carry their own loss/generation route through the
-   standard path, so this lands as a backbone wrapper, not a new objective.
+   standard path, so this lands as a backbone wrapper, not a new objective. — done (#25)
 2. **Nemotron evaluation** — evaluate Nemotron-Labs-Diffusion (tri-mode AR+diffusion+self-spec)
    on the canonical harness to decide whether to add it as a backbone.
 3. **unsloth CLI plugin mechanism** — propose the `unturtle` CLI integration as a plugin
