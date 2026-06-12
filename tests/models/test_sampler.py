@@ -3,6 +3,8 @@ from __future__ import annotations
 import pytest
 
 from unturtle.models.generation.sampler import (
+    ALL_ALGORITHMS,
+    CANVAS_ALGORITHMS,
     DISCRETE_ALGORITHMS,
     algorithm_to_flags,
     resolve_algorithm,
@@ -12,6 +14,9 @@ from unturtle.models.generation.sampler import (
 class _CacheCapable:
     """Stub model that supports block-decode (implements _model_forward_with_cache)."""
 
+    def _sample(self, *a, **k):  # noqa: ANN002, ANN003
+        ...
+
     def _model_forward_with_cache(self, *a, **k):  # noqa: ANN002, ANN003
         ...
 
@@ -19,9 +24,15 @@ class _CacheCapable:
 class _NoCache:
     """Stub model without block-decode capability."""
 
+    def _sample(self, *a, **k):  # noqa: ANN002, ANN003
+        ...
+
 
 class _BlockCapable:
     """Stub exposing the block-decode cache hook."""
+
+    def _sample(self, *a, **k):  # noqa: ANN002, ANN003
+        ...
 
     def _model_forward_with_cache(self, *a, **k):  # noqa: ANN002, ANN003
         ...
@@ -30,11 +41,17 @@ class _BlockCapable:
 class _PlainDiffusion:
     """Stub without the cache hook."""
 
+    def _sample(self, *a, **k):  # noqa: ANN002, ANN003
+        ...
+
 
 class _CacheCapableOptOut:
     """Stub with the cache hook but supports_block_decode = False (encoder-style opt-out)."""
 
     supports_block_decode = False
+
+    def _sample(self, *a, **k):  # noqa: ANN002, ANN003
+        ...
 
     def _model_forward_with_cache(self, *a, **k):  # noqa: ANN002, ANN003
         ...
@@ -42,6 +59,9 @@ class _CacheCapableOptOut:
 
 class _BD3LMCapable:
     """Stub with both block-decode and BD3LM capability."""
+
+    def _sample(self, *a, **k):  # noqa: ANN002, ANN003
+        ...
 
     def _model_forward_with_cache(self, *a, **k):  # noqa: ANN002, ANN003
         ...
@@ -53,12 +73,17 @@ class _BD3LMCapable:
 class _BD3LMOnly:
     """Stub with BD3LM but no block-decode cache hook."""
 
+    def _sample(self, *a, **k):  # noqa: ANN002, ANN003
+        ...
+
     def _sample_block_diffusion(self, *a, **k):  # noqa: ANN002, ANN003
         ...
 
 
 def test_known_algorithms_present() -> None:
     assert set(DISCRETE_ALGORITHMS) == {"mdlm", "block_decode", "bd3lm"}
+    assert set(CANVAS_ALGORITHMS) == {"block_ar"}
+    assert set(ALL_ALGORITHMS) == set(DISCRETE_ALGORITHMS) | set(CANVAS_ALGORITHMS)
 
 
 def test_algorithm_to_flags_mdlm() -> None:
@@ -195,3 +220,55 @@ def test_explicit_block_decode_with_capability_resolves() -> None:
         resolve_algorithm("block_decode", _CacheCapable(), bd3lm_requested=False)
         == "block_decode"
     )
+
+
+# ---------------------------------------------------------------------------
+# block_ar algorithm (DiffusionGemma / canvas block diffusion family)
+# ---------------------------------------------------------------------------
+
+
+class _BlockArCapable:
+    """Stub mimicking DiffusionGemmaGenerationMixin capability.
+
+    Deliberately no _sample: the canvas family has no mask semantics.
+    """
+
+    def _denoising_step(self, *a, **k):  # noqa: ANN002, ANN003
+        ...
+
+
+def test_resolve_auto_prefers_block_ar() -> None:
+    assert (
+        resolve_algorithm("auto", _BlockArCapable(), bd3lm_requested=False)
+        == "block_ar"
+    )
+
+
+def test_resolve_explicit_block_ar_on_masked_model_raises() -> None:
+    with pytest.raises(ValueError, match="block_ar"):
+        resolve_algorithm("block_ar", _PlainDiffusion(), bd3lm_requested=False)
+
+
+def test_resolve_explicit_mdlm_on_block_ar_model_raises() -> None:
+    # block_ar families have no mask semantics -> mdlm is inapplicable.
+    with pytest.raises(ValueError, match="masked"):
+        resolve_algorithm("mdlm", _BlockArCapable(), bd3lm_requested=False)
+
+
+def test_algorithm_to_flags_block_ar_is_empty() -> None:
+    assert algorithm_to_flags("block_ar") == {}
+
+
+def test_resolve_auto_block_ar_takes_priority_over_bd3lm_requested() -> None:
+    # canvas family has no _sample; auto returns block_ar
+    # instead of honoring (and then failing) the bd3lm request.
+    assert (
+        resolve_algorithm("auto", _BlockArCapable(), bd3lm_requested=True) == "block_ar"
+    )
+
+
+def test_resolve_auto_no_capability_raises() -> None:
+    class _NoAlgorithms: ...
+
+    with pytest.raises(ValueError, match="known decoding algorithm"):
+        resolve_algorithm("auto", _NoAlgorithms(), bd3lm_requested=False)

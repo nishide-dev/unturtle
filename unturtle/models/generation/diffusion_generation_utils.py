@@ -823,10 +823,12 @@ class MaskedDiffusionGenerationMixin:
     ) -> Union[MaskedDiffusionModelOutput, torch.LongTensor]:
         """Generate sequences via masked diffusion.
 
-        ``algorithm`` selects the discrete decoding path (``"auto"`` |
-        ``"mdlm"`` | ``"block_decode"`` | ``"bd3lm"``). The resolved
-        algorithm's flags (``use_cache`` / ``use_block_diffusion``) are
-        injected before the denoising loop runs.
+        ``algorithm`` selects the decoding path (``"auto"`` | ``"mdlm"`` |
+        ``"block_decode"`` | ``"bd3lm"`` | ``"block_ar"``). ``block_ar``
+        is the DiffusionGemma canvas family (no mask token) and is rejected
+        here; the masked paths (mdlm/block_decode/bd3lm) resolve via capability
+        checks and inject their flags (``use_cache`` / ``use_block_diffusion``)
+        before the denoising loop runs.
 
         Parameters
         ----------
@@ -834,10 +836,11 @@ class MaskedDiffusionGenerationMixin:
             Prompt token IDs.  Completion positions should already be filled
             with ``mask_token_id``.
         algorithm : str, optional
-            Decoding algorithm to use.  ``"auto"`` (default) picks the
-            fastest discrete path the model supports: block-decode when
-            available, else plain MDLM; BD3LM when
-            ``use_block_diffusion=True`` is set in kwargs.
+            Decoding algorithm to use (see main docstring for full list).
+            ``"auto"`` (default) picks the fastest discrete path the model
+            supports: block-decode when available, else plain MDLM; BD3LM when
+            ``use_block_diffusion=True`` is set in kwargs. ``block_ar``
+            (DiffusionGemma canvas) is rejected (raises ValueError).
         generation_config : MaskedDiffusionGenerationConfig, optional
             Generation parameters.  If ``None``, model defaults are used.
         **kwargs
