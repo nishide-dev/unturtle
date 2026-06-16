@@ -20,5 +20,15 @@ kuleshov checkpoints.
 """
 
 from .configuration_mdlm_dit import MDLMDiTConfig
+from .modeling_mdlm_dit import (
+    MDLMDiTForMaskedDiffusionLM,
+    MDLMDiTModel,
+    MDLMDiTPreTrainedModel,
+)
 
-__all__ = ["MDLMDiTConfig"]
+__all__ = [
+    "MDLMDiTConfig",
+    "MDLMDiTForMaskedDiffusionLM",
+    "MDLMDiTModel",
+    "MDLMDiTPreTrainedModel",
+]
