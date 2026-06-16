@@ -83,9 +83,9 @@ class GSM8KEvaluator(BaseEvaluator):
         self.temperature = temperature
         self.system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
         self.metric_key_prefix = metric_key_prefix
-        # Two-stage lookup mirroring the harness adapter: tokenizer first, then
-        # the model config (real checkpoints may carry mask_token_id only on
-        # model.config, not the tokenizer).
+        # Two-stage lookup mirroring unturtle/eval/harness/model_adapter.py:
+        # tokenizer first, then the model config (real checkpoints may carry
+        # mask_token_id only on model.config, not the tokenizer).
         mask_token_id = getattr(tokenizer, "mask_token_id", None)
         if mask_token_id is None:
             mask_token_id = getattr(

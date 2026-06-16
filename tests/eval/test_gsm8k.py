@@ -284,6 +284,29 @@ class TestGSM8KEvaluator:
         evaluator.evaluate()
         assert model.last_mask_token_id == 7
 
+    def test_mask_token_id_none_when_unavailable(self, monkeypatch):
+        # Neither the tokenizer nor model.config supplies a mask_token_id.
+        # The contract is to forward None explicitly (the MDLM sampler resolves
+        # the real mask token), NOT to omit the kwarg or raise.
+        tok = _StubTokenizer()  # no mask_token_id attribute
+        tok._answer = r"\boxed{2}"
+        model = _CorrectAnswerModel()  # no .config attribute
+
+        from unturtle.eval.gsm8k import GSM8KEvaluator
+
+        evaluator = GSM8KEvaluator(
+            model=model, tokenizer=tok, num_steps=4, max_new_tokens=8
+        )
+        assert evaluator.mask_token_id is None
+
+        dataset = [{"question": "What is 1 + 1?", "answer": "#### 2"}]
+        monkeypatch.setattr(
+            evaluator, "_load_dataset", lambda split, seed, num_examples: dataset
+        )
+        evaluator.evaluate()
+        # `is None`, not `== "<unset>"`: proves the kwarg was forwarded, not omitted.
+        assert model.last_mask_token_id is None
+
 
 def test_gsm8k_evaluator_docstring_marks_it_as_dllm_only() -> None:
     assert "dllm-only" in (GSM8KEvaluator.__doc__ or "").lower()
