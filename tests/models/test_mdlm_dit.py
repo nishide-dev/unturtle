@@ -267,3 +267,35 @@ class TestMDLMDiTRegistration:
         with torch.no_grad():
             got = reloaded(input_ids=input_ids).logits
         assert torch.allclose(ref, got, atol=1e-5)
+
+
+class TestMDLMDiTTrainingSmoke:
+    def test_one_training_step(self, tiny_config):
+        """A single masked-diffusion loss + backward step runs and is finite.
+
+        Mirrors DiffusionTrainer.compute_loss without spinning a full Trainer:
+        forward -> fast_masked_diffusion_loss on masked positions.
+        """
+        from unturtle.kernels.masked_diffusion_loss import fast_masked_diffusion_loss
+        from unturtle.models.backbones.mdlm_dit import MDLMDiTForMaskedDiffusionLM
+
+        torch.manual_seed(0)
+        model = MDLMDiTForMaskedDiffusionLM(tiny_config).cpu().train()
+        B, L = 2, 12
+        labels = torch.randint(0, tiny_config.vocab_size, (B, L))
+        input_ids = labels.clone()
+        diffusion_mask = torch.zeros(B, L, dtype=torch.bool)
+        diffusion_mask[:, ::2] = True  # mask every other position
+        input_ids[diffusion_mask] = tiny_config.mask_token_id
+
+        logits = model(input_ids=input_ids).logits
+        loss = fast_masked_diffusion_loss(
+            logits=logits,
+            labels=labels,
+            diffusion_mask=diffusion_mask,
+            loss_weights=None,
+            loss_norm_type="token",
+        )
+        assert torch.isfinite(loss)
+        loss.backward()
+        assert any(p.grad is not None for p in model.parameters())
