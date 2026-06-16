@@ -259,6 +259,10 @@ class MDLMDiTModel(nn.Module):
             ]
         )
         self.output_layer = DDitFinalLayer(dim, config.vocab_size, config.cond_dim)
+        # Toggled by PreTrainedModel.gradient_checkpointing_enable() via the standard
+        # _set_gradient_checkpointing propagation. self._gradient_checkpointing_func is
+        # injected by the same call.
+        self.gradient_checkpointing = False
 
     def forward(
         self, input_ids: torch.Tensor, attn_bias: Optional[torch.Tensor]
@@ -268,7 +272,12 @@ class MDLMDiTModel(nn.Module):
         c = F.silu(self.cond).unsqueeze(0).expand(B, -1)  # [B, cond_dim]
         cos, sin = self.rotary(L, input_ids.device)
         for block in self.blocks:
-            x = block(x, cos, sin, c, attn_bias)
+            if self.gradient_checkpointing and self.training:
+                x = self._gradient_checkpointing_func(
+                    block.__call__, x, cos, sin, c, attn_bias
+                )
+            else:
+                x = block(x, cos, sin, c, attn_bias)
         return self.output_layer(x, c)
 
 
@@ -276,7 +285,7 @@ class MDLMDiTPreTrainedModel(PreTrainedModel):
     config_class = MDLMDiTConfig
     base_model_prefix = "model"
     _no_split_modules = ["DDiTBlock"]
-    supports_gradient_checkpointing = False
+    supports_gradient_checkpointing = True
 
     def _init_weights(self, module) -> None:
         # No-op: every submodule self-initializes in its own ``__init__`` (adaLN-Zero
