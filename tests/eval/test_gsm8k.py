@@ -86,6 +86,7 @@ class _CorrectAnswerModel(torch.nn.Module):
         self.dummy = torch.nn.Parameter(torch.zeros(1))
         self.calls = 0
         self.last_algorithm: str | None = None
+        self.last_mask_token_id: object = "<unset>"
 
     def generate(
         self,
@@ -95,10 +96,12 @@ class _CorrectAnswerModel(torch.nn.Module):
         max_length=None,
         steps=None,
         temperature=None,
+        mask_token_id="<unset>",
         **_kw,
     ):
         self.calls += 1
         self.last_algorithm = algorithm
+        self.last_mask_token_id = mask_token_id
         pad = torch.full((input_ids.shape[0], 1), 7, dtype=input_ids.dtype)
         return torch.cat([input_ids, pad], dim=1)
 
@@ -237,3 +240,50 @@ class TestGSM8KEvaluator:
         evaluator.evaluate()
         assert model.calls == 1
         assert model.last_algorithm == "mdlm"
+
+    def test_mask_token_id_resolved_from_tokenizer(self, monkeypatch):
+        tok = _StubTokenizer()
+        tok._answer = r"\boxed{2}"
+        tok.mask_token_id = 99
+        model = _CorrectAnswerModel()
+        # config fallback present but should be shadowed by the tokenizer value.
+        model.config = type("Cfg", (), {"mask_token_id": 7})()
+
+        from unturtle.eval.gsm8k import GSM8KEvaluator
+
+        evaluator = GSM8KEvaluator(
+            model=model, tokenizer=tok, num_steps=4, max_new_tokens=8
+        )
+        assert evaluator.mask_token_id == 99
+
+        dataset = [{"question": "What is 1 + 1?", "answer": "#### 2"}]
+        monkeypatch.setattr(
+            evaluator, "_load_dataset", lambda split, seed, num_examples: dataset
+        )
+        evaluator.evaluate()
+        assert model.last_mask_token_id == 99
+
+    def test_mask_token_id_falls_back_to_model_config(self, monkeypatch):
+        tok = _StubTokenizer()
+        tok._answer = r"\boxed{2}"
+        tok.mask_token_id = None  # tokenizer cannot supply it
+        model = _CorrectAnswerModel()
+        model.config = type("Cfg", (), {"mask_token_id": 7})()
+
+        from unturtle.eval.gsm8k import GSM8KEvaluator
+
+        evaluator = GSM8KEvaluator(
+            model=model, tokenizer=tok, num_steps=4, max_new_tokens=8
+        )
+        assert evaluator.mask_token_id == 7
+
+        dataset = [{"question": "What is 1 + 1?", "answer": "#### 2"}]
+        monkeypatch.setattr(
+            evaluator, "_load_dataset", lambda split, seed, num_examples: dataset
+        )
+        evaluator.evaluate()
+        assert model.last_mask_token_id == 7
+
+
+def test_gsm8k_evaluator_docstring_marks_it_as_dllm_only() -> None:
+    assert "dllm-only" in (GSM8KEvaluator.__doc__ or "").lower()
