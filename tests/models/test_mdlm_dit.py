@@ -172,3 +172,65 @@ class TestMDLMDiTAttention:
         with torch.no_grad():
             out = model(input_ids=input_ids, attention_mask=m4d).logits
         assert out.shape == (1, 8, tiny_config.vocab_size)
+
+
+class TestMDLMDiTGeneration:
+    TINY_MASK_ID = 511
+
+    @pytest.fixture
+    def model(self, tiny_config):
+        from unturtle.models.backbones.mdlm_dit import MDLMDiTForMaskedDiffusionLM
+
+        return MDLMDiTForMaskedDiffusionLM(tiny_config).eval()
+
+    def test_is_generation_mixin(self, model):
+        from unturtle.models.generation.diffusion_generation_utils import (
+            MaskedDiffusionGenerationMixin,
+        )
+
+        assert isinstance(model, MaskedDiffusionGenerationMixin)
+        assert callable(model.generate)
+
+    def test_resolve_algorithm_auto_is_mdlm(self, model):
+        from unturtle.models.generation.sampler import resolve_algorithm
+
+        assert resolve_algorithm("auto", model, bd3lm_requested=False) == "mdlm"
+
+    def test_block_decode_not_supported(self, model):
+        from unturtle.models.generation.sampler import _supports_block_decode
+
+        assert _supports_block_decode(model) is False
+
+    def test_generate_output_shape(self, model):
+        B, L = 2, 10
+        input_ids = torch.full((B, L), self.TINY_MASK_ID, dtype=torch.long)
+        with torch.no_grad():
+            out = model.generate(
+                input_ids, steps=2, mask_token_id=self.TINY_MASK_ID, max_length=L + 1
+            )
+        seq = out.sequences if hasattr(out, "sequences") else out
+        assert seq.shape == (B, L + 1)
+
+    def test_generate_deterministic_with_seed(self, model):
+        B, L = 1, 8
+        input_ids = torch.full((B, L), self.TINY_MASK_ID, dtype=torch.long)
+        with torch.no_grad():
+            torch.manual_seed(0)
+            o1 = model.generate(
+                input_ids.clone(),
+                steps=2,
+                mask_token_id=self.TINY_MASK_ID,
+                temperature=0.0,
+                max_length=L + 1,
+            )
+            torch.manual_seed(0)
+            o2 = model.generate(
+                input_ids.clone(),
+                steps=2,
+                mask_token_id=self.TINY_MASK_ID,
+                temperature=0.0,
+                max_length=L + 1,
+            )
+        s1 = o1.sequences if hasattr(o1, "sequences") else o1
+        s2 = o2.sequences if hasattr(o2, "sequences") else o2
+        assert (s1 == s2).all()
