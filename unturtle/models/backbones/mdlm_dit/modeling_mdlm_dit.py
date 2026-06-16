@@ -106,6 +106,13 @@ class EmbeddingLayer(nn.Module):
         self.embedding = nn.Parameter(torch.empty((vocab_dim, dim)))
         nn.init.kaiming_uniform_(self.embedding, a=math.sqrt(5))
 
+    @property
+    def weight(self) -> torch.Tensor:
+        # Expose the embedding table as `.weight` for HF compatibility
+        # (get_input_embeddings().weight). The persisted parameter is still
+        # named `embedding`, so state_dict keys are unchanged.
+        return self.embedding
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.embedding[x]
 
@@ -321,6 +328,22 @@ class MDLMDiTForMaskedDiffusionLM(
         super().__init__(config)
         self.model = MDLMDiTModel(config)
         self.post_init()
+
+    def get_input_embeddings(self) -> nn.Module:
+        return self.model.vocab_embed
+
+    def set_input_embeddings(self, value: nn.Module) -> None:
+        self.model.vocab_embed = value
+
+    def get_output_embeddings(self) -> nn.Module:
+        # The final logit projection is the natural output embedding. unsloth's
+        # SFTTrainer init (fix_untrained_tokens) unconditionally reads
+        # get_output_embeddings().weight, so this must not return None. Weights are
+        # untied (tie_word_embeddings=False), so tie_weights() short-circuits.
+        return self.model.output_layer.linear
+
+    def set_output_embeddings(self, value: nn.Module) -> None:
+        self.model.output_layer.linear = value
 
     def forward(
         self,
