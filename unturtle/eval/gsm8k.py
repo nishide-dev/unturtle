@@ -46,6 +46,10 @@ def _extract_gold_answer(answer_text: str) -> float | None:
 class GSM8KEvaluator(BaseEvaluator):
     """Smoke-only GSM8K evaluator for masked-diffusion models.
 
+    dLLM-only by design: it pins ``algorithm="mdlm"`` and forwards a
+    masked-diffusion ``mask_token_id``, so it cannot drive non-masked
+    backbones (e.g. DiffusionGemma block-AR).
+
     This evaluator is kept for fast local sanity checks and benchmark-harness
     debugging. It is not the authoritative formal benchmark path for Unturtle.
 
@@ -79,6 +83,15 @@ class GSM8KEvaluator(BaseEvaluator):
         self.temperature = temperature
         self.system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
         self.metric_key_prefix = metric_key_prefix
+        # Two-stage lookup mirroring unturtle/eval/harness/model_adapter.py:
+        # tokenizer first, then the model config (real checkpoints may carry
+        # mask_token_id only on model.config, not the tokenizer).
+        mask_token_id = getattr(tokenizer, "mask_token_id", None)
+        if mask_token_id is None:
+            mask_token_id = getattr(
+                getattr(model, "config", None), "mask_token_id", None
+            )
+        self.mask_token_id = mask_token_id
 
     def _build_prompt(self, question: str) -> str:
         messages = [
@@ -102,6 +115,7 @@ class GSM8KEvaluator(BaseEvaluator):
             input_ids,
             algorithm="mdlm",
             max_length=max_length,
+            mask_token_id=self.mask_token_id,
             steps=self.num_steps,
             temperature=self.temperature,
         )
