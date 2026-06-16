@@ -378,10 +378,7 @@ class TestMDLMDiTTrainerE2E:
             use_cpu=True,
             bf16=False,
             fp16=False,
-            # MDLM-DiT declares supports_gradient_checkpointing = False (no KV cache /
-            # checkpointing machinery); the HF Trainer default would otherwise call
-            # gradient_checkpointing_enable() and raise.
-            gradient_checkpointing=False,
+            gradient_checkpointing=True,  # unsloth default; MDLM-DiT now supports GC (#35)
             dataloader_drop_last=True,
             remove_unused_columns=False,
             report_to="none",
@@ -396,6 +393,8 @@ class TestMDLMDiTTrainerE2E:
         result = trainer.train()
         assert result.training_loss is not None
         assert torch.isfinite(torch.tensor(result.training_loss))
+        # GC was active during training (the default path that previously raised).
+        assert model.model.gradient_checkpointing is True
 
 
 class TestMDLMDiTRegistration:
@@ -461,3 +460,68 @@ class TestMDLMDiTTrainingSmoke:
         assert torch.isfinite(loss)
         loss.backward()
         assert any(p.grad is not None for p in model.parameters())
+
+
+class TestMDLMDiTGradientCheckpointing:
+    def test_supports_gradient_checkpointing(self):
+        from unturtle.models.backbones.mdlm_dit import MDLMDiTForMaskedDiffusionLM
+
+        assert MDLMDiTForMaskedDiffusionLM.supports_gradient_checkpointing is True
+
+    def test_gradient_checkpointing_enable_propagates(self, tiny_config):
+        """Standard gradient_checkpointing_enable() must reach the inner MDLMDiTModel."""
+        from unturtle.models.backbones.mdlm_dit import MDLMDiTForMaskedDiffusionLM
+
+        model = MDLMDiTForMaskedDiffusionLM(tiny_config)
+        assert model.model.gradient_checkpointing is False
+        model.gradient_checkpointing_enable()
+        assert model.model.gradient_checkpointing is True
+        assert callable(getattr(model.model, "_gradient_checkpointing_func", None))
+
+    def test_gradient_checkpointing_disable(self, tiny_config):
+        from unturtle.models.backbones.mdlm_dit import MDLMDiTForMaskedDiffusionLM
+
+        model = MDLMDiTForMaskedDiffusionLM(tiny_config)
+        model.gradient_checkpointing_enable()
+        assert model.model.gradient_checkpointing is True
+        model.gradient_checkpointing_disable()
+        assert model.model.gradient_checkpointing is False
+
+    def test_gradient_checkpointing_forward_backward(self, tiny_config):
+        """With GC enabled + train(), forward/backward runs with finite grads."""
+        from unturtle.models.backbones.mdlm_dit import MDLMDiTForMaskedDiffusionLM
+
+        torch.manual_seed(0)
+        model = MDLMDiTForMaskedDiffusionLM(tiny_config)
+        model.gradient_checkpointing_enable()
+        model.train()
+        input_ids = torch.randint(0, tiny_config.vocab_size, (2, 8))
+        out = model(input_ids=input_ids)
+        loss = out.logits.float().log_softmax(-1).mean().neg()
+        assert torch.isfinite(loss)
+        loss.backward()
+        grads = [p.grad for p in model.parameters() if p.grad is not None]
+        assert len(grads) > 0
+        assert all(torch.isfinite(g).all() for g in grads)
+
+    def test_gc_output_matches_non_gc(self, tiny_config):
+        """Checkpointing is numerically transparent: same input+weights -> same output.
+
+        Compared in train() mode (GC only activates under self.training) with dropout=0
+        (tiny_config sets dropout=0.0), so the forward is deterministic.
+        """
+        from unturtle.models.backbones.mdlm_dit import MDLMDiTForMaskedDiffusionLM
+
+        torch.manual_seed(0)
+        model = MDLMDiTForMaskedDiffusionLM(tiny_config)
+        model.train()
+        input_ids = torch.randint(0, tiny_config.vocab_size, (2, 8))
+
+        with torch.no_grad():
+            ref = model(input_ids=input_ids).logits
+
+        model.gradient_checkpointing_enable()
+        with torch.no_grad():
+            got = model(input_ids=input_ids).logits
+
+        assert torch.allclose(ref, got, atol=1e-5)

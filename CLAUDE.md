@@ -48,7 +48,7 @@ A concrete dLLM is a point in three independent axes. Place new code on the righ
   DiffusionGemma wraps the upstream `transformers` implementation — self-conditioned canvas
   block diffusion, NOT masked diffusion (no mask token). MDLM-DiT is a native, time-agnostic
   adaLN-Zero Diffusion Transformer baseline (kuleshov-group/mdlm DiT) trained via
-  `DiffusionTrainer`'s SUBS objective.
+  `DiffusionTrainer`'s SUBS objective. It supports transformers-standard gradient checkpointing.
 - **Conversion method** (`unturtle.models.conversion`): how a non-diffusion backbone
   becomes a dLLM — a *method*, not a model. `a2d` is the AR→Diffusion family; the
   implemented recipe is **Tiny-A2D** (`unturtle.models.conversion.a2d.tiny_a2d`, classes
