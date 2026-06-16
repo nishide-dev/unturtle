@@ -291,7 +291,9 @@ def _normalize_attention_mask(
     if keep.all():
         return None
     bias = torch.zeros_like(keep, dtype=dtype)
-    bias = bias.masked_fill(~keep, float("-inf"))
+    # Use finfo.min, not -inf: SDPA can emit NaNs on fully-masked query rows
+    # with -inf (see unturtle/models/backbones/llada/modeling_llada.py NOTE).
+    bias = bias.masked_fill(~keep, torch.finfo(dtype).min)
     return bias
 
 
