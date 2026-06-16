@@ -40,6 +40,7 @@ conversion *method*, not a peer architecture, so they are not re-exported here.
 from .diffusion_gemma import UnturtleDiffusionGemmaForBlockDiffusion
 from .dream import DreamConfig, DreamModel
 from .llada import LLaDAConfig, LLaDAModel, LLaDAModelLM
+from .mdlm_dit import MDLMDiTConfig, MDLMDiTForMaskedDiffusionLM, MDLMDiTModel
 from .modernbert import (
     DiffusionModernBertConfig,
     DiffusionModernBertForMaskedLM,
@@ -53,6 +54,9 @@ __all__ = [
     "LLaDAConfig",
     "LLaDAModel",
     "LLaDAModelLM",
+    "MDLMDiTConfig",
+    "MDLMDiTForMaskedDiffusionLM",
+    "MDLMDiTModel",
     "DiffusionModernBertConfig",
     "DiffusionModernBertModel",
     "DiffusionModernBertForMaskedLM",
