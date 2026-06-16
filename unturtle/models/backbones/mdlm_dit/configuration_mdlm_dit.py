@@ -22,9 +22,11 @@ from transformers import PretrainedConfig
 class MDLMDiTConfig(PretrainedConfig):
     """Config for the MDLM-DiT native diffusion backbone.
 
-    Time-agnostic adaLN-Zero Diffusion Transformer (kuleshov-group/mdlm DiT,
-    ``time_conditioning=False`` equivalent). Field names are HF-standard so no
-    ``@property`` mapping is needed.
+    Time-agnostic adaLN-Zero Diffusion Transformer (kuleshov-group/mdlm DiT). Unturtle
+    drops the sigma path entirely and conditions on a single learnable constant vector;
+    this is functionally (not structurally) equivalent to kuleshov's
+    ``time_conditioning=False``, which zeroes sigma but still runs ``TimestepEmbedder``.
+    Field names are HF-standard so no ``@property`` mapping is needed.
     """
 
     model_type = "mdlm-dit"

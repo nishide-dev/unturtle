@@ -12,13 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Time-agnostic MDLM-DiT modeling (kuleshov-group/mdlm DiT, ``time_conditioning=False``).
+"""Time-agnostic MDLM-DiT modeling (kuleshov-group/mdlm DiT, time-agnostic variant).
 
-The kuleshov ``forward(indices, sigma)`` adaLN conditioning on ``sigma`` is replaced
-by a single learnable constant conditioning vector — the model is time-agnostic and
-matches the Unturtle backbone contract ``forward(input_ids, attention_mask)``. The
-adaLN-Zero modulation machinery (shift/scale/gate, zero-initialized) is retained.
-Attention is bidirectional (``is_causal=False``). No global jit fusion flags are set.
+The kuleshov ``forward(indices, sigma)`` adaLN conditioning on ``sigma`` is dropped
+entirely: Unturtle replaces the sigma path with a single learnable constant
+conditioning vector, so the model matches the backbone contract
+``forward(input_ids, attention_mask)``. This is Unturtle's own simplification — it is
+*functionally* (not structurally) equivalent to kuleshov's ``time_conditioning=False``,
+which zeroes sigma but still runs it through ``TimestepEmbedder``; both collapse to a
+per-forward constant ``c``. The adaLN-Zero modulation machinery (shift/scale/gate,
+zero-initialized) is retained. Attention is bidirectional (``is_causal=False``). No
+global jit fusion flags are set.
 """
 
 from __future__ import annotations
@@ -226,8 +230,11 @@ class DDitFinalLayer(nn.Module):
 class MDLMDiTModel(nn.Module):
     """Time-agnostic adaLN-Zero DiT trunk.
 
-    The kuleshov ``TimestepEmbedder(sigma)`` is replaced by a single learnable
-    constant conditioning vector (``time_conditioning=False`` equivalent).
+    Unturtle drops the kuleshov sigma path entirely: rather than feeding a zeroed
+    sigma through ``TimestepEmbedder`` (what kuleshov's ``time_conditioning=False``
+    does — it zeroes sigma but still runs the MLP), the whole conditioning is a single
+    learnable constant vector ``cond``. Both yield a per-forward constant ``c``, so the
+    model is functionally time-agnostic.
     """
 
     def __init__(self, config: MDLMDiTConfig) -> None:

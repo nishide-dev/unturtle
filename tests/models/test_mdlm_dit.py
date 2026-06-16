@@ -173,6 +173,20 @@ class TestMDLMDiTAttention:
             out = model(input_ids=input_ids, attention_mask=m4d).logits
         assert out.shape == (1, 8, tiny_config.vocab_size)
 
+    def test_fully_masked_query_row_is_finite(self, tiny_config):
+        """A fully-masked query row must not produce NaNs (finfo.min, not -inf)."""
+        from unturtle.models.backbones.mdlm_dit import MDLMDiTForMaskedDiffusionLM
+
+        model = MDLMDiTForMaskedDiffusionLM(tiny_config).cpu().eval()
+        _activate_adaln(model)
+        input_ids = torch.randint(0, tiny_config.vocab_size, (1, 8))
+        # A 4-D keep-mask where the LAST query row attends to NOTHING.
+        keep = torch.ones(1, 1, 8, 8, dtype=torch.bool)
+        keep[0, 0, -1, :] = False  # query position 7 sees no keys
+        with torch.no_grad():
+            out = model(input_ids=input_ids, attention_mask=keep).logits
+        assert torch.isfinite(out).all()
+
 
 class TestMDLMDiTGeneration:
     TINY_MASK_ID = 511
@@ -200,6 +214,31 @@ class TestMDLMDiTGeneration:
         from unturtle.models.generation.sampler import _supports_block_decode
 
         assert _supports_block_decode(model) is False
+
+    def test_block_decode_flag_is_load_bearing(self, model):
+        """`supports_block_decode = False` must keep block-decode off even if a
+        future KV-cache hook (`_model_forward_with_cache`) is added.
+
+        Without this, the opt-out passes vacuously (the model simply lacks the
+        hook today), so a later regression that adds the hook would silently
+        switch `auto` to the block_decode path.
+        """
+        from unturtle.models.generation.sampler import (
+            _supports_block_decode,
+            resolve_algorithm,
+        )
+
+        # Declared contract: the class attribute is explicitly False.
+        assert model.supports_block_decode is False
+
+        # Simulate a future KV-cache forward being added to this instance.
+        model._model_forward_with_cache = lambda *a, **k: None
+        try:
+            # The flag must still veto block-decode and keep auto -> mdlm.
+            assert _supports_block_decode(model) is False
+            assert resolve_algorithm("auto", model, bd3lm_requested=False) == "mdlm"
+        finally:
+            del model._model_forward_with_cache
 
     def test_generate_output_shape(self, model):
         B, L = 2, 10
