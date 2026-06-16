@@ -234,3 +234,36 @@ class TestMDLMDiTGeneration:
         s1 = o1.sequences if hasattr(o1, "sequences") else o1
         s2 = o2.sequences if hasattr(o2, "sequences") else o2
         assert (s1 == s2).all()
+
+
+class TestMDLMDiTRegistration:
+    def test_reexported_from_backbones(self):
+        from unturtle.models.backbones import (
+            MDLMDiTConfig,
+            MDLMDiTForMaskedDiffusionLM,
+        )
+
+        assert MDLMDiTConfig.model_type == "mdlm-dit"
+        assert MDLMDiTForMaskedDiffusionLM is not None
+
+    def test_registered_in_native_classes(self):
+        from unturtle.fast_diffusion_model import _native_model_classes
+
+        classes = _native_model_classes()
+        assert "mdlm-dit" in classes
+        from unturtle.models.backbones.mdlm_dit import MDLMDiTForMaskedDiffusionLM
+
+        assert classes["mdlm-dit"] is MDLMDiTForMaskedDiffusionLM
+
+    def test_save_reload_forward_parity(self, tiny_config, tmp_path):
+        from unturtle.models.backbones.mdlm_dit import MDLMDiTForMaskedDiffusionLM
+
+        model = MDLMDiTForMaskedDiffusionLM(tiny_config).cpu().eval()
+        input_ids = torch.randint(0, tiny_config.vocab_size, (1, 8))
+        with torch.no_grad():
+            ref = model(input_ids=input_ids).logits
+        model.save_pretrained(tmp_path)
+        reloaded = MDLMDiTForMaskedDiffusionLM.from_pretrained(tmp_path).cpu().eval()
+        with torch.no_grad():
+            got = reloaded(input_ids=input_ids).logits
+        assert torch.allclose(ref, got, atol=1e-5)

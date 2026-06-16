@@ -663,6 +663,12 @@ def _native_model_classes() -> dict[str, Any]:
     except ImportError:
         pass
     try:
+        from unturtle.models.backbones.mdlm_dit import MDLMDiTForMaskedDiffusionLM
+
+        classes["mdlm-dit"] = MDLMDiTForMaskedDiffusionLM
+    except ImportError:
+        pass
+    try:
         from unturtle.models.backbones.dream import DreamModel
 
         classes["dream"] = DreamModel
