@@ -275,6 +275,129 @@ class TestMDLMDiTGeneration:
         assert (s1 == s2).all()
 
 
+class TestMDLMDiTEmbeddings:
+    def test_get_input_embeddings_has_weight(self, tiny_config):
+        from unturtle.models.backbones.mdlm_dit import MDLMDiTForMaskedDiffusionLM
+
+        model = MDLMDiTForMaskedDiffusionLM(tiny_config)
+        emb = model.get_input_embeddings()
+        assert emb is not None
+        # HF trainer init reads get_input_embeddings().weight.dtype
+        assert emb.weight.dtype == next(model.parameters()).dtype
+        assert emb.weight.shape == (tiny_config.vocab_size, tiny_config.hidden_size)
+
+    def test_set_input_embeddings_replaces(self, tiny_config):
+        import torch.nn as nn
+
+        from unturtle.models.backbones.mdlm_dit import MDLMDiTForMaskedDiffusionLM
+
+        model = MDLMDiTForMaskedDiffusionLM(tiny_config)
+        new = nn.Embedding(tiny_config.vocab_size, tiny_config.hidden_size)
+        model.set_input_embeddings(new)
+        assert model.get_input_embeddings() is new
+
+    def test_state_dict_key_unchanged(self, tiny_config):
+        from unturtle.models.backbones.mdlm_dit import MDLMDiTForMaskedDiffusionLM
+
+        model = MDLMDiTForMaskedDiffusionLM(tiny_config)
+        # The persisted key must remain `model.vocab_embed.embedding`
+        # (adding a `weight` property must NOT introduce a new persisted key).
+        keys = set(model.state_dict().keys())
+        assert "model.vocab_embed.embedding" in keys
+        assert "model.vocab_embed.weight" not in keys
+
+
+class TestMDLMDiTTrainerE2E:
+    def test_diffusion_trainer_runs(self, tmp_path):
+        """Real DiffusionTrainer.train() must run end-to-end (regression for #33).
+
+        This is the path the unit tests missed: TRL/unsloth SFTTrainer init calls
+        model.get_input_embeddings().weight.dtype.
+        """
+        from tokenizers import Tokenizer, models, normalizers, pre_tokenizers
+        from transformers import PreTrainedTokenizerFast
+
+        from unturtle.diffusion import (
+            DiffusionTrainer,
+            DiffusionTrainingArguments,
+            MaskedDiffusionDataCollator,
+        )
+        from unturtle.models.backbones.mdlm_dit import (
+            MDLMDiTConfig,
+            MDLMDiTForMaskedDiffusionLM,
+        )
+
+        raw = Tokenizer(models.BPE(unk_token="[UNK]"))
+        raw.normalizer = normalizers.Lowercase()
+        raw.pre_tokenizer = pre_tokenizers.Whitespace()
+        tok = PreTrainedTokenizerFast(
+            tokenizer_object=raw,
+            unk_token="[UNK]",
+            mask_token="[MASK]",
+            pad_token="[PAD]",
+        )
+        tok.add_special_tokens(
+            {"unk_token": "[UNK]", "mask_token": "[MASK]", "pad_token": "[PAD]"}
+        )
+        tok.name_or_path = "local"
+        mask_token_id = tok.mask_token_id or 1
+
+        cfg = MDLMDiTConfig(
+            vocab_size=256,
+            hidden_size=64,
+            cond_dim=32,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            dropout=0.0,
+            max_position_embeddings=64,
+            mask_token_id=mask_token_id,
+            pad_token_id=tok.pad_token_id or 0,
+        )
+        assert mask_token_id < cfg.vocab_size
+        model = MDLMDiTForMaskedDiffusionLM(cfg).train()
+
+        L = 16
+        dataset = [
+            {
+                "input_ids": torch.randint(2, cfg.vocab_size, (L,)).tolist(),
+                "labels": torch.randint(2, cfg.vocab_size, (L,)).tolist(),
+                "attention_mask": [1] * L,
+            }
+            for _ in range(8)
+        ]
+        collator = MaskedDiffusionDataCollator(
+            tokenizer=tok, mask_token_id=mask_token_id, completion_only=False
+        )
+        args = DiffusionTrainingArguments(
+            output_dir=str(tmp_path / "ckpt"),
+            num_train_epochs=1,
+            max_steps=3,
+            per_device_train_batch_size=2,
+            logging_steps=1,
+            save_steps=100,
+            use_cpu=True,
+            bf16=False,
+            fp16=False,
+            # MDLM-DiT declares supports_gradient_checkpointing = False (no KV cache /
+            # checkpointing machinery); the HF Trainer default would otherwise call
+            # gradient_checkpointing_enable() and raise.
+            gradient_checkpointing=False,
+            dataloader_drop_last=True,
+            remove_unused_columns=False,
+            report_to="none",
+        )
+        trainer = DiffusionTrainer(
+            model=model,
+            args=args,
+            train_dataset=dataset,
+            data_collator=collator,
+            processing_class=tok,
+        )
+        result = trainer.train()
+        assert result.training_loss is not None
+        assert torch.isfinite(torch.tensor(result.training_loss))
+
+
 class TestMDLMDiTRegistration:
     def test_reexported_from_backbones(self):
         from unturtle.models.backbones import (
