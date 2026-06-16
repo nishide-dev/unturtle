@@ -42,11 +42,13 @@ unturtle       dLLM method layer: conversion, objective trainers, inference acce
 
 A concrete dLLM is a point in three independent axes. Place new code on the right axis:
 
-- **Backbone architecture** (`unturtle.models.backbones.{llada,dream,modernbert,diffusion_gemma}`):
+- **Backbone architecture** (`unturtle.models.backbones.{llada,dream,modernbert,diffusion_gemma,mdlm_dit}`):
   native diffusion backbones Unturtle implements. LLaDA/Dream are full from-scratch
   implementations; ModernBERT-diffusion wraps the upstream bidirectional encoder;
   DiffusionGemma wraps the upstream `transformers` implementation — self-conditioned canvas
-  block diffusion, NOT masked diffusion (no mask token).
+  block diffusion, NOT masked diffusion (no mask token). MDLM-DiT is a native, time-agnostic
+  adaLN-Zero Diffusion Transformer baseline (kuleshov-group/mdlm DiT) trained via
+  `DiffusionTrainer`'s SUBS objective.
 - **Conversion method** (`unturtle.models.conversion`): how a non-diffusion backbone
   becomes a dLLM — a *method*, not a model. `a2d` is the AR→Diffusion family; the
   implemented recipe is **Tiny-A2D** (`unturtle.models.conversion.a2d.tiny_a2d`, classes
@@ -68,7 +70,7 @@ See `docs/dllm-gap-map.md` for the implemented-vs-missing method map and the roa
 │   ├── diffusion/          # trainer, collator, scheduler, GRPO
 │   ├── kernels/            # Triton kernels / fast LoRA
 │   ├── models/
-│   │   ├── backbones/      # native diffusion backbones: llada / dream / modernbert / diffusion_gemma
+│   │   ├── backbones/      # native diffusion backbones: llada / dream / modernbert / diffusion_gemma / mdlm_dit
 │   │   ├── conversion/     # methods: a2d/ (family) → tiny_a2d/ (recipe)
 │   │   └── generation/     # shared infra: cache / block-decode / generation mixins
 │   ├── eval/               # smoke evaluators + lm-evaluation-harness adapter

@@ -36,6 +36,7 @@ unimportant, but not this library's job.
 | AR→Diffusion conversion | A2D family; Tiny-A2D recipe (DiffuLLaMA / TESS-2 / SDAR family) | ✅ | `unturtle/models/conversion/a2d/tiny_a2d/` | core | maintain |
 | Encoder backbones | ModernBERT-chat | ✅ | `unturtle/models/backbones/modernbert/` | medium | maintain |
 | Block-AR diffusion backbone | **DiffusionGemma** (Google, 26B-A4B MoE, block-AR diffusion; `transformers` `models/diffusion_gemma` wrapper) | ✅ (#25) | `unturtle/models/backbones/diffusion_gemma/` | high | maintain |
+| MDLM DiT backbone | **MDLM-DiT** (kuleshov-group/mdlm DiT; adaLN-Zero, time-agnostic native baseline) | ✅ (#31) | `unturtle/models/backbones/mdlm_dit/` | medium | maintain |
 | Tri-mode AR+diffusion backbone | **Nemotron-Labs-Diffusion** (NVIDIA 3B/8B/14B, AR + diffusion + self-spec; HF weights public) | ❌ (candidate) | — | medium | evaluate |
 | Evaluation discipline | lm-eval-harness, hyperparam sensitivity | ✅ | `unturtle/eval/harness/` | high | maintain |
 | High-level generation entry | `FastDiffusionModel.generate(algorithm=…)` | ✅ | `unturtle/models/generation/sampler.py` + `fast_diffusion_model.py` | high | maintain |
@@ -60,6 +61,10 @@ unimportant, but not this library's job.
   algorithm registry (PR #300).
 - DiffusionGemma backbone wrapper + `block_ar` algorithm (self-conditioned canvas block
   diffusion; no mask token) + `("diffusion_gemma","gsm8k")` DecodingConfig entry (#25).
+- MDLM-DiT native diffusion backbone — time-agnostic adaLN-Zero Diffusion
+  Transformer (kuleshov-group/mdlm DiT, `time_conditioning=False` equivalent),
+  rides the existing `mdlm` algorithm; native re-implementation baseline, not
+  weight-compatible with published checkpoints (#31).
 
 ### First roadmap after the clean migration
 
