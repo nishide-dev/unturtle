@@ -378,10 +378,7 @@ class TestMDLMDiTTrainerE2E:
             use_cpu=True,
             bf16=False,
             fp16=False,
-            # MDLM-DiT declares supports_gradient_checkpointing = False (no KV cache /
-            # checkpointing machinery); the HF Trainer default would otherwise call
-            # gradient_checkpointing_enable() and raise.
-            gradient_checkpointing=False,
+            gradient_checkpointing=True,  # unsloth default; MDLM-DiT now supports GC (#35)
             dataloader_drop_last=True,
             remove_unused_columns=False,
             report_to="none",
@@ -396,6 +393,8 @@ class TestMDLMDiTTrainerE2E:
         result = trainer.train()
         assert result.training_loss is not None
         assert torch.isfinite(torch.tensor(result.training_loss))
+        # GC was active during training (the default path that previously raised).
+        assert model.model.gradient_checkpointing is True
 
 
 class TestMDLMDiTRegistration:
