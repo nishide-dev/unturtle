@@ -554,6 +554,213 @@ def test_diffu_prepare_inputs_buffers_microbatches_and_regenerates_rollouts():
     assert tr._diffu_mask_seeds == [201, 202]
 
 
+def _make_buffering_trainer(steps_per_generation: int, num_iterations: int):
+    """Bare trainer wired for ``_prepare_inputs`` + ``compute_loss`` buffering tests."""
+    from unturtle.diffusion.grpo_trainer import DiffuGRPOTrainer
+
+    tr = DiffuGRPOTrainer.__new__(DiffuGRPOTrainer)
+    m = nn.Module()
+    m.train()
+    tr.model = m
+    tr._step = 0
+    tr._buffered_inputs = None
+    tr.args = SimpleNamespace(
+        steps_per_generation=steps_per_generation,
+        num_iterations=num_iterations,
+        diffu_policy_objective="grpo",
+    )
+    tr.num_iterations = num_iterations
+    tr.num_generations = 2
+    tr.beta = 0.0
+    tr.control = SimpleNamespace(should_evaluate=False)
+    tr.accelerator = SimpleNamespace(gather_for_metrics=lambda x: x)
+    tr._metrics = {"train": {"kl": [], "clip_ratio": []}}
+    tr._diffu_mask_seeds = []
+    return tr
+
+
+def test_prepare_inputs_slices_cached_logps_along_batch_dim_and_compute_loss_runs():
+    """Bug regression: ``old/ref_per_token_logps`` are ``[num_iterations, B_gen, Lc]``.
+
+    ``split_tensor_dict`` slices dim 0 (the iterations dim for these tensors), so
+    ``_prepare_inputs`` must instead attach the dim-1 (batch) slice per micro-batch.
+    Also checks ``compute_loss`` consumes each micro-batch with the correct GRPO
+    iteration index (one advance per full pass over the buffer, not per micro-batch)
+    and threads the buffer row window into ``_get_per_token_logps``.
+    """
+    pytest.importorskip("trl")
+    from unturtle.diffusion.grpo_trainer import DiffuGRPOTrainer
+
+    S, num_iterations, B_gen, Lc = 2, 2, 4, 4
+    cs = B_gen // S  # micro-batch size
+
+    # Distinctive per-(iteration, row) values so slices are checkable.
+    full_old = (
+        torch.arange(num_iterations * B_gen * Lc, dtype=torch.float32).view(
+            num_iterations, B_gen, Lc
+        )
+        * 1e-3
+    )
+    full_ref = full_old + 100.0
+
+    rollout_calls = 0
+
+    def fake_generate_and_score(_inputs: object) -> dict:
+        nonlocal rollout_calls
+        rollout_calls += 1
+        tr._diffu_mask_seeds = [11, 22]
+        return {
+            "prompt_ids": torch.zeros(B_gen, 4, dtype=torch.long),
+            "prompt_mask": torch.ones(B_gen, 4, dtype=torch.long),
+            "completion_ids": torch.zeros(B_gen, Lc, dtype=torch.long),
+            "completion_mask": torch.ones(B_gen, Lc, dtype=torch.long),
+            "old_per_token_logps": full_old.clone(),
+            "ref_per_token_logps": full_ref.clone(),
+            "advantages": torch.zeros(B_gen),
+        }
+
+    tr = _make_buffering_trainer(S, num_iterations)
+    tr._generate_and_score_completions = fake_generate_and_score  # type: ignore[method-assign]
+
+    logps_calls: list[dict] = []
+
+    def spy_get_per_token_logps(
+        _model,
+        input_ids,
+        logits_to_keep,
+        mask_seeds,
+        buffer_total_rows=None,
+        buffer_row_offset=0,
+    ):
+        logps_calls.append(
+            {
+                "seeds": list(mask_seeds),
+                "total_rows": buffer_total_rows,
+                "row_offset": buffer_row_offset,
+            }
+        )
+        n_it, b, _l = input_ids.shape
+        return torch.zeros(n_it, b, logits_to_keep)
+
+    tr._get_per_token_logps = spy_get_per_token_logps  # type: ignore[method-assign]
+
+    # One full generate_every cycle = S * num_iterations micro-steps.
+    for t in range(S * num_iterations):
+        inputs = DiffuGRPOTrainer._prepare_inputs(tr, {})
+        micro_idx = t % S
+        expected_itr = t // S
+
+        # Cached log-probs: iterations preserved on dim 0, batch sliced on dim 1.
+        for key, full in (
+            ("old_per_token_logps", full_old),
+            ("ref_per_token_logps", full_ref),
+        ):
+            got = inputs[key]
+            assert got.shape == (num_iterations, cs, Lc), key
+            assert torch.equal(got, full[:, micro_idx * cs : (micro_idx + 1) * cs]), key
+
+        # Buffer row window for train-time mask reproduction.
+        assert inputs["buffer_total_rows"] == B_gen
+        assert inputs["buffer_row_offset"] == micro_idx * cs
+
+        loss = DiffuGRPOTrainer.compute_loss(tr, tr.model, inputs)
+        assert torch.isfinite(loss)
+
+        # compute_loss must use the seed of the current GRPO iteration
+        # (advancing once per full pass over the buffer) and pass the window.
+        call = logps_calls[-1]
+        assert call["seeds"] == [tr._diffu_mask_seeds[expected_itr]], f"micro-step {t}"
+        assert call["total_rows"] == B_gen
+        assert call["row_offset"] == micro_idx * cs
+
+    assert rollout_calls == 1
+    assert len(logps_calls) == S * num_iterations
+
+
+def test_prepare_inputs_keeps_empty_cached_logps_lists():
+    """``old/ref_per_token_logps`` are ``[]`` when unused — chunks must keep them ``[]``."""
+    pytest.importorskip("trl")
+    from unturtle.diffusion.grpo_trainer import DiffuGRPOTrainer
+
+    def fake_generate_and_score(_inputs: object) -> dict:
+        tr._diffu_mask_seeds = [7]
+        return {
+            "prompt_ids": torch.zeros(4, 4, dtype=torch.long),
+            "completion_ids": torch.zeros(4, 4, dtype=torch.long),
+            "completion_mask": torch.ones(4, 4, dtype=torch.long),
+            "old_per_token_logps": [],
+            "ref_per_token_logps": [],
+            "advantages": torch.zeros(4),
+        }
+
+    tr = _make_buffering_trainer(steps_per_generation=2, num_iterations=1)
+    tr._generate_and_score_completions = fake_generate_and_score  # type: ignore[method-assign]
+
+    for _t in range(2):
+        inputs = DiffuGRPOTrainer._prepare_inputs(tr, {})
+        assert inputs["old_per_token_logps"] == []
+        assert inputs["ref_per_token_logps"] == []
+
+
+def test_forward_process_window_reproduces_rollout_mask():
+    """Windowed draw: rand((total_rows, L)) sliced at the row offset matches the
+    rows of the full-batch draw under the same seed (Bug: micro-batches after the
+    first were re-masked differently than their cached old/ref log-probs)."""
+    from unturtle.diffusion import DiffuGRPOConfig, DiffuGRPOTrainer
+
+    cfg = DiffuGRPOConfig(
+        output_dir="/tmp/t",
+        per_device_train_batch_size=1,
+        num_generations=2,
+        generation_batch_size=2,
+        p_mask_prompt=0.5,
+    )
+
+    class _Stub:
+        args = cfg
+
+    stub = _Stub()
+    L = 16
+    batch = torch.arange(1, 4 * L + 1).view(4, L)
+    prompt_index = torch.zeros(L, dtype=torch.bool)
+    prompt_index[:8] = True
+
+    # Rollout-time draw over the full [4, L] batch.
+    noisy_full, p_full = DiffuGRPOTrainer._forward_process(
+        stub, batch, prompt_index, mask_id=999, seed=42
+    )
+    # Train-time draw over the second micro-batch (rows 2:4) with the window.
+    noisy_win, p_win = DiffuGRPOTrainer._forward_process(
+        stub,
+        batch[2:4],
+        prompt_index,
+        mask_id=999,
+        seed=42,
+        total_rows=4,
+        row_offset=2,
+    )
+    assert torch.equal(noisy_win, noisy_full[2:4])
+    assert torch.equal(p_win, p_full[2:4])
+
+    # Without the window (legacy behavior) rows 0:2 of the full draw are
+    # reproduced instead — i.e. the wrong mask for rows 2:4.
+    noisy_plain, _ = DiffuGRPOTrainer._forward_process(
+        stub, batch[2:4], prompt_index, mask_id=999, seed=42
+    )
+    masked_pattern_plain = noisy_plain == 999
+    masked_pattern_rows01 = (noisy_full == 999)[0:2]
+    assert torch.equal(masked_pattern_plain, masked_pattern_rows01)
+
+    # S=1 bit-identity: total_rows == b, offset 0 must equal the plain draw.
+    noisy_a, _ = DiffuGRPOTrainer._forward_process(
+        stub, batch, prompt_index, mask_id=999, seed=42
+    )
+    noisy_b, _ = DiffuGRPOTrainer._forward_process(
+        stub, batch, prompt_index, mask_id=999, seed=42, total_rows=4, row_offset=0
+    )
+    assert torch.equal(noisy_a, noisy_b)
+
+
 def test_trl_split_tensor_dict_empty_second_chunk_for_iteration_sized_list():
     """TRL slices every sequence-like value by batch chunk — not ``num_iterations``.
 
