@@ -5,6 +5,11 @@
 #   ./install.sh           # core + huggingface extras
 #   ./install.sh --eval    # additionally install the lm-eval-harness extra
 #
+# Overrides:
+#   TORCH_INDEX=...        # torch wheel index (see Requirements below)
+#   PYTHON_VERSION=3.12    # interpreter for the venv
+#   (a user-level UV_PYTHON pin is ignored — this script manages its own venv)
+#
 # Requirements:
 #   - uv (https://docs.astral.sh/uv/)
 #   - NVIDIA GPU + driver. The torch CUDA build is selected via TORCH_INDEX.
@@ -62,8 +67,16 @@ echo "==> re-pinning transformers and the CUDA torch stack"
 # and upcoming models require transformers>=5.8.0 (unsloth/unsloth_zoo have no
 # runtime version enforcement, verified 2026-06-11), and torch must stay on the
 # TORCH_INDEX build — so re-pin both AFTER the editable install.
-uv pip install "transformers>=5.8.0"
-uv pip install --upgrade torch torchvision torchaudio xformers --index-url "${TORCH_INDEX}"
+uv pip install "transformers>=5.8.0,<6"
+# Re-pin the exact torch version the resolver settled on (it already satisfies
+# unsloth's constraints) instead of an open-ended --upgrade, which resolves only
+# the listed packages' requirements and can jump past unsloth's supported torch
+# range to a brand-new release on the index.
+TORCH_VER=$(.venv/bin/python -c "import torch; print(torch.__version__.split('+')[0])")
+uv pip install --upgrade "torch==${TORCH_VER}" torchvision torchaudio xformers --index-url "${TORCH_INDEX}"
+
+echo "==> checking dependency consistency"
+uv pip check || echo "warning: dependency conflicts reported above — review before relying on this env"
 
 echo "==> verifying installation"
 .venv/bin/python - <<'PY'
