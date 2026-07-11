@@ -7,7 +7,7 @@ name = "unturtle"
 dynamic = ["version"]
 description = "dLLM method layer on top of unsloth — conversion, objectives, inference acceleration, and canonical evaluation for diffusion language models"
 readme = "README.md"
-requires-python = ">=3.9,<3.15"
+requires-python = ">=3.10,<3.15"
 license = "Apache-2.0"
 keywords = ["ai", "llm", "diffusion", "dllm", "machine learning", "pytorch", "triton"]
 authors = [
