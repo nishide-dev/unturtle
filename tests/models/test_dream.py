@@ -888,3 +888,36 @@ class TestDreamFastRoPE:
             out = model(input_ids=input_ids)
         assert out.logits.shape == (B, L, config.vocab_size)
         assert not torch.isnan(out.logits).any()
+
+
+class TestDreamSavePretrained:
+    """transformers 5.x requires dict-style _tied_weights_keys; the legacy list
+    form crashes remove_tied_weights_from_state_dict during save_pretrained
+    (and therefore every Trainer checkpoint save)."""
+
+    @pytest.fixture
+    def config(self):
+        from unturtle.models.backbones.dream import DreamConfig
+
+        return DreamConfig(
+            vocab_size=1000,
+            hidden_size=128,
+            intermediate_size=256,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=4,
+            max_position_embeddings=128,
+            pad_token_id=0,
+            mask_token_id=1,
+        )
+
+    def test_save_pretrained_roundtrip(self, config, tmp_path):
+        from unturtle.models.backbones.dream import DreamModel
+
+        model = DreamModel(config).cpu()
+        model.save_pretrained(tmp_path / "ckpt")
+        reloaded = DreamModel.from_pretrained(tmp_path / "ckpt").cpu()
+        assert reloaded.config.vocab_size == config.vocab_size
+        torch.testing.assert_close(
+            reloaded.lm_head.weight, model.lm_head.weight, atol=0, rtol=0
+        )

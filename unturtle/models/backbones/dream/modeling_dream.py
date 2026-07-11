@@ -1005,7 +1005,10 @@ class DreamBaseModel(DreamPreTrainedModel):
 
 
 class DreamModel(DreamGenerationMixin, DreamPreTrainedModel):
-    _tied_weights_keys = ["lm_head.weight"]
+    # transformers 5.x expects a {target: source} dict here (a list crashes
+    # _get_tied_weight_keys → save_pretrained). Tying itself is still gated by
+    # config.tie_word_embeddings (False by default for Dream).
+    _tied_weights_keys = {"lm_head.weight": "model.embed_tokens.weight"}
 
     def __init__(self, config):
         super().__init__(config)
