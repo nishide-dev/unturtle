@@ -1232,7 +1232,11 @@ class MaskedDiffusionGenerationMixin:
                 # Extract logits for current block
                 block_logits = logits[:, :block_length, :]  # [B, block_length, V]
                 mask_logits = block_logits[mask_index_block]  # [N_masked, V]
-                if parallel_decode and 0 <= mask_token_id < mask_logits.shape[-1]:
+                if 0 <= mask_token_id < mask_logits.shape[-1]:
+                    # Masked-diffusion denoising places zero mass on the mask token
+                    # (MDLM SUBS "zero masking probabilities"). Without this, a
+                    # committed token can be the mask sentinel itself, so the block
+                    # never completes and mask tokens leak into the returned output.
                     mask_logits = mask_logits.clone()
                     mask_logits[:, mask_token_id] = torch.finfo(mask_logits.dtype).min
 

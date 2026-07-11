@@ -978,6 +978,47 @@ class TestLLaDABlockDecode:
             output_with_cache[:, prompt_len:] == tiny_config.mask_token_id
         ), "Block-decode should produce no remaining mask tokens in generated region"
 
+    def test_block_decode_never_commits_mask_token(self, tiny_model, tiny_config):
+        """Sequential block-decode places zero mass on the mask token (MDLM SUBS).
+
+        A random tied-embedding model argmax-predicts its own input token, which
+        at masked positions is ``mask_token_id`` itself.  Without suppressing the
+        mask logit, the loop "commits" the mask sentinel, the block never
+        completes, and the output stays fully masked.  Greedy decoding makes this
+        deterministic regardless of RNG or init statistics.
+        """
+        from unturtle.models.generation.diffusion_generation_utils import (
+            MaskedDiffusionGenerationConfig,
+        )
+
+        B, prompt_len = 1, 6
+        max_new = 8
+        torch.manual_seed(0)
+        input_ids = torch.randint(0, tiny_config.vocab_size, (B, prompt_len))
+
+        gen_config = MaskedDiffusionGenerationConfig(
+            max_new_tokens=max_new,
+            steps=4,
+            alg="origin",
+            mask_token_id=tiny_config.mask_token_id,
+            use_cache=True,
+            use_replace_cache=False,
+            block_length=4,
+            temperature=0.0,  # greedy: argmax would pick mask_token_id if unsuppressed
+        )
+
+        with torch.no_grad():
+            output = tiny_model.generate(
+                inputs=input_ids.clone(),
+                generation_config=gen_config,
+            )
+
+        assert output.shape == (B, prompt_len + max_new)
+        assert torch.equal(output[:, :prompt_len], input_ids)
+        assert not torch.any(output[:, prompt_len:] == tiny_config.mask_token_id), (
+            "Block-decode must never commit the mask token itself"
+        )
+
     def test_parallel_decode_trim_cache_runs(self, tiny_model, tiny_config):
         """LLaDA parallel_decode runs in trim-cache mode."""
         from unturtle.models.generation.diffusion_generation_utils import (
