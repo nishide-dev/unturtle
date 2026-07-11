@@ -242,11 +242,11 @@ class BlockDecodeMixin:
                     if attention_mask is not None and attention_mask.ndim >= 3:
                         attn_forward = attention_mask[:, :, current_block_start:, :]
                     else:
-                        attn_forward = (
-                            attention_mask[:, current_block_start:]
-                            if attention_mask is not None
-                            else None
-                        )
+                        # 2-D padding masks describe the KEYS, which span the full
+                        # sequence here (trimmed cache prefix + suffix). Slicing off
+                        # the prefix would drop exactly the prompt-padding info and
+                        # desync the mask from the KV length — pass it through whole.
+                        attn_forward = attention_mask
                     replace_position = None
 
                 # Forward pass with cache

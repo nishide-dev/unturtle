@@ -1737,3 +1737,262 @@ class TestA2DBlockDiffusionGeneration:
         assert out.shape == (1, 8)
         assert stream_calls == expected_calls
         assert step_calls == expected_calls
+
+
+# ---------------------------------------------------------------------------
+# Packed SDPA fallback: bidirectional mask (regression for causal fallback)
+# ---------------------------------------------------------------------------
+
+
+class TestPackedSdpaBidirectionalFallback:
+    """A packed batch reaching the SDPA fallback without ``block_attention_mask``
+    must get a *bidirectional* block-diagonal mask — never the causal
+    ``build_sdpa_packed_attention_mask`` fallback inside ``run_attention``."""
+
+    def _expected_block_mask(self, rows, L):
+        expected = torch.zeros(len(rows), 1, L, L, dtype=torch.bool)
+        for b, lengths in enumerate(rows):
+            offset = 0
+            for length in lengths:
+                end = offset + length
+                expected[b, 0, offset:end, offset:end] = True
+                offset = end
+        return expected
+
+    def test_helper_per_row_seq_lengths(self):
+        from unturtle.models.conversion.a2d.tiny_a2d._fast_forward import (
+            _build_bidirectional_packed_sdpa_mask,
+        )
+        from unturtle.utils.packing import get_packed_info_from_kwargs
+
+        L = 16
+        seq_lengths_list = [
+            torch.tensor([6, 6], dtype=torch.int32),
+            torch.tensor([10], dtype=torch.int32),
+        ]
+        packed = torch.tensor([6, 6, 10], dtype=torch.int32)
+        seq_info = get_packed_info_from_kwargs(
+            {"packed_seq_lengths": packed}, torch.device("cpu")
+        )
+        mask = _build_bidirectional_packed_sdpa_mask(
+            seq_lengths_list, seq_info, 2, L, torch.device("cpu")
+        )
+        assert mask.dtype == torch.bool and mask.shape == (2, 1, L, L)
+        # Bidirectional: block mask must be symmetric (no upper-triangular cut).
+        assert torch.equal(mask, mask.transpose(-1, -2))
+        assert torch.equal(mask, self._expected_block_mask([[6, 6], [10]], L))
+
+    def test_helper_flat_lengths_single_row(self):
+        from unturtle.models.conversion.a2d.tiny_a2d._fast_forward import (
+            _build_bidirectional_packed_sdpa_mask,
+        )
+        from unturtle.utils.packing import get_packed_info_from_kwargs
+
+        L = 12
+        packed = torch.tensor([6, 6], dtype=torch.int32)
+        seq_info = get_packed_info_from_kwargs(
+            {"packed_seq_lengths": packed}, torch.device("cpu")
+        )
+        mask = _build_bidirectional_packed_sdpa_mask(
+            None, seq_info, 1, L, torch.device("cpu")
+        )
+        assert torch.equal(mask, self._expected_block_mask([[6, 6]], L))
+        assert torch.equal(mask, mask.transpose(-1, -2))
+
+    def test_helper_flat_lengths_one_sample_per_row(self):
+        from unturtle.models.conversion.a2d.tiny_a2d._fast_forward import (
+            _build_bidirectional_packed_sdpa_mask,
+        )
+        from unturtle.utils.packing import get_packed_info_from_kwargs
+
+        L = 8
+        packed = torch.tensor([5, 8], dtype=torch.int32)
+        seq_info = get_packed_info_from_kwargs(
+            {"packed_seq_lengths": packed}, torch.device("cpu")
+        )
+        mask = _build_bidirectional_packed_sdpa_mask(
+            None, seq_info, 2, L, torch.device("cpu")
+        )
+        assert torch.equal(mask, self._expected_block_mask([[5], [8]], L))
+
+    def test_helper_unattributable_raises(self):
+        from unturtle.models.conversion.a2d.tiny_a2d._fast_forward import (
+            _build_bidirectional_packed_sdpa_mask,
+        )
+        from unturtle.utils.packing import get_packed_info_from_kwargs
+
+        packed = torch.tensor([4, 4, 4], dtype=torch.int32)
+        seq_info = get_packed_info_from_kwargs(
+            {"packed_seq_lengths": packed}, torch.device("cpu")
+        )
+        with pytest.raises(ValueError, match="bidirectional"):
+            _build_bidirectional_packed_sdpa_mask(
+                None, seq_info, 2, 8, torch.device("cpu")
+            )
+
+    def test_fast_forward_sdpa_fallback_uses_bidirectional_mask(self, monkeypatch):
+        """End-to-end through TinyA2DAttention_fast_forward on CPU: the mask that
+        reaches run_attention must be the bidirectional block mask, and the output
+        must match manual SDPA with that mask (not the causal variant)."""
+        import unturtle.models.conversion.a2d.tiny_a2d._fast_forward as ff
+
+        B, n_heads, L, head_dim = 1, 2, 8, 4
+        hidden = n_heads * head_dim
+
+        class _StubAttn:
+            pass
+
+        stub = _StubAttn()
+        stub.config = type(
+            "Cfg", (), {"num_attention_heads": n_heads, "num_key_value_heads": n_heads}
+        )()
+        stub.num_key_value_groups = 1
+        stub.head_dim = head_dim
+        torch.manual_seed(0)
+        w = torch.randn(hidden, 3 * hidden)
+
+        def apply_qkv(self, x):
+            q, k, v = (x @ w).chunk(3, dim=-1)
+            return q, k, v
+
+        stub.apply_qkv = apply_qkv
+        stub.apply_o = lambda self, x: x
+
+        captured = {}
+        real_run_attention = ff.run_attention
+
+        def capture_run_attention(*, config, context, Q, K, V):
+            captured["mask"] = context.attention_mask
+            captured["sdpa_kwargs"] = dict(config.sdpa_kwargs)
+            return real_run_attention(config=config, context=context, Q=Q, K=K, V=V)
+
+        monkeypatch.setattr(ff, "run_attention", capture_run_attention)
+
+        hidden_states = torch.randn(B, L, hidden)
+        packed = torch.tensor([4, 4], dtype=torch.int32)
+        out, _ = ff.TinyA2DAttention_fast_forward(
+            stub,
+            hidden_states,
+            position_embeddings=None,
+            attention_mask=None,
+            past_key_values=None,
+            packed_seq_lengths=packed,
+        )
+
+        mask = captured["mask"]
+        assert mask is not None, (
+            "SDPA packed fallback must not leave the mask None — run_attention "
+            "would build a causal packed mask"
+        )
+        assert mask.dtype == torch.bool
+        assert torch.equal(mask, mask.transpose(-1, -2)), "mask must be bidirectional"
+        assert captured["sdpa_kwargs"].get("is_causal") is False
+
+        # Output must equal manual bidirectional block SDPA.
+        q, k, v = (hidden_states @ w).chunk(3, dim=-1)
+        q = q.view(B, L, n_heads, head_dim).transpose(1, 2)
+        k = k.view(B, L, n_heads, head_dim).transpose(1, 2)
+        v = v.view(B, L, n_heads, head_dim).transpose(1, 2)
+        expected = torch.nn.functional.scaled_dot_product_attention(
+            q, k, v, attn_mask=mask, is_causal=False
+        )
+        expected = expected.transpose(1, 2).reshape(B, L, hidden)
+        torch.testing.assert_close(out, expected, atol=1e-5, rtol=1e-5)
+
+        # And it must differ from the causal-block result (the old bug).
+        causal_block = mask & torch.tril(torch.ones(L, L, dtype=torch.bool))
+        causal_out = torch.nn.functional.scaled_dot_product_attention(
+            q, k, v, attn_mask=causal_block, is_causal=False
+        )
+        causal_out = causal_out.transpose(1, 2).reshape(B, L, hidden)
+        assert not torch.allclose(out, causal_out, atol=1e-5), (
+            "output should differ from causal-masked attention"
+        )
+
+
+class TestBlockDecodePaddedBatchMask:
+    """Trim-mode block-decode must pass the FULL-length 2-D padding mask to the
+    inner forward — slicing it to the suffix drops exactly the prompt-padding
+    columns and desyncs the mask from the KV length (regression)."""
+
+    @pytest.fixture
+    def tiny_config(self):
+        from unturtle.models.conversion.a2d.tiny_a2d import TinyA2DLlamaConfig
+
+        return TinyA2DLlamaConfig(
+            vocab_size=128,
+            hidden_size=64,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            intermediate_size=128,
+            max_position_embeddings=128,
+        )
+
+    @pytest.fixture
+    def tiny_model(self, tiny_config):
+        from unturtle.models.conversion.a2d.tiny_a2d import TinyA2DLlamaLMHeadModel
+
+        model = TinyA2DLlamaLMHeadModel(tiny_config)
+        model.eval()
+        return model
+
+    def test_padded_batch_2d_mask_keeps_full_key_length(self, tiny_model, monkeypatch):
+        from unturtle.models.generation.diffusion_generation_utils import (
+            MaskedDiffusionGenerationConfig,
+        )
+
+        torch.manual_seed(0)
+        B, prompt_len, max_new = 2, 6, 8
+        total_len = prompt_len + max_new
+        input_ids = torch.randint(3, 128, (B, prompt_len))
+        # Row 1 is left-padded by 2 positions.
+        attention_mask = torch.ones(B, prompt_len, dtype=torch.long)
+        input_ids[1, :2] = 2
+        attention_mask[1, :2] = 0
+
+        recorded = []
+        original = tiny_model._model_forward_with_cache
+
+        def spy(*args, **kwargs):
+            am = kwargs.get("attention_mask")
+            ids = kwargs.get("input_ids")
+            pkv = kwargs.get("past_key_values")
+            recorded.append(
+                (
+                    None if am is None else tuple(am.shape),
+                    None if ids is None else ids.shape[1],
+                    pkv is not None,
+                )
+            )
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(tiny_model, "_model_forward_with_cache", spy)
+
+        gen_config = MaskedDiffusionGenerationConfig(
+            max_new_tokens=max_new,
+            steps=4,
+            alg="origin",
+            use_cache=True,
+            block_length=4,
+            mask_token_id=1,
+            temperature=0.0,
+        )
+        with torch.no_grad():
+            output = tiny_model.generate(
+                inputs=input_ids,
+                attention_mask=attention_mask,
+                generation_config=gen_config,
+            )
+
+        assert output.shape == (B, total_len)
+        assert torch.equal(output[:, :prompt_len], input_ids)
+
+        # Every trim-mode denoise forward (cached, suffix input) must receive the
+        # full-length 2-D mask covering all keys, not just the suffix.
+        cached_calls = [r for r in recorded if r[2] and r[0] is not None]
+        assert cached_calls, "expected cached denoise forwards with a mask"
+        for mask_shape, q_len, _ in cached_calls:
+            assert mask_shape == (B, total_len), (
+                f"2-D mask must span all {total_len} keys (got {mask_shape}, "
+                f"q_len={q_len}) — prompt-padding columns were sliced off"
+            )

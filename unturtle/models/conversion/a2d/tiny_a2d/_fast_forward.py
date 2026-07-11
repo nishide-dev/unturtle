@@ -152,6 +152,57 @@ def _flash_varlen_packed(
     return out_full
 
 
+def _build_bidirectional_packed_sdpa_mask(
+    seq_lengths_list,
+    seq_info: Tuple[torch.Tensor, torch.Tensor, int],
+    bsz: int,
+    q_len: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """Build a bidirectional block-diagonal bool mask ``[B, 1, L, L]`` for packed batches.
+
+    Used when a packed batch reaches the SDPA fallback without the collator's
+    ``block_attention_mask``. Never delegate to
+    ``build_sdpa_packed_attention_mask()`` — that helper builds *causal*
+    blocks, which is incorrect for bidirectional dLLM attention.
+    """
+    mask = torch.zeros(bsz, 1, q_len, q_len, dtype=torch.bool, device=device)
+    if seq_lengths_list is not None:
+        # Per-row sample lengths from the packed collator.
+        for b, lengths in enumerate(seq_lengths_list):
+            row_lengths = (
+                lengths.tolist() if torch.is_tensor(lengths) else list(lengths)
+            )
+            offset = 0
+            for length in row_lengths:
+                end = offset + int(length)
+                mask[b, 0, offset:end, offset:end] = True
+                offset = end
+        return mask
+
+    # Only the flat packed_seq_lengths metadata is available
+    # (enable_sample_packing / enable_padding_free_metadata).
+    flat_lengths = [int(length) for length in seq_info[0].tolist()]
+    if bsz == 1:
+        offset = 0
+        for length in flat_lengths:
+            end = offset + length
+            mask[0, 0, offset:end, offset:end] = True
+            offset = end
+        return mask
+    if len(flat_lengths) == bsz:
+        # One sample per row (padding-free per-example metadata).
+        for b, length in enumerate(flat_lengths):
+            mask[b, 0, :length, :length] = True
+        return mask
+    raise ValueError(
+        "Packed batch without block_attention_mask/seq_lengths: cannot attribute "
+        f"{len(flat_lengths)} packed samples to {bsz} rows for bidirectional "
+        "SDPA attention. Provide block_attention_mask (packed collator) or "
+        "per-row seq_lengths."
+    )
+
+
 def TinyA2DAttention_fast_forward(
     self,
     hidden_states: torch.Tensor,
@@ -254,9 +305,15 @@ def TinyA2DAttention_fast_forward(
             return attn_output, None
 
         # SDPA fallback: flash not available or seq_lengths absent.
-        # Use block_attention_mask (bidirectional block-diagonal) from collator when present.
-        # Do NOT fall back to build_sdpa_packed_attention_mask() — it builds causal blocks.
+        # Use block_attention_mask (bidirectional block-diagonal) from collator when
+        # present; otherwise build an equivalent bidirectional mask here. Never leave
+        # the mask None — run_attention would then fall back to
+        # build_sdpa_packed_attention_mask(), which builds causal blocks.
         effective_mask = kwargs.get("block_attention_mask")
+        if effective_mask is None:
+            effective_mask = _build_bidirectional_packed_sdpa_mask(
+                kwargs.get("seq_lengths"), seq_info, bsz, q_len, Q.device
+            )
         backend = SDPA
     else:
         effective_mask = attention_mask
