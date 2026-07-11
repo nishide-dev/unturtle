@@ -312,6 +312,27 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
 
 
+def _apply_eager_attention_mask(
+    attn_weights: torch.Tensor, attention_mask
+) -> torch.Tensor:
+    """Apply the mask produced by ``DreamModel.forward`` to eager attention scores.
+
+    ``DreamModel.forward`` normalizes 2-D padding masks into either the string
+    sentinel ``"full"`` (all-ones mask — nothing to mask) or a bool ``[B, 1, L, L]``
+    keep-mask; pre-expanded additive float 4-D masks pass through unchanged.
+    Mirrors ``DreamSdpaAttention``, which forwards only tensor masks to SDPA
+    (bool keep-masks are handled natively there).
+    """
+    if attention_mask is None or not isinstance(attention_mask, torch.Tensor):
+        # None or the "full" sentinel: nothing to mask.
+        return attn_weights
+    mask = attention_mask[:, :, :, : attn_weights.shape[-1]]
+    if mask.dtype == torch.bool:
+        # keep-mask: True = attend, False = masked out
+        return attn_weights.masked_fill(~mask, torch.finfo(attn_weights.dtype).min)
+    return attn_weights + mask
+
+
 class DreamAttention(nn.Module):
     """
     Multi-headed attention from 'Attention Is All You Need' paper. Modified to use sliding window attention: Longformer
@@ -453,9 +474,7 @@ class DreamAttention(nn.Module):
         attn_weights = torch.matmul(
             query_states, key_states.transpose(2, 3)
         ) / math.sqrt(self.head_dim)
-        if attention_mask is not None:  # no matter the length, we just slice it
-            causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
-            attn_weights = attn_weights + causal_mask
+        attn_weights = _apply_eager_attention_mask(attn_weights, attention_mask)
 
         # upcast attention to fp32
         attn_weights = nn.functional.softmax(
@@ -883,19 +902,23 @@ class DreamBaseModel(DreamPreTrainedModel):
         past_seen_tokens = (
             past_key_values[0][0].shape[1] if past_key_values is not None else 0
         )
-        if not dual_cache:
-            position_ids = torch.arange(
-                past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
-            ).unsqueeze(0)
-        else:
-            if past_key_values is not None:
+        if position_ids is None:
+            # Default arange positions. Callers (e.g. DreamGenerationMixin._sample
+            # under left padding) may pass explicit position_ids, which are honored.
+            if not dual_cache:
                 position_ids = torch.arange(
-                    past_seen_tokens, device=inputs_embeds.device
+                    past_seen_tokens + inputs_embeds.shape[1],
+                    device=inputs_embeds.device,
                 ).unsqueeze(0)
             else:
-                position_ids = torch.arange(
-                    inputs_embeds.shape[1], device=inputs_embeds.device
-                ).unsqueeze(0)
+                if past_key_values is not None:
+                    position_ids = torch.arange(
+                        past_seen_tokens, device=inputs_embeds.device
+                    ).unsqueeze(0)
+                else:
+                    position_ids = torch.arange(
+                        inputs_embeds.shape[1], device=inputs_embeds.device
+                    ).unsqueeze(0)
 
         hidden_states = inputs_embeds
         attn_key_values = [] if use_cache else None
@@ -921,6 +944,9 @@ class DreamBaseModel(DreamPreTrainedModel):
             )
 
             if self.gradient_checkpointing and self.training:
+                # dual_cache / replace_position are inference-only (None/False
+                # during training); DreamDecoderLayer.forward accepts only 8
+                # positionals, so they must not be passed positionally here.
                 layer_outputs = self._gradient_checkpointing_func(
                     decoder_layer.__call__,
                     hidden_states,
@@ -931,8 +957,6 @@ class DreamBaseModel(DreamPreTrainedModel):
                     use_cache,
                     cache_position,
                     position_embeddings,
-                    dual_cache,
-                    replace_position,
                 )
             else:
                 layer_outputs = decoder_layer(
@@ -981,7 +1005,10 @@ class DreamBaseModel(DreamPreTrainedModel):
 
 
 class DreamModel(DreamGenerationMixin, DreamPreTrainedModel):
-    _tied_weights_keys = ["lm_head.weight"]
+    # transformers 5.x expects a {target: source} dict here (a list crashes
+    # _get_tied_weight_keys → save_pretrained). Tying itself is still gated by
+    # config.tie_word_embeddings (False by default for Dream).
+    _tied_weights_keys = {"lm_head.weight": "model.embed_tokens.weight"}
 
     def __init__(self, config):
         super().__init__(config)
@@ -1222,9 +1249,7 @@ def DreamAttention_fast_forward(
     attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(
         self.head_dim
     )
-    if attention_mask is not None:
-        causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
-        attn_weights = attn_weights + causal_mask
+    attn_weights = _apply_eager_attention_mask(attn_weights, attention_mask)
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(
         query_states.dtype
