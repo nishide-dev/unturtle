@@ -5,6 +5,11 @@
 #   ./install.sh           # core + huggingface extras
 #   ./install.sh --eval    # additionally install the lm-eval-harness extra
 #
+# Overrides:
+#   TORCH_INDEX=...        # torch wheel index (see Requirements below)
+#   PYTHON_VERSION=3.12    # interpreter for the venv
+#   (a user-level UV_PYTHON pin is ignored — this script manages its own venv)
+#
 # Requirements:
 #   - uv (https://docs.astral.sh/uv/)
 #   - NVIDIA GPU + driver. The torch CUDA build is selected via TORCH_INDEX.
@@ -22,6 +27,13 @@
 
 set -euo pipefail
 cd "$(dirname "$0")"
+
+# A user-level UV_PYTHON pin makes `uv pip` ignore ./.venv whenever the pinned
+# version differs from the venv's interpreter ("No virtual environment found
+# for Python X.Y.Z"). This script manages its own venv, so drop the pin and
+# target .venv explicitly.
+unset UV_PYTHON UV_PROJECT_ENVIRONMENT 2>/dev/null || true
+export VIRTUAL_ENV="$PWD/.venv"
 
 TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/cu128}"
 PYTHON_VERSION="${PYTHON_VERSION:-3.12}"
@@ -41,16 +53,30 @@ echo "==> installing build/test tooling"
 uv pip install "setuptools==80.9.0" "setuptools-scm==9.2.0" pytest ruff bitsandbytes
 
 echo "==> installing unturtle (editable) + huggingface extras"
-# unsloth 2026.6.x pins transformers<=5.5.0, but DiffusionGemma and upcoming models
-# require transformers>=5.8.0.  Install transformers first so uv keeps the newer
-# build; unsloth/unsloth_zoo have no runtime version enforcement (verified 2026-06-11).
-uv pip install "transformers>=5.8.0"
 uv pip install -e ".[huggingface]"
 
 if [[ "${1:-}" == "--eval" ]]; then
     echo "==> installing eval extra (lm-eval-harness)"
     uv pip install -e ".[eval]"
 fi
+
+echo "==> re-pinning transformers and the CUDA torch stack"
+# The editable install above re-resolves the full dependency graph and has been
+# observed (uv 0.11.x) to downgrade transformers to unsloth's <=5.5.0 pin and to
+# replace the CUDA-matched torch build with a plain PyPI wheel. DiffusionGemma
+# and upcoming models require transformers>=5.8.0 (unsloth/unsloth_zoo have no
+# runtime version enforcement, verified 2026-06-11), and torch must stay on the
+# TORCH_INDEX build — so re-pin both AFTER the editable install.
+uv pip install "transformers>=5.8.0,<6"
+# Re-pin the exact torch version the resolver settled on (it already satisfies
+# unsloth's constraints) instead of an open-ended --upgrade, which resolves only
+# the listed packages' requirements and can jump past unsloth's supported torch
+# range to a brand-new release on the index.
+TORCH_VER=$(.venv/bin/python -c "import torch; print(torch.__version__.split('+')[0])")
+uv pip install --upgrade "torch==${TORCH_VER}" torchvision torchaudio xformers --index-url "${TORCH_INDEX}"
+
+echo "==> checking dependency consistency"
+uv pip check || echo "warning: dependency conflicts reported above — review before relying on this env"
 
 echo "==> verifying installation"
 .venv/bin/python - <<'PY'
