@@ -319,13 +319,40 @@ class DiffuGRPOTrainer(GRPOTrainer):
                 generation_batch = self._generate_and_score_completions(
                     generation_batch
                 )
+                # ``old/ref_per_token_logps`` are ``[num_iterations, B_gen, Lc]`` —
+                # iterations on dim 0, batch on dim 1. TRL's ``split_tensor_dict``
+                # slices every tensor along dim 0 (the batch dim for everything
+                # else), so pop them and re-attach the correct dim-1 slice per
+                # micro-batch below. They are ``[]`` when unused.
+                old_logps = generation_batch.pop("old_per_token_logps", [])
+                ref_logps = generation_batch.pop("ref_per_token_logps", [])
+                total_rows = generation_batch["prompt_ids"].shape[0]
+                chunk_size = total_rows // self.args.steps_per_generation
                 generation_batch = split_pixel_values_by_grid(generation_batch)
                 generation_batches = split_tensor_dict(
                     generation_batch, self.args.steps_per_generation
                 )
-                self._buffered_inputs = [
-                    unsplit_pixel_values_by_grid(batch) for batch in generation_batches
-                ]
+                buffered = []
+                for i, batch in enumerate(generation_batches):
+                    batch = unsplit_pixel_values_by_grid(batch)
+                    row_offset = i * chunk_size
+                    batch["old_per_token_logps"] = (
+                        old_logps[:, row_offset : row_offset + chunk_size]
+                        if isinstance(old_logps, torch.Tensor)
+                        else old_logps
+                    )
+                    batch["ref_per_token_logps"] = (
+                        ref_logps[:, row_offset : row_offset + chunk_size]
+                        if isinstance(ref_logps, torch.Tensor)
+                        else ref_logps
+                    )
+                    # Row window of this micro-batch within the rollout batch, so
+                    # train-time re-masking can reproduce the generation-time
+                    # ``torch.rand((B_gen, L))`` draw (see ``_forward_process``).
+                    batch["buffer_row_offset"] = row_offset
+                    batch["buffer_total_rows"] = total_rows
+                    buffered.append(batch)
+                self._buffered_inputs = buffered
             inputs = self._buffered_inputs[self._step % self.args.steps_per_generation]
             # Matches TRL ``GRPOTrainer._prepare_inputs`` (one increment per micro-batch).
             self._step += 1
@@ -538,6 +565,8 @@ class DiffuGRPOTrainer(GRPOTrainer):
         prompt_index: torch.Tensor,
         mask_id: int,
         seed: Optional[int] = None,
+        total_rows: Optional[int] = None,
+        row_offset: int = 0,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Apply stochastic masking to a token sequence.
 
@@ -553,6 +582,14 @@ class DiffuGRPOTrainer(GRPOTrainer):
             prompt_index:  Bool mask ``[L]`` — True for prompt positions.
             mask_id:       Mask token id.
             seed:          Random seed for reproducibility across iterations.
+            total_rows:    When ``batch`` is a micro-batch slice of a larger
+                           rollout batch, the rollout batch size ``B_gen``. The
+                           random draw is then ``torch.rand((total_rows, L))``
+                           sliced at ``[row_offset:row_offset+B]`` so the mask
+                           matches the one drawn at rollout time for these rows.
+                           ``None`` keeps the plain ``torch.rand((B, L))`` draw.
+            row_offset:    Row offset of ``batch`` within the rollout batch
+                           (only meaningful with ``total_rows``).
 
         Returns:
             ``(noisy_batch, p_mask)`` — masked sequence and per-position
@@ -563,7 +600,14 @@ class DiffuGRPOTrainer(GRPOTrainer):
 
         b, l = batch.shape
         t_p = torch.full((b,), self.args.p_mask_prompt, device=batch.device)
-        rng = torch.rand((b, l), device=batch.device)
+        if total_rows is None or total_rows == b:
+            # Identical to torch.rand((total_rows, l)) sliced with offset 0 when
+            # total_rows == b — S=1 behavior is bit-exact with the legacy draw.
+            rng = torch.rand((b, l), device=batch.device)
+        else:
+            rng = torch.rand((total_rows, l), device=batch.device)[
+                row_offset : row_offset + b
+            ]
 
         is_mask_prompt = prompt_index.unsqueeze(0) & (rng < t_p.unsqueeze(1))
         is_mask_completion = ~prompt_index.unsqueeze(0)
@@ -644,6 +688,8 @@ class DiffuGRPOTrainer(GRPOTrainer):
         input_ids: torch.Tensor,
         logits_to_keep: int,
         mask_seeds: list[int],
+        buffer_total_rows: Optional[int] = None,
+        buffer_row_offset: int = 0,
     ) -> torch.Tensor:
         """Compute per-token log p_θ(x_0 | x_t) for GRPO.
 
@@ -656,6 +702,12 @@ class DiffuGRPOTrainer(GRPOTrainer):
             input_ids:      ``[num_iterations, B, L]`` — repeated full sequences.
             logits_to_keep: Number of completion tokens (``L_completion``).
             mask_seeds:     One seed per GRPO iteration.
+            buffer_total_rows: Rollout batch size ``B_gen`` when ``input_ids``
+                            holds a micro-batch slice of a buffered rollout;
+                            forwarded to :meth:`_forward_process` so the
+                            per-seed mask matches the rollout-time draw.
+            buffer_row_offset: Row offset of the micro-batch within the
+                            rollout batch (with ``buffer_total_rows``).
 
         Returns:
             ``[num_iterations, B, L_completion]`` float32 log-probs.
@@ -671,7 +723,12 @@ class DiffuGRPOTrainer(GRPOTrainer):
         all_noisy, all_original = [], []
         for i, seed in enumerate(mask_seeds):
             noisy, _ = self._forward_process(
-                input_ids[i], prompt_index, self.args.mask_id, seed
+                input_ids[i],
+                prompt_index,
+                self.args.mask_id,
+                seed,
+                total_rows=buffer_total_rows,
+                row_offset=buffer_row_offset,
             )
             all_noisy.append(noisy)
             all_original.append(input_ids[i])
@@ -770,9 +827,19 @@ class DiffuGRPOTrainer(GRPOTrainer):
 
         objective = getattr(self.args, "diffu_policy_objective", "grpo")
 
+        # ``_prepare_inputs`` increments ``_step`` once per micro-batch BEFORE
+        # ``compute_loss``; the GRPO iteration index advances once per full pass
+        # over the ``steps_per_generation`` buffered micro-batches.
+        this_itr_idx = (
+            (self._step - 1) // self.args.steps_per_generation
+        ) % self.num_iterations
+        # Row window of this micro-batch within the rollout batch (set by
+        # ``_prepare_inputs``); ``None`` when inputs were not buffered/split.
+        buffer_total_rows = inputs.get("buffer_total_rows")
+        buffer_row_offset = inputs.get("buffer_row_offset", 0)
+
         if objective == "wd1++":
             logits_to_keep = completion_ids.size(1)
-            this_itr_idx = self._step % self.args.num_iterations
             seeds = self._diffu_mask_seeds
             if not seeds or this_itr_idx >= len(seeds):
                 raise RuntimeError(
@@ -811,7 +878,12 @@ class DiffuGRPOTrainer(GRPOTrainer):
                 input_ids_kl = torch.cat([prompt_ids, completion_ids], dim=1)
                 input_ids_3d_kl = input_ids_kl.unsqueeze(0)
                 per_token_logps_kl = self._get_per_token_logps(
-                    model, input_ids_3d_kl, logits_to_keep, [this_seed]
+                    model,
+                    input_ids_3d_kl,
+                    logits_to_keep,
+                    [this_seed],
+                    buffer_total_rows=buffer_total_rows,
+                    buffer_row_offset=buffer_row_offset,
                 ).squeeze(0)
                 ref_per_token_logps = inputs["ref_per_token_logps"][
                     this_itr_idx
@@ -832,7 +904,6 @@ class DiffuGRPOTrainer(GRPOTrainer):
         input_ids = torch.cat([prompt_ids, completion_ids], dim=1)
         logits_to_keep = completion_ids.size(1)
 
-        this_itr_idx = self._step % self.args.num_iterations
         seeds = self._diffu_mask_seeds
         if not seeds or this_itr_idx >= len(seeds):
             raise RuntimeError(
@@ -842,7 +913,12 @@ class DiffuGRPOTrainer(GRPOTrainer):
         input_ids_3d = input_ids.unsqueeze(0)  # [1, B, L]
 
         per_token_logps = self._get_per_token_logps(
-            model, input_ids_3d, logits_to_keep, this_seed
+            model,
+            input_ids_3d,
+            logits_to_keep,
+            this_seed,
+            buffer_total_rows=buffer_total_rows,
+            buffer_row_offset=buffer_row_offset,
         )
         per_token_logps = per_token_logps.squeeze(0)  # [B, Lc]
 
