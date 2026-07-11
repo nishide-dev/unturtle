@@ -282,10 +282,15 @@ def train(
                 typer.echo(f"Error: invalid training arguments — {e}", err=True)
                 raise typer.Exit(code=1)
 
-            from unturtle.diffusion import MaskedDiffusionDataCollator
+            from unturtle.cli.config import build_masked_diffusion_collator
 
-            collator = MaskedDiffusionDataCollator(
-                tokenizer=tokenizer,
+            # Mirror DiffusionTrainer's own collator construction so
+            # --alpha-scheduler / --time-epsilon reach the noising process.
+            collator = build_masked_diffusion_collator(
+                tokenizer,
+                model=model,
+                alpha_scheduler=cfg.diffusion.alpha_scheduler,
+                time_epsilon=cfg.diffusion.time_epsilon,
                 completion_only=cfg.diffusion.completion_only,
             )
             trainer = DiffusionTrainer(

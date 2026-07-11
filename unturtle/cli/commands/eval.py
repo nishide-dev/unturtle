@@ -146,6 +146,14 @@ def eval_cmd(
     num_steps: int = typer.Option(
         128, "--num-steps", help="Denoising steps for generation eval."
     ),
+    max_new_tokens: Optional[int] = typer.Option(
+        None,
+        "--max-new-tokens",
+        help=(
+            "Maximum generated tokens per example for generation eval. "
+            "Default: derive from each example's reference length."
+        ),
+    ),
     mask_token_id: Optional[int] = typer.Option(
         None, "--mask-token-id", help="Mask token ID override."
     ),
@@ -186,7 +194,7 @@ def eval_cmd(
 
     try:
         from unturtle import FastDiffusionModel
-        from unturtle.diffusion import MaskedDiffusionDataCollator
+        from unturtle.cli.config import build_masked_diffusion_collator
         from unturtle.eval import GenerationEvaluator, MaskedDiffusionEvaluator
         from unturtle.models.generation.diffusion_generation_utils import (
             MaskedDiffusionGenerationConfig,
@@ -239,13 +247,25 @@ def eval_cmd(
     all_metrics: dict = {}
     failures: list[str] = []
 
+    # Resolve mask token ID once for both eval branches:
+    # CLI override → tokenizer → model.config (real checkpoints may carry the
+    # mask id only on the model config).
+    resolved_mask_id = mask_token_id
+    if resolved_mask_id is None:
+        resolved_mask_id = getattr(tokenizer, "mask_token_id", None)
+    if resolved_mask_id is None:
+        resolved_mask_id = getattr(loaded_model.config, "mask_token_id", None)
+
     # --- Diffusion eval ---
     if eval_type in ("diffusion", "both"):
         typer.echo("Running diffusion eval...", err=True)
         try:
-            collator = MaskedDiffusionDataCollator(
-                tokenizer=tokenizer,
+            collator = build_masked_diffusion_collator(
+                tokenizer,
+                model=loaded_model,
+                alpha_scheduler=alpha_scheduler,
                 completion_only=completion_only,
+                mask_token_id=resolved_mask_id,
             )
             evaluator = MaskedDiffusionEvaluator(
                 model=loaded_model,
@@ -269,12 +289,6 @@ def eval_cmd(
     if eval_type in ("generation", "both"):
         typer.echo("Running generation eval...", err=True)
 
-        # Resolve mask token ID
-        resolved_mask_id = mask_token_id
-        if resolved_mask_id is None:
-            resolved_mask_id = getattr(tokenizer, "mask_token_id", None)
-        if resolved_mask_id is None:
-            resolved_mask_id = getattr(loaded_model.config, "mask_token_id", None)
         if resolved_mask_id is None:
             typer.echo(
                 "Error: cannot resolve mask_token_id for generation eval.",
@@ -283,11 +297,16 @@ def eval_cmd(
             failures.append("generation")
         else:
             try:
+                # When --max-new-tokens is omitted the config carries no
+                # explicit length and GenerationEvaluator derives a
+                # per-example max_length from the reference length (instead
+                # of the config default max_length=20, prompt included).
                 gen_config = MaskedDiffusionGenerationConfig(
                     steps=num_steps,
                     mask_token_id=resolved_mask_id,
                     temperature=temperature,
                     alg=alg,
+                    max_new_tokens=max_new_tokens,
                 )
                 gen_evaluator = GenerationEvaluator(
                     model=loaded_model,
@@ -297,6 +316,7 @@ def eval_cmd(
                     eval_ds,
                     generation_config=gen_config,
                     max_examples=max_examples,
+                    algorithm="mdlm",
                 )
                 all_metrics.update(gen_metrics)
             except Exception as e:

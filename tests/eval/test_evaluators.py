@@ -49,14 +49,30 @@ class TinyDiffusionModel(torch.nn.Module):
         super().__init__()
         self.calls = 0
         self.last_attention_mask = None
+        self.last_generation_config = None
+        self.last_generate_kwargs: dict | None = None
         self.dummy = torch.nn.Parameter(torch.zeros(1))
         self.config = type("Config", (), {"mask_token_id": mask_token_id})()
 
-    def generate(self, input_ids, max_length=None, attention_mask=None, **_kwargs):
+    def generate(
+        self,
+        input_ids,
+        max_length=None,
+        attention_mask=None,
+        generation_config=None,
+        **kwargs,
+    ):
         self.calls += 1
         self.last_attention_mask = (
             attention_mask.clone() if attention_mask is not None else None
         )
+        self.last_generation_config = generation_config
+        self.last_generate_kwargs = dict(kwargs)
+        if generation_config is not None and max_length is None:
+            if getattr(generation_config, "max_new_tokens", None) is not None:
+                max_length = input_ids.shape[1] + generation_config.max_new_tokens
+            elif getattr(generation_config, "max_length", None) is not None:
+                max_length = generation_config.max_length
         out = input_ids.clone()
         target_length = max_length or out.shape[1]
         if target_length > out.shape[1]:
@@ -214,6 +230,70 @@ class TestGenerationEvaluator:
         assert metrics["gen_token_accuracy"] == 1.0
         assert model.last_attention_mask is not None
         assert model.last_attention_mask.tolist() == [[1, 1]]
+
+    def test_config_without_length_uses_reference_length_per_example(self):
+        # Regression: a MaskedDiffusionGenerationConfig without max_new_tokens
+        # used to fall through to its default max_length=20, truncating
+        # generation.  The evaluator must derive the per-example reference
+        # length instead — on a copy, without mutating the shared config.
+        from unturtle.models.generation.diffusion_generation_utils import (
+            MaskedDiffusionGenerationConfig,
+        )
+
+        model = TinyDiffusionModel()
+        evaluator = GenerationEvaluator(model=model, tokenizer=None)
+        config = MaskedDiffusionGenerationConfig(steps=8, mask_token_id=4)
+        dataset = [{"input_ids": [1, 2, 3, 0], "references": [7, 7, 7]}]
+        metrics = evaluator.evaluate(dataset, generation_config=config)
+
+        received = model.last_generation_config
+        assert received is not None
+        assert received is not config  # per-example copy, shared config untouched
+        assert received.max_new_tokens == 3  # reference length, not default 20
+        assert config.max_new_tokens is None
+        assert metrics["gen_exact_match"] == 1.0
+
+    def test_config_with_explicit_max_new_tokens_is_passed_through(self):
+        from unturtle.models.generation.diffusion_generation_utils import (
+            MaskedDiffusionGenerationConfig,
+        )
+
+        model = TinyDiffusionModel()
+        evaluator = GenerationEvaluator(model=model, tokenizer=None)
+        config = MaskedDiffusionGenerationConfig(
+            steps=8, mask_token_id=4, max_new_tokens=5
+        )
+        dataset = [{"input_ids": [1, 2, 3, 0], "references": [7]}]
+        evaluator.evaluate(dataset, generation_config=config)
+
+        assert model.last_generation_config is config
+        assert model.last_generation_config.max_new_tokens == 5
+
+    def test_explicit_algorithm_is_pinned_alongside_config(self):
+        from unturtle.models.generation.diffusion_generation_utils import (
+            MaskedDiffusionGenerationConfig,
+        )
+
+        model = TinyDiffusionModel()
+        evaluator = GenerationEvaluator(model=model, tokenizer=None)
+        config = MaskedDiffusionGenerationConfig(steps=8, mask_token_id=4)
+        dataset = [{"input_ids": [1, 2, 3, 0], "references": [7]}]
+        evaluator.evaluate(dataset, generation_config=config, algorithm="mdlm")
+
+        assert model.last_generate_kwargs is not None
+        assert model.last_generate_kwargs.get("algorithm") == "mdlm"
+
+    def test_dict_config_behavior_unchanged(self):
+        model = TinyDiffusionModel()
+        evaluator = GenerationEvaluator(model=model, tokenizer=None)
+        dataset = [{"input_ids": [1, 2, 3, 0], "references": [7, 7]}]
+        evaluator.evaluate(dataset, generation_config={"steps": 8})
+
+        # Dict configs are expanded into kwargs; reference-length max_length
+        # is injected when absent, and algorithm stays pinned to "mdlm".
+        assert model.last_generation_config is None
+        assert model.last_generate_kwargs.get("steps") == 8
+        assert model.last_generate_kwargs.get("algorithm") == "mdlm"
 
     def test_generation_handles_left_padding(self):
         model = TinyDiffusionModel()
