@@ -428,6 +428,49 @@ class Config(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Shared CLI object builders
+# ---------------------------------------------------------------------------
+
+
+def build_masked_diffusion_collator(
+    tokenizer,
+    model=None,
+    *,
+    alpha_scheduler: str = "linear",
+    time_epsilon: float = 1e-3,
+    completion_only: bool = True,
+    mask_token_id: Optional[int] = None,
+):
+    """Build a ``MaskedDiffusionDataCollator`` the way ``DiffusionTrainer`` does.
+
+    Mirrors the collator injection in :class:`~unturtle.diffusion.DiffusionTrainer`
+    (``trainer.py``): the alpha scheduler is instantiated from its name via
+    :func:`~unturtle.diffusion.make_alpha_scheduler`, ``time_epsilon`` is passed
+    through, and ``mask_token_id`` falls back to ``tokenizer.mask_token_id`` then
+    ``model.config.mask_token_id`` (real checkpoints may only carry the mask id
+    on the model config).
+
+    Used by ``unturtle train`` and ``unturtle eval`` when constructing the
+    collator explicitly, so ``--alpha-scheduler`` / ``--time-epsilon`` /
+    ``--mask-token-id`` are honored instead of silently using defaults.
+    """
+    from unturtle.diffusion import MaskedDiffusionDataCollator, make_alpha_scheduler
+
+    if mask_token_id is None:
+        mask_token_id = getattr(tokenizer, "mask_token_id", None)
+    if mask_token_id is None:
+        mask_token_id = getattr(getattr(model, "config", None), "mask_token_id", None)
+
+    return MaskedDiffusionDataCollator(
+        tokenizer=tokenizer,
+        scheduler=make_alpha_scheduler(alpha_scheduler),
+        mask_token_id=mask_token_id,
+        time_epsilon=time_epsilon,
+        completion_only=completion_only,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Config loader
 # ---------------------------------------------------------------------------
 

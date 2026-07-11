@@ -24,7 +24,7 @@ from typer import Exit
 from unturtle.cli.commands.eval import _prepare_eval_dataset
 from unturtle.cli.commands.export import list_checkpoints
 from unturtle.cli.commands.train import _resolve_model_class, train
-from unturtle.cli.config import load_config
+from unturtle.cli.config import build_masked_diffusion_collator, load_config
 
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "examples" / "configs"
 EXAMPLE_CONFIGS = [
@@ -203,6 +203,42 @@ def test_example_yaml_configs_work_with_train_dry_run(config_name, capsys):
     captured = capsys.readouterr()
     assert "model:" in captured.out
     assert "training:" in captured.out
+
+
+def test_build_masked_diffusion_collator_wires_scheduler_and_epsilon(tokenizer):
+    # Regression: `unturtle train/eval --alpha-scheduler cosine` used to build
+    # the collator with the default linear scheduler (alpha_scheduler never
+    # reached the noising collator).
+    from unturtle.diffusion.schedulers import CosineAlphaScheduler
+
+    collator = build_masked_diffusion_collator(
+        tokenizer,
+        alpha_scheduler="cosine",
+        time_epsilon=5e-3,
+        completion_only=False,
+    )
+
+    assert isinstance(collator.scheduler, CosineAlphaScheduler)
+    assert collator.time_epsilon == 5e-3
+    assert collator.completion_only is False
+    assert collator.mask_token_id == tokenizer.mask_token_id
+
+
+def test_build_masked_diffusion_collator_explicit_mask_id_wins(tokenizer):
+    collator = build_masked_diffusion_collator(tokenizer, mask_token_id=9)
+    assert collator.mask_token_id == 9
+
+
+def test_build_masked_diffusion_collator_falls_back_to_model_config(tokenizer):
+    # Regression: `unturtle eval --eval-type diffusion` on a tokenizer without
+    # mask_token_id must fall back to model.config.mask_token_id (real
+    # checkpoints may carry the mask id only on the model config).
+    tokenizer.mask_token = None
+    tokenizer.mask_token_id = None
+    model = type("Model", (), {"config": type("Config", (), {"mask_token_id": 42})()})()
+
+    collator = build_masked_diffusion_collator(tokenizer, model=model)
+    assert collator.mask_token_id == 42
 
 
 def test_list_checkpoints_reports_unreadable_trainer_state(tmp_path, capsys):

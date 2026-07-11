@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 import torch
@@ -79,37 +80,72 @@ class GenerationEvaluator(BaseEvaluator):
 
         return input_ids, None, attention_mask
 
+    @staticmethod
+    def _config_has_explicit_length(generation_config: Any) -> bool:
+        """Return True if a generation-config *object* carries a user-set length.
+
+        A config is considered length-less when ``max_new_tokens`` is unset and
+        ``max_length`` still equals the class default (20 for HF
+        ``GenerationConfig`` and subclasses).  Such configs would silently
+        truncate at ``prompt + generation == 20`` tokens, so the evaluator
+        substitutes the per-example reference length instead.
+        """
+        if getattr(generation_config, "max_new_tokens", None) is not None:
+            return True
+        max_length = getattr(generation_config, "max_length", None)
+        if max_length is None:
+            return False
+        try:
+            default_max_length = type(generation_config)().max_length
+        except Exception:
+            default_max_length = 20
+        return max_length != default_max_length
+
     def _generate_one(
         self,
         prompt_ids: torch.Tensor,
         generation_config: Any | None,
         reference_ids: torch.Tensor | None,
         attention_mask: torch.Tensor | None,
+        algorithm: str | None = None,
     ) -> torch.Tensor:
         prompt_ids = prompt_ids.unsqueeze(0).to(self.device)
+        target_len = int(reference_ids.numel()) if reference_ids is not None else 1
         generation_kwargs: dict[str, Any] = {}
         if generation_config is not None:
             if isinstance(generation_config, dict):
                 generation_kwargs.update(generation_config)
+            elif self._config_has_explicit_length(generation_config):
+                generation_kwargs["generation_config"] = generation_config
             else:
+                # Config object without an explicit user length: its default
+                # max_length (20) would silently cap generation.  Override with
+                # the per-example reference length via max_new_tokens on a
+                # copy — never mutate the shared config.
+                generation_config = copy.deepcopy(generation_config)
+                generation_config.max_new_tokens = target_len
                 generation_kwargs["generation_config"] = generation_config
 
         if (
             "max_length" not in generation_kwargs
             and "generation_config" not in generation_kwargs
         ):
-            target_len = int(reference_ids.numel()) if reference_ids is not None else 1
             generation_kwargs["max_length"] = prompt_ids.shape[1] + target_len
         if attention_mask is not None:
             generation_kwargs["attention_mask"] = attention_mask.unsqueeze(0).to(
                 self.device
             )
 
-        # Pin algorithm="mdlm" when no generation_config is supplied so the
-        # no-cache MDLM path (pre-unification default) is preserved and recorded
-        # DecodingConfigs stay accurate.  Callers that pass a generation_config
-        # object keep auto semantics — the config carries its own algorithm intent.
-        if "generation_config" not in generation_kwargs:
+        # Pin the decoding algorithm when the caller asks for one (e.g. the CLI
+        # pins "mdlm" for the configs it builds), or — as before — when no
+        # generation_config is supplied, so the no-cache MDLM path
+        # (pre-unification default) is preserved and recorded DecodingConfigs
+        # stay accurate.  Callers that pass a generation_config without an
+        # explicit algorithm keep auto semantics — the config carries its own
+        # algorithm intent.
+        if algorithm is not None:
+            generation_kwargs["algorithm"] = algorithm
+        elif "generation_config" not in generation_kwargs:
             generation_kwargs["algorithm"] = "mdlm"
         sequences = self.model.generate(prompt_ids, **generation_kwargs)
 
@@ -122,6 +158,7 @@ class GenerationEvaluator(BaseEvaluator):
         dataset: Any,
         generation_config: Any | None = None,
         max_examples: int | None = None,
+        algorithm: str | None = None,
     ) -> dict[str, float]:
         total_examples = 0
         exact_matches = 0
@@ -137,7 +174,11 @@ class GenerationEvaluator(BaseEvaluator):
                     self._extract_prompt_and_reference(example)
                 )
                 generated = self._generate_one(
-                    prompt_ids, generation_config, reference_ids, attention_mask
+                    prompt_ids,
+                    generation_config,
+                    reference_ids,
+                    attention_mask,
+                    algorithm=algorithm,
                 )
 
                 if reference_ids is None or reference_ids.numel() == 0:
