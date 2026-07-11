@@ -98,6 +98,143 @@ class TestDreamModel:
         grads = [p.grad for p in model.parameters() if p.grad is not None]
         assert len(grads) > 0
 
+    def test_gradient_checkpointing_forward_backward(self, config):
+        """Training-mode forward+backward with gradient checkpointing must not raise.
+
+        Regression: the checkpointed call used to pass 10 positional args to
+        DreamDecoderLayer.forward (8 positionals + **kwargs) -> TypeError.
+        """
+        from unturtle.models.backbones.dream import DreamModel
+
+        model = DreamModel(config).cpu()
+        model.gradient_checkpointing_enable()
+        model.train()
+        B, L = 2, 8
+        input_ids = torch.randint(0, config.vocab_size, (B, L))
+        labels = torch.randint(0, config.vocab_size, (B, L))
+        labels[:, ::2] = -100
+        out = model(input_ids=input_ids, labels=labels)
+        assert out.loss is not None
+        assert not torch.isnan(out.loss)
+        out.loss.backward()
+        grads = [p.grad for p in model.parameters() if p.grad is not None]
+        assert len(grads) > 0
+
+    def test_gradient_checkpointing_matches_plain_forward(self, config):
+        """Checkpointed forward must be numerically identical to the plain path."""
+        from unturtle.models.backbones.dream import DreamModel
+
+        torch.manual_seed(0)
+        model = DreamModel(config).cpu()
+        model.train()
+        B, L = 2, 8
+        input_ids = torch.randint(0, config.vocab_size, (B, L))
+        plain = model(input_ids=input_ids).logits.detach()
+        model.gradient_checkpointing_enable()
+        checkpointed = model(input_ids=input_ids).logits.detach()
+        assert torch.allclose(plain, checkpointed, atol=1e-6)
+
+    def test_padded_batch_eager_masks_padding(self, config):
+        """Eager attention must actually mask padding (bool keep-mask handling).
+
+        Regression: the eager path added the bool [B,1,L,L] keep-mask to the
+        attention scores (+1/+0) instead of masking with -inf, so padding
+        silently leaked into attention. output_attentions=True forces the
+        eager DreamAttention.forward fallback.
+        """
+        from unturtle.models.backbones.dream import DreamModel
+
+        torch.manual_seed(0)
+        model = DreamModel(config).cpu().eval()
+        L_real, L_pad = 6, 8
+        real_ids = torch.randint(2, config.vocab_size, (1, L_real))
+        padded_ids = torch.full((1, L_pad), config.pad_token_id, dtype=torch.long)
+        padded_ids[:, :L_real] = real_ids
+        attention_mask = torch.zeros(1, L_pad, dtype=torch.long)
+        attention_mask[:, :L_real] = 1
+
+        with torch.no_grad():
+            ref = model(input_ids=real_ids, output_attentions=True).logits
+            masked = model(
+                input_ids=padded_ids,
+                attention_mask=attention_mask,
+                output_attentions=True,
+            ).logits
+            unmasked = model(input_ids=padded_ids, output_attentions=True).logits
+
+        # Non-pad positions of the masked padded batch match the unpadded run
+        assert torch.allclose(ref, masked[:, :L_real], atol=1e-5), (
+            f"max_diff={(ref - masked[:, :L_real]).abs().max().item():.2e}"
+        )
+        # ... and differ from the unmasked run (padding actually masked)
+        assert not torch.allclose(ref, unmasked[:, :L_real], atol=1e-5)
+
+    def test_padded_batch_sdpa_masks_padding(self, config):
+        """Same padding-equivalence guarantee on the default SDPA path."""
+        from unturtle.models.backbones.dream import DreamModel
+
+        torch.manual_seed(0)
+        model = DreamModel(config).cpu().eval()
+        L_real, L_pad = 6, 8
+        real_ids = torch.randint(2, config.vocab_size, (1, L_real))
+        padded_ids = torch.full((1, L_pad), config.pad_token_id, dtype=torch.long)
+        padded_ids[:, :L_real] = real_ids
+        attention_mask = torch.zeros(1, L_pad, dtype=torch.long)
+        attention_mask[:, :L_real] = 1
+
+        with torch.no_grad():
+            ref = model(input_ids=real_ids).logits
+            masked = model(input_ids=padded_ids, attention_mask=attention_mask).logits
+
+        assert torch.allclose(ref, masked[:, :L_real], atol=1e-5), (
+            f"max_diff={(ref - masked[:, :L_real]).abs().max().item():.2e}"
+        )
+
+    def test_all_ones_attention_mask_eager_does_not_crash(self, config):
+        """All-ones 2-D mask becomes the string sentinel 'full'; the eager path
+        must treat it as no-mask instead of crashing on string addition."""
+        from unturtle.models.backbones.dream import DreamModel
+
+        torch.manual_seed(0)
+        model = DreamModel(config).cpu().eval()
+        B, L = 2, 8
+        input_ids = torch.randint(2, config.vocab_size, (B, L))
+        attention_mask = torch.ones(B, L, dtype=torch.long)
+        with torch.no_grad():
+            with_mask = model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                output_attentions=True,
+            ).logits
+            no_mask = model(input_ids=input_ids, output_attentions=True).logits
+        assert torch.allclose(with_mask, no_mask, atol=1e-6)
+
+    def test_position_ids_are_honored(self, config):
+        """Explicit shifted position_ids must change the output vs default arange."""
+        from unturtle.models.backbones.dream import DreamModel
+
+        torch.manual_seed(0)
+        model = DreamModel(config).cpu().eval()
+        B, L = 1, 8
+        input_ids = torch.randint(2, config.vocab_size, (B, L))
+        default = torch.arange(L).unsqueeze(0)
+        shifted = default + 5
+        collapsed = torch.zeros(1, L, dtype=torch.long)
+        with torch.no_grad():
+            out_default = model(input_ids=input_ids).logits
+            out_explicit_default = model(
+                input_ids=input_ids, position_ids=default
+            ).logits
+            out_shifted = model(input_ids=input_ids, position_ids=shifted).logits
+            out_collapsed = model(input_ids=input_ids, position_ids=collapsed).logits
+        # Explicit arange == implicit arange
+        assert torch.allclose(out_default, out_explicit_default, atol=1e-6)
+        # RoPE is relative: a uniform shift preserves pairwise offsets, so a
+        # shifted arange must still match — proving the ids reach RoPE intact.
+        assert torch.allclose(out_default, out_shifted, atol=1e-5)
+        # Collapsed positions change relative structure -> output must differ
+        assert not torch.allclose(out_default, out_collapsed, atol=1e-4)
+
     def test_forward_use_cache_returns_past_key_values(self, config):
         from unturtle.models.backbones.dream import DreamModel
 
@@ -290,6 +427,33 @@ class TestDreamGenerationUtils:
             _ = model.generate(inputs=inputs, generation_config=generation_config)
 
         assert 3 in model.forward_lengths
+
+    def test_left_padded_generation_smoke(self, config):
+        """Left-padded batch generation exercises the tok_idx position_ids path.
+
+        _sample computes tok_idx from the padding mask (RoPE fix under left
+        padding) and passes it as position_ids; the base model must honor it.
+        """
+        from unturtle.models.backbones.dream import DreamGenerationConfig, DreamModel
+
+        torch.manual_seed(0)
+        model = DreamModel(config).cpu().eval()
+        inputs = torch.tensor([[0, 0, 2, 3], [4, 5, 6, 7]])
+        attention_mask = torch.tensor([[0, 0, 1, 1], [1, 1, 1, 1]])
+        generation_config = DreamGenerationConfig(
+            max_new_tokens=4,
+            steps=4,
+            mask_token_id=config.mask_token_id,
+            pad_token_id=config.pad_token_id,
+        )
+        with torch.no_grad():
+            out = model.generate(
+                inputs=inputs,
+                attention_mask=attention_mask,
+                generation_config=generation_config,
+            )
+        assert out.shape == (2, 8)
+        assert not torch.any(out == config.mask_token_id)
 
     def test_dream_generate_accepts_algorithm(self, config):
         from unturtle.models.backbones.dream import DreamGenerationConfig, DreamModel
