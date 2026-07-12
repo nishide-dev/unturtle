@@ -326,6 +326,13 @@ class DiffuGRPOTrainer(GRPOTrainer):
                 # micro-batch below. They are ``[]`` when unused.
                 old_logps = generation_batch.pop("old_per_token_logps", [])
                 ref_logps = generation_batch.pop("ref_per_token_logps", [])
+                # Per-rollout artifacts that must NOT go through ``split_tensor_dict``
+                # (it slices list values along the batch dim, emptying them for later
+                # chunks). Attach the full objects to every buffered chunk instead, so
+                # an eval rollout landing mid-cycle cannot clobber them on the trainer
+                # (see d1, which stores ``mask_seeds`` in the inputs dict).
+                rollout_mask_seeds = generation_batch.pop("mask_seeds", None)
+                rollout_wd1pp_traj = generation_batch.pop("wd1pp_trajectory", None)
                 total_rows = generation_batch["prompt_ids"].shape[0]
                 chunk_size = total_rows // self.args.steps_per_generation
                 generation_batch = split_pixel_values_by_grid(generation_batch)
@@ -351,6 +358,10 @@ class DiffuGRPOTrainer(GRPOTrainer):
                     # ``torch.rand((B_gen, L))`` draw (see ``_forward_process``).
                     batch["buffer_row_offset"] = row_offset
                     batch["buffer_total_rows"] = total_rows
+                    if rollout_mask_seeds is not None:
+                        batch["mask_seeds"] = rollout_mask_seeds
+                    if rollout_wd1pp_traj is not None:
+                        batch["wd1pp_trajectory"] = rollout_wd1pp_traj
                     buffered.append(batch)
                 self._buffered_inputs = buffered
             inputs = self._buffered_inputs[self._step % self.args.steps_per_generation]
@@ -780,6 +791,24 @@ class DiffuGRPOTrainer(GRPOTrainer):
         w_minus = torch.softmax(-psi * adv, dim=-1)
         return (w_minus - w_plus).reshape(-1)
 
+    def _validate_wd1_group_alignment(self, advantages: torch.Tensor) -> None:
+        """wd1/wd1++ group softmax needs whole reward groups per micro-batch.
+
+        After ``steps_per_generation`` micro-batch splitting, a chunk that does not
+        contain a multiple of ``num_generations`` rows would either fail the raw
+        reshape in :meth:`_wd1_completion_coef` or silently softmax over partial /
+        straddled groups. Fail fast with an actionable message instead.
+        """
+        g = self.num_generations
+        if advantages.numel() % g != 0:
+            raise ValueError(
+                "wd1/wd1++ objectives require each micro-batch to contain whole "
+                f"reward groups: got {advantages.numel()} completions with "
+                f"num_generations={g}. Configure generation_batch_size / "
+                "steps_per_generation so that (rollout batch // steps_per_generation) "
+                "is divisible by num_generations."
+            )
+
     # ------------------------------------------------------------------
     # Loss computation
     # ------------------------------------------------------------------
@@ -837,16 +866,24 @@ class DiffuGRPOTrainer(GRPOTrainer):
         # ``_prepare_inputs``); ``None`` when inputs were not buffered/split.
         buffer_total_rows = inputs.get("buffer_total_rows")
         buffer_row_offset = inputs.get("buffer_row_offset", 0)
+        # Mask seeds travel with the inputs (buffered chunk or eval dict) so an eval
+        # rollout landing mid-generation-cycle cannot clobber them (d1 pattern);
+        # fall back to the trainer attribute for back-compat.
+        seeds = inputs.get("mask_seeds") or self._diffu_mask_seeds
+
+        if objective in ("wd1", "wd1++"):
+            self._validate_wd1_group_alignment(advantages)
 
         if objective == "wd1++":
             logits_to_keep = completion_ids.size(1)
-            seeds = self._diffu_mask_seeds
             if not seeds or this_itr_idx >= len(seeds):
                 raise RuntimeError(
                     "DiffuGRPOTrainer: missing mask seeds for this step — internal buffering error."
                 )
             this_seed = seeds[this_itr_idx]
-            traj = self._wd1pp_trajectory
+            # Same clobber-protection as ``mask_seeds``: prefer the trajectory
+            # reference captured at buffering time.
+            traj = inputs.get("wd1pp_trajectory") or self._wd1pp_trajectory
             if not traj:
                 raise RuntimeError(
                     "DiffuGRPOTrainer: wd1++ missing denoise trajectory — internal rollout error."
@@ -904,7 +941,6 @@ class DiffuGRPOTrainer(GRPOTrainer):
         input_ids = torch.cat([prompt_ids, completion_ids], dim=1)
         logits_to_keep = completion_ids.size(1)
 
-        seeds = self._diffu_mask_seeds
         if not seeds or this_itr_idx >= len(seeds):
             raise RuntimeError(
                 "DiffuGRPOTrainer: missing mask seeds for this step — internal buffering error."
@@ -1000,6 +1036,76 @@ class DiffuGRPOTrainer(GRPOTrainer):
     # ------------------------------------------------------------------
     # Rollout generation and scoring
     # ------------------------------------------------------------------
+
+    def _compute_ref_per_token_logps(
+        self,
+        prompt_completion_ids: torch.Tensor,
+        logits_to_keep: int,
+        mask_seeds: list[int],
+    ) -> torch.Tensor:
+        """Reference-policy log-probs for the KL term (``beta != 0``).
+
+        Mirrors TRL 0.24 ``GRPOTrainer``: a PEFT policy disables its adapter to
+        act as its own reference (d1's assumption); otherwise TRL's
+        ``self.ref_model`` — constructed in ``GRPOTrainer.__init__`` for non-PEFT
+        policies when ``beta != 0`` — is used. Raises a clear error when neither
+        is available instead of an ``AttributeError`` on ``disable_adapter``.
+        """
+        ids_expanded = prompt_completion_ids.unsqueeze(0).expand(
+            self.num_iterations, -1, -1
+        )
+        unwrapped = self.accelerator.unwrap_model(self.model)
+        if hasattr(unwrapped, "disable_adapter"):
+            with unwrapped.disable_adapter():
+                return self._get_per_token_logps(
+                    self.model, ids_expanded, logits_to_keep, mask_seeds
+                )
+        if getattr(self, "ref_model", None) is not None:
+            return self._get_per_token_logps(
+                self.ref_model, ids_expanded, logits_to_keep, mask_seeds
+            )
+        raise ValueError(
+            "DiffuGRPOTrainer: beta != 0 requires a reference policy — either a "
+            "PEFT adapter on the policy model (so it can be disabled to act as the "
+            "reference) or a TRL-constructed `ref_model`. Neither is available; "
+            "pass a peft_config or set beta=0."
+        )
+
+    def _compute_group_advantages(
+        self, rewards: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Group-relative advantages with TRL 0.24 ``scale_rewards`` semantics.
+
+        d1 mean-centers only; TRL additionally divides by ``std + 1e-4`` unless
+        ``scale_rewards`` resolves to ``"none"`` (``"group"`` is TRL's default;
+        ``"batch"`` uses the whole-batch std). Pass ``scale_rewards=False`` /
+        ``"none"`` for d1-style mean-only advantages.
+
+        Returns:
+            ``(advantages, std_rewards)`` — both flat ``[B]``; ``std_rewards`` is
+            the tensor used for scaling and for the std metrics.
+        """
+        g = self.num_generations
+        mean_rewards = rewards.view(-1, g).mean(dim=1).repeat_interleave(g)
+        advantages = rewards - mean_rewards
+        scale = getattr(
+            self, "scale_rewards", getattr(self.args, "scale_rewards", "group")
+        )
+        # GRPOConfig.__post_init__ already coerces bools; keep the mapping for
+        # bare instances constructed without TRL's __init__.
+        scale = {True: "group", False: "none"}.get(scale, scale)
+        if scale in ("group", "none"):
+            std_rewards = rewards.view(-1, g).std(dim=1).repeat_interleave(g)
+        elif scale == "batch":
+            std_rewards = rewards.std().expand_as(rewards)
+        else:
+            raise ValueError(
+                f"Invalid scale_rewards value: {scale!r}. "
+                "Must be 'group', 'batch', or 'none'."
+            )
+        if scale != "none":
+            advantages = advantages / (std_rewards + 1e-4)
+        return advantages, std_rewards
 
     def _generate_and_score_completions(
         self,
@@ -1153,13 +1259,9 @@ class DiffuGRPOTrainer(GRPOTrainer):
                 )
 
             if self.beta != 0.0:
-                with self.accelerator.unwrap_model(self.model).disable_adapter():
-                    ids_expanded = prompt_completion_ids.unsqueeze(0).expand(
-                        self.num_iterations, -1, -1
-                    )
-                    all_ref_logps = self._get_per_token_logps(
-                        self.model, ids_expanded, logits_to_keep, mask_seeds
-                    )
+                all_ref_logps = self._compute_ref_per_token_logps(
+                    prompt_completion_ids, logits_to_keep, mask_seeds
+                )
 
         # Decode and score completions
         completions_text = self.processing_class.batch_decode(
@@ -1205,12 +1307,8 @@ class DiffuGRPOTrainer(GRPOTrainer):
             rewards_per_func * self.reward_weights.to(device).unsqueeze(0)
         ).nansum(dim=1)
 
-        # Advantage normalisation (group-relative)
-        mean_rewards = rewards.view(-1, self.num_generations).mean(dim=1)
-        std_rewards = rewards.view(-1, self.num_generations).std(dim=1)
-        mean_rewards = mean_rewards.repeat_interleave(self.num_generations)
-        std_rewards = std_rewards.repeat_interleave(self.num_generations)
-        advantages = rewards - mean_rewards
+        # Advantage normalisation (group-relative, TRL scale_rewards semantics)
+        advantages, std_rewards = self._compute_group_advantages(rewards)
 
         process_slice = slice(
             self.accelerator.process_index * len(prompts),
@@ -1287,7 +1385,7 @@ class DiffuGRPOTrainer(GRPOTrainer):
                 except ImportError:
                     pass
 
-        return {
+        out = {
             "prompt_ids": prompt_ids,
             "prompt_mask": prompt_mask,
             "completion_ids": completion_ids,
@@ -1295,4 +1393,10 @@ class DiffuGRPOTrainer(GRPOTrainer):
             "old_per_token_logps": all_old_logps,
             "ref_per_token_logps": all_ref_logps,
             "advantages": advantages,
+            # Travels with the inputs (d1 pattern); ``_prepare_inputs`` pops it
+            # before ``split_tensor_dict`` and re-attaches the full list per chunk.
+            "mask_seeds": mask_seeds,
         }
+        if use_wd1pp:
+            out["wd1pp_trajectory"] = self._wd1pp_trajectory
+        return out
