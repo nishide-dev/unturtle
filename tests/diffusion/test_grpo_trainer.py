@@ -579,7 +579,8 @@ def _make_buffering_trainer(steps_per_generation: int, num_iterations: int):
     return tr
 
 
-def test_prepare_inputs_slices_cached_logps_along_batch_dim_and_compute_loss_runs():
+@pytest.mark.parametrize("beta", [0.0, 0.04])
+def test_prepare_inputs_slices_cached_logps_along_batch_dim_and_compute_loss_runs(beta):
     """Bug regression: ``old/ref_per_token_logps`` are ``[num_iterations, B_gen, Lc]``.
 
     ``split_tensor_dict`` slices dim 0 (the iterations dim for these tensors), so
@@ -587,12 +588,19 @@ def test_prepare_inputs_slices_cached_logps_along_batch_dim_and_compute_loss_run
     Also checks ``compute_loss`` consumes each micro-batch with the correct GRPO
     iteration index (one advance per full pass over the buffer, not per micro-batch)
     and threads the buffer row window into ``_get_per_token_logps``.
+
+    ``beta=0.04`` additionally exercises the KL path over the sliced
+    ``ref_per_token_logps[this_itr_idx]``. Also regression for eval-rollout
+    clobbering: ``mask_seeds`` travel with the buffered inputs, so overwriting
+    the trainer attribute (as an eval rollout does) must not change the seeds
+    used by ``compute_loss``.
     """
     pytest.importorskip("trl")
     from unturtle.diffusion.grpo_trainer import DiffuGRPOTrainer
 
     S, num_iterations, B_gen, Lc = 2, 2, 4, 4
     cs = B_gen // S  # micro-batch size
+    expected_seeds = [11, 22]
 
     # Distinctive per-(iteration, row) values so slices are checkable.
     full_old = (
@@ -601,14 +609,14 @@ def test_prepare_inputs_slices_cached_logps_along_batch_dim_and_compute_loss_run
         )
         * 1e-3
     )
-    full_ref = full_old + 100.0
+    full_ref = full_old + 0.5  # small offset: keeps exp(ref - logps) finite
 
     rollout_calls = 0
 
     def fake_generate_and_score(_inputs: object) -> dict:
         nonlocal rollout_calls
         rollout_calls += 1
-        tr._diffu_mask_seeds = [11, 22]
+        tr._diffu_mask_seeds = list(expected_seeds)
         return {
             "prompt_ids": torch.zeros(B_gen, 4, dtype=torch.long),
             "prompt_mask": torch.ones(B_gen, 4, dtype=torch.long),
@@ -617,9 +625,11 @@ def test_prepare_inputs_slices_cached_logps_along_batch_dim_and_compute_loss_run
             "old_per_token_logps": full_old.clone(),
             "ref_per_token_logps": full_ref.clone(),
             "advantages": torch.zeros(B_gen),
+            "mask_seeds": list(expected_seeds),
         }
 
     tr = _make_buffering_trainer(S, num_iterations)
+    tr.beta = beta
     tr._generate_and_score_completions = fake_generate_and_score  # type: ignore[method-assign]
 
     logps_calls: list[dict] = []
@@ -650,6 +660,11 @@ def test_prepare_inputs_slices_cached_logps_along_batch_dim_and_compute_loss_run
         micro_idx = t % S
         expected_itr = t // S
 
+        # Eval-rollout clobber simulation: an eval `_generate_and_score_completions`
+        # overwrites the trainer attribute mid-cycle. Buffered inputs must be immune.
+        tr._diffu_mask_seeds = [999, 998]
+        assert inputs["mask_seeds"] == expected_seeds
+
         # Cached log-probs: iterations preserved on dim 0, batch sliced on dim 1.
         for key, full in (
             ("old_per_token_logps", full_old),
@@ -667,9 +682,10 @@ def test_prepare_inputs_slices_cached_logps_along_batch_dim_and_compute_loss_run
         assert torch.isfinite(loss)
 
         # compute_loss must use the seed of the current GRPO iteration
-        # (advancing once per full pass over the buffer) and pass the window.
+        # (advancing once per full pass over the buffer) and pass the window —
+        # sourced from the buffered inputs, not the (clobbered) trainer attribute.
         call = logps_calls[-1]
-        assert call["seeds"] == [tr._diffu_mask_seeds[expected_itr]], f"micro-step {t}"
+        assert call["seeds"] == [expected_seeds[expected_itr]], f"micro-step {t}"
         assert call["total_rows"] == B_gen
         assert call["row_offset"] == micro_idx * cs
 
@@ -780,3 +796,231 @@ def test_trl_split_tensor_dict_empty_second_chunk_for_iteration_sized_list():
     chunks = split_tensor_dict(batch, num_chunks=2)
     assert chunks[0]["mask_seeds"] == [101, 202]
     assert chunks[1]["mask_seeds"] == []
+
+
+def test_wd1pp_buffered_chunks_survive_eval_rollout_clobber():
+    """wd1++: ``mask_seeds`` and the denoise trajectory travel with the buffered
+    chunks, so an eval rollout that resets/overwrites the trainer attributes
+    mid-generation-cycle must not affect train-time ``compute_loss``."""
+    pytest.importorskip("trl")
+    from unturtle.diffusion.grpo_trainer import DiffuGRPOTrainer
+
+    B_gen, S = 4, 2
+    xl = torch.cat(
+        [torch.zeros(2, 6, dtype=torch.long), torch.ones(2, 6, dtype=torch.long)], dim=0
+    )
+    traj = [(xl, xl.clone())]
+
+    def fake_generate_and_score(_inputs: object) -> dict:
+        tr._diffu_mask_seeds = [7]
+        tr._wd1pp_trajectory = traj
+        return {
+            "prompt_ids": torch.zeros(B_gen, 2, dtype=torch.long),
+            "completion_ids": torch.zeros(B_gen, 4, dtype=torch.long),
+            "completion_mask": torch.ones(B_gen, 4, dtype=torch.float),
+            "old_per_token_logps": [],
+            "ref_per_token_logps": [],
+            "advantages": torch.tensor([1.0, -1.0, 0.5, -0.5]),
+            "mask_seeds": [7],
+            "wd1pp_trajectory": traj,
+        }
+
+    tr = _make_buffering_trainer(steps_per_generation=S, num_iterations=1)
+    tr.args.diffu_policy_objective = "wd1++"
+    tr.args.wd1_psi = 1.0
+    tr._generate_and_score_completions = fake_generate_and_score  # type: ignore[method-assign]
+    tr._wd1pp_trajectory = None
+
+    seen: list[tuple[float, int]] = []
+
+    def _capture(_m, xl_s, _x0, _ltk, seed):
+        seen.append((float(xl_s[:, 0].float().mean().item()), int(seed)))
+        return torch.ones(xl_s.size(0))
+
+    tr._wd1pp_completion_logp_sum = _capture  # type: ignore[method-assign]
+
+    for _t in range(S):
+        inputs = DiffuGRPOTrainer._prepare_inputs(tr, {})
+        # Full (unsliced) per-rollout artifacts on every chunk.
+        assert inputs["mask_seeds"] == [7]
+        assert inputs["wd1pp_trajectory"] is traj
+        # Eval rollout lands mid-cycle: trainer attributes clobbered.
+        tr._diffu_mask_seeds = [999]
+        tr._wd1pp_trajectory = None
+        loss = DiffuGRPOTrainer.compute_loss(tr, nn.Identity(), inputs)
+        assert torch.isfinite(loss)
+
+    # Chunk 0 saw trajectory rows 0:2 (zeros), chunk 1 rows 2:4 (ones); both
+    # used the buffered seed 7, not the clobbered trainer attribute.
+    assert seen == [(0.0, 7), (1.0, 7)]
+
+
+# ---------------------------------------------------------------------------
+# Reference log-probs: PEFT adapter vs TRL ref_model (beta != 0)
+# ---------------------------------------------------------------------------
+
+
+def _make_ref_logps_trainer(model: nn.Module):
+    from unturtle.diffusion.grpo_trainer import DiffuGRPOTrainer
+
+    tr = DiffuGRPOTrainer.__new__(DiffuGRPOTrainer)
+    tr.model = model
+    tr.num_iterations = 1
+    tr.accelerator = SimpleNamespace(unwrap_model=lambda m: m)
+    calls: list[nn.Module] = []
+
+    def spy_get_per_token_logps(model_arg, input_ids, logits_to_keep, mask_seeds):
+        calls.append(model_arg)
+        n_it, b, _l = input_ids.shape
+        return torch.zeros(n_it, b, logits_to_keep)
+
+    tr._get_per_token_logps = spy_get_per_token_logps  # type: ignore[method-assign]
+    return tr, calls
+
+
+def test_compute_ref_logps_prefers_peft_disable_adapter():
+    """A policy with ``disable_adapter`` acts as its own reference (d1/TRL PEFT path)."""
+    pytest.importorskip("trl")
+    from contextlib import contextmanager
+
+    from unturtle.diffusion.grpo_trainer import DiffuGRPOTrainer
+
+    entered: list[bool] = []
+
+    class _PeftLike(nn.Module):
+        @contextmanager
+        def disable_adapter(self):
+            entered.append(True)
+            yield
+
+    model = _PeftLike()
+    tr, calls = _make_ref_logps_trainer(model)
+    tr.ref_model = None
+    ids = torch.zeros(2, 6, dtype=torch.long)
+    out = DiffuGRPOTrainer._compute_ref_per_token_logps(tr, ids, 4, [7])
+    assert out.shape == (1, 2, 4)
+    assert entered == [True]
+    assert calls == [model]
+
+
+def test_compute_ref_logps_uses_trl_ref_model_for_full_finetune():
+    """Regression (#48): full-finetune policy (no ``disable_adapter``) must use
+    TRL's ``self.ref_model`` instead of raising ``AttributeError``."""
+    pytest.importorskip("trl")
+    from unturtle.diffusion.grpo_trainer import DiffuGRPOTrainer
+
+    model = nn.Identity()
+    ref_model = nn.Identity()
+    tr, calls = _make_ref_logps_trainer(model)
+    tr.ref_model = ref_model
+    ids = torch.zeros(2, 6, dtype=torch.long)
+    out = DiffuGRPOTrainer._compute_ref_per_token_logps(tr, ids, 4, [7])
+    assert out.shape == (1, 2, 4)
+    assert len(calls) == 1
+    assert calls[0] is ref_model
+
+
+def test_compute_ref_logps_raises_without_adapter_or_ref_model():
+    pytest.importorskip("trl")
+    from unturtle.diffusion.grpo_trainer import DiffuGRPOTrainer
+
+    tr, calls = _make_ref_logps_trainer(nn.Identity())
+    tr.ref_model = None
+    ids = torch.zeros(2, 6, dtype=torch.long)
+    with pytest.raises(ValueError, match="reference policy"):
+        DiffuGRPOTrainer._compute_ref_per_token_logps(tr, ids, 4, [7])
+    assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# wd1 / wd1++ group alignment guard (#48)
+# ---------------------------------------------------------------------------
+
+
+def test_wd1_compute_loss_rejects_partial_reward_groups():
+    """Micro-batch not divisible by ``num_generations`` must fail fast with an
+    actionable error (not a raw reshape error / silent partial-group softmax)."""
+    pytest.importorskip("trl")
+    from unturtle.diffusion.grpo_trainer import DiffuGRPOTrainer
+
+    tr = DiffuGRPOTrainer.__new__(DiffuGRPOTrainer)
+    tr.args = SimpleNamespace(
+        steps_per_generation=1, diffu_policy_objective="wd1", wd1_psi=1.0
+    )
+    tr.num_iterations = 1
+    tr.num_generations = 2
+    tr.beta = 0.0
+    tr._step = 1
+    tr._diffu_mask_seeds = [3]
+    tr.control = SimpleNamespace(should_evaluate=False)
+    tr._metrics = {"train": {"kl": [], "clip_ratio": []}}
+    tr.accelerator = SimpleNamespace(gather_for_metrics=lambda x: x)
+
+    inputs = {
+        "prompt_ids": torch.zeros(3, 2, dtype=torch.long),
+        "completion_ids": torch.zeros(3, 4, dtype=torch.long),
+        "completion_mask": torch.ones(3, 4, dtype=torch.float),
+        "advantages": torch.tensor([1.0, -1.0, 0.5]),  # 3 % num_generations != 0
+    }
+    with pytest.raises(ValueError, match="whole reward groups"):
+        DiffuGRPOTrainer.compute_loss(tr, nn.Identity(), inputs)
+
+
+# ---------------------------------------------------------------------------
+# Advantage scaling (TRL scale_rewards semantics, #48)
+# ---------------------------------------------------------------------------
+
+
+def _make_advantage_trainer(scale_rewards):
+    from unturtle.diffusion.grpo_trainer import DiffuGRPOTrainer
+
+    tr = DiffuGRPOTrainer.__new__(DiffuGRPOTrainer)
+    tr.num_generations = 2
+    tr.args = SimpleNamespace(scale_rewards=scale_rewards)
+    return tr
+
+
+class TestComputeGroupAdvantages:
+    rewards = torch.tensor([1.0, 3.0, 2.0, 2.0])
+
+    def test_none_is_d1_mean_centering_only(self):
+        from unturtle.diffusion.grpo_trainer import DiffuGRPOTrainer
+
+        tr = _make_advantage_trainer("none")
+        adv, std = DiffuGRPOTrainer._compute_group_advantages(tr, self.rewards)
+        assert torch.allclose(adv, torch.tensor([-1.0, 1.0, 0.0, 0.0]))
+        # std still computed for logging (group std)
+        assert torch.allclose(std, torch.tensor([2.0, 2.0, 0.0, 0.0]).sqrt())
+
+    def test_false_maps_to_none(self):
+        from unturtle.diffusion.grpo_trainer import DiffuGRPOTrainer
+
+        tr = _make_advantage_trainer(False)
+        adv, _ = DiffuGRPOTrainer._compute_group_advantages(tr, self.rewards)
+        assert torch.allclose(adv, torch.tensor([-1.0, 1.0, 0.0, 0.0]))
+
+    def test_group_scaling_divides_by_group_std(self):
+        from unturtle.diffusion.grpo_trainer import DiffuGRPOTrainer
+
+        tr = _make_advantage_trainer("group")
+        adv, std = DiffuGRPOTrainer._compute_group_advantages(tr, self.rewards)
+        g_std = torch.tensor([2.0]).sqrt().item()
+        expected = torch.tensor([-1.0 / (g_std + 1e-4), 1.0 / (g_std + 1e-4), 0.0, 0.0])
+        assert torch.allclose(adv, expected)
+
+    def test_batch_scaling_divides_by_batch_std(self):
+        from unturtle.diffusion.grpo_trainer import DiffuGRPOTrainer
+
+        tr = _make_advantage_trainer("batch")
+        adv, std = DiffuGRPOTrainer._compute_group_advantages(tr, self.rewards)
+        b_std = self.rewards.std().item()
+        expected = torch.tensor([-1.0, 1.0, 0.0, 0.0]) / (b_std + 1e-4)
+        assert torch.allclose(adv, expected)
+        assert torch.allclose(std, torch.full((4,), b_std))
+
+    def test_invalid_value_rejected(self):
+        from unturtle.diffusion.grpo_trainer import DiffuGRPOTrainer
+
+        tr = _make_advantage_trainer("bogus")
+        with pytest.raises(ValueError, match="scale_rewards"):
+            DiffuGRPOTrainer._compute_group_advantages(tr, self.rewards)
