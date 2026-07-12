@@ -20,6 +20,7 @@ BD3LM block-diffusion generation is added via _sample_block_diffusion()
 (use_block_diffusion=True).
 """
 
+import inspect
 import math
 from types import SimpleNamespace
 
@@ -49,9 +50,54 @@ def _snapshot_prefix_cache(past_key_values):
         return past_key_values
     if hasattr(past_key_values, "layers"):
         return tuple((layer.keys, layer.values) for layer in past_key_values.layers)
-    raise TypeError(
-        f"Unsupported cache type for BD3LM prefix snapshot: {type(past_key_values).__name__}"
-    )
+    # Opaque/unsupported cache type: return None so the BD3LM loop uses the
+    # full-sequence path (explicit routing, replacing the old behavior where
+    # a TypeError raised here was swallowed by a broad ``except TypeError``).
+    return None
+
+
+def _pad_safe_attention_mask(attn_mask: torch.Tensor) -> torch.Tensor:
+    """Flip all-False query rows (pad positions) to all-True.
+
+    ``prepare_for_sampling`` gives pad query positions no allowed keys, which
+    yields NaN softmax rows under eager/math SDPA, and the NaNs can propagate
+    into valid rows through later layers' K/V projections.  Follow
+    run_attention's ``no_allowed`` pattern
+    (unturtle/utils/attention_dispatch.py: ``no_allowed = ~local_mask.any(
+    dim=-1, keepdim=True); local_mask = local_mask | no_allowed``): pad rows
+    attend everywhere harmlessly — their outputs are never read.
+    """
+    no_allowed = ~attn_mask.any(dim=-1, keepdim=True)
+    return attn_mask | no_allowed
+
+
+def _forward_accepts_kwargs(model, names: tuple) -> bool:
+    """Probe once whether ``model.forward`` accepts all keyword args in ``names``.
+
+    Explicit capability probe replacing the former broad ``except TypeError`` /
+    ``except (TypeError, RuntimeError)`` around forward calls, which also
+    swallowed genuine failures and silently changed the numerics path.  The
+    result is cached per model instance, and forwards with ``**kwargs`` are
+    treated as accepting everything (matching their previous no-TypeError
+    behavior).  Genuine runtime errors in the forward now propagate.
+    """
+    cache = getattr(model, "_bd3lm_forward_kwarg_support", None)
+    if cache is None:
+        cache = {}
+        model._bd3lm_forward_kwarg_support = cache
+    if names not in cache:
+        try:
+            params = inspect.signature(type(model).forward).parameters
+        except (TypeError, ValueError):
+            # Signature not introspectable — assume the kwargs are accepted
+            # (any real incompatibility will surface as a loud TypeError).
+            cache[names] = True
+        else:
+            has_var_kw = any(
+                p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+            )
+            cache[names] = has_var_kw or all(n in params for n in names)
+    return cache[names]
 
 
 def _rewrap_prefix_cache(past_key_values, device):
@@ -189,6 +235,12 @@ class MaskedDiffusionBlockGenerationMixin(
                 "before calling `generate(algorithm='bd3lm')`."
             )
 
+        # Known limitation: padding is inferred purely from pad_id token values
+        # (both here for the internal left-pad and in prepare_for_sampling),
+        # not from an attention_mask.  Genuine pad_id tokens inside the prompt
+        # would be treated as padding.  prepare_for_sampling keeps pad rows
+        # numerically safe (no all-False attention rows), but the inference
+        # itself is intentionally not redesigned here.
         pad_id = generation_config.pad_token_id
         if pad_id is None:
             pad_id = getattr(self.config, "pad_token_id", None)
@@ -249,25 +301,33 @@ class MaskedDiffusionBlockGenerationMixin(
 
             # Build block-causal attention mask + logical position IDs for prefix
             prefix_attn, prefix_pos = prepare_for_sampling(x, block_size, pad_id)
+            prefix_attn = _pad_safe_attention_mask(prefix_attn)
 
-            # Try to obtain KV cache for prefix; fall back to full-seq silently
+            # Obtain KV cache for the prefix when the model's forward supports
+            # the KV-cache kwargs; otherwise use the full-seq path.  The
+            # capability is probed once via the forward signature
+            # (`_forward_accepts_kwargs`) instead of catching TypeError, so
+            # genuine failures inside the forward propagate.
             cond_past = None
             cond_prefix_last_logits = None
             uncond_past = None
             uncond_prefix_last_logits = None
 
-            try:
+            supports_kv_cache = _forward_accepts_kwargs(
+                self,
+                ("attention_mask", "position_ids", "use_cache", "past_key_values"),
+            )
+            if supports_kv_cache:
                 out_prefix = self(
                     x,
                     attention_mask=prefix_attn,
                     position_ids=prefix_pos,
                     use_cache=True,
                 )
-                if (
-                    hasattr(out_prefix, "past_key_values")
-                    and out_prefix.past_key_values is not None
-                ):
-                    cond_past = _snapshot_prefix_cache(out_prefix.past_key_values)
+                cond_past = _snapshot_prefix_cache(
+                    getattr(out_prefix, "past_key_values", None)
+                )
+                if cond_past is not None:
                     cond_prefix_last_logits = out_prefix.logits[:, -1:, :]
 
                 if cfg_scale > 0.0:
@@ -279,14 +339,11 @@ class MaskedDiffusionBlockGenerationMixin(
                         position_ids=prefix_pos,
                         use_cache=True,
                     )
-                    if (
-                        hasattr(out_un, "past_key_values")
-                        and out_un.past_key_values is not None
-                    ):
-                        uncond_past = _snapshot_prefix_cache(out_un.past_key_values)
+                    uncond_past = _snapshot_prefix_cache(
+                        getattr(out_un, "past_key_values", None)
+                    )
+                    if uncond_past is not None:
                         uncond_prefix_last_logits = out_un.logits[:, -1:, :]
-            except TypeError:
-                cond_past = None
 
             # Append masked block
             new_block = torch.full(
@@ -311,6 +368,7 @@ class MaskedDiffusionBlockGenerationMixin(
             effective_steps = num_transfer_tokens.shape[1]
 
             full_attn, full_pos = prepare_for_sampling(x, block_size, pad_id)
+            full_attn = _pad_safe_attention_mask(full_attn)
             attn_block = full_attn[:, :, T_prefix:T_total, :]
             pos_block = full_pos[:, T_prefix:T_total]
 
@@ -324,47 +382,47 @@ class MaskedDiffusionBlockGenerationMixin(
                     break
 
                 if use_kv_cache:
-                    try:
-                        cond_out = self(
+                    # Capability was probed via `_forward_accepts_kwargs` above:
+                    # no try/except here — genuine forward errors propagate
+                    # instead of silently switching to the full-seq path.
+                    cond_out = self(
+                        x_block,
+                        attention_mask=attn_block,
+                        position_ids=pos_block,
+                        past_key_values=_rewrap_prefix_cache(cond_past, x_block.device),
+                        use_cache=False,
+                    )
+                    cond_logits = cond_out.logits
+
+                    if cfg_scale > 0.0 and uncond_past is not None:
+                        uncond_out = self(
                             x_block,
                             attention_mask=attn_block,
                             position_ids=pos_block,
                             past_key_values=_rewrap_prefix_cache(
-                                cond_past, x_block.device
+                                uncond_past, x_block.device
                             ),
                             use_cache=False,
                         )
-                        cond_logits = cond_out.logits
-
-                        if cfg_scale > 0.0 and uncond_past is not None:
-                            uncond_out = self(
-                                x_block,
-                                attention_mask=attn_block,
-                                position_ids=pos_block,
-                                past_key_values=_rewrap_prefix_cache(
-                                    uncond_past, x_block.device
-                                ),
-                                use_cache=False,
-                            )
-                            logits_block = uncond_out.logits + (cfg_scale + 1.0) * (
-                                cond_logits - uncond_out.logits
-                            )
-                        else:
-                            logits_block = cond_logits
-
-                    except (TypeError, RuntimeError):
-                        use_kv_cache = False
-                        cond_past = None
+                        logits_block = uncond_out.logits + (cfg_scale + 1.0) * (
+                            cond_logits - uncond_out.logits
+                        )
+                    else:
+                        logits_block = cond_logits
 
                 if not use_kv_cache:
+                    supports_position_ids = _forward_accepts_kwargs(
+                        self, ("position_ids",)
+                    )
                     full_attn_step, full_pos_step = prepare_for_sampling(
                         x, block_size, pad_id
                     )
-                    try:
+                    full_attn_step = _pad_safe_attention_mask(full_attn_step)
+                    if supports_position_ids:
                         out = self(
                             x, attention_mask=full_attn_step, position_ids=full_pos_step
                         )
-                    except TypeError:
+                    else:
                         out = self(x, attention_mask=full_attn_step)
 
                     if right_shift_logits and T_prefix > 0:
@@ -377,13 +435,13 @@ class MaskedDiffusionBlockGenerationMixin(
                     if cfg_scale > 0.0:
                         un_x = x.clone()
                         un_x[unmasked_index] = mask_id
-                        try:
+                        if supports_position_ids:
                             un_out = self(
                                 un_x,
                                 attention_mask=full_attn_step,
                                 position_ids=full_pos_step,
                             )
-                        except TypeError:
+                        else:
                             un_out = self(un_x, attention_mask=full_attn_step)
                         un_logits = un_out.logits[:, T_prefix:T_total, :]
                         if right_shift_logits and T_prefix > 0:

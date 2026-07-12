@@ -23,6 +23,7 @@ Subclasses implement model-specific forward wrappers while inheriting common blo
 
 import math
 import time
+import warnings
 from typing import Any, Dict, Optional, Tuple, Union, cast
 
 import torch
@@ -63,7 +64,7 @@ class BlockDecodeMixin:
                 - steps: Total denoising steps
                 - mask_token_id: Token ID for [MASK]
                 - use_replace_cache: If True, use replace_position mode (default: False)
-                - alg: Algorithm ('origin' only in Phase M.1)
+                - alg: Algorithm ('origin', 'maskgit_plus', 'topk_margin', 'entropy')
                 - temperature, top_p, top_k: Sampling parameters
 
         Returns:
@@ -71,7 +72,6 @@ class BlockDecodeMixin:
 
         Raises:
             ValueError: If gen_length % block_length != 0
-            NotImplementedError: If alg != 'origin' (Phase M.1 limitation)
         """
         # Extract config (Fast-dLLM Dream style: use max_length, compute gen_length)
         max_length = generation_config.max_length
@@ -87,10 +87,26 @@ class BlockDecodeMixin:
             )
         use_replace_cache = getattr(generation_config, "use_replace_cache", False)
         alg = generation_config.alg
+        alg_temp = getattr(generation_config, "alg_temp", None)
         temperature = getattr(generation_config, "temperature", 1.0)
         top_p = getattr(generation_config, "top_p", None)
         top_k = getattr(generation_config, "top_k", None)
         eps = getattr(generation_config, "eps", 0.001)
+
+        if generation_config.parallel_decode and alg == "entropy":
+            # Fast-dLLM's threshold mode uses max-probability confidence only
+            # (dev/repos/fast-dllm/v1/dream/model/generation_utils_block.py L495-524).
+            # Negative-entropy confidences are <= 0 and can never reach a
+            # confidence_threshold in [0, 1], so threshold selection always takes
+            # the single max-confidence fallback token.
+            warnings.warn(
+                "alg='entropy' uses negative-entropy confidences (<= 0), which never "
+                "reach a confidence_threshold in [0, 1]; threshold-based parallel "
+                "decode degenerates to one token per step (the max-confidence "
+                "fallback). Use alg='maskgit_plus' or 'topk_margin' with "
+                "parallel_decode, or disable parallel_decode for entropy ordering.",
+                UserWarning,
+            )
 
         output_timing = getattr(generation_config, "output_timing", False)
         timing: Optional[Dict[str, Any]] = None
@@ -169,6 +185,17 @@ class BlockDecodeMixin:
             current_block_start = prompt_len + block_idx * block_length
             current_block_end = current_block_start + block_length
 
+            # Model-specific query start (constant per block). Dream's
+            # right-shifted logits need position current_block_start - 1 in the
+            # query window to predict the block's first token (its hook returns
+            # current_block_start - 1); LLaDA / TinyA2D return
+            # current_block_start, keeping their paths unchanged.
+            query_start = self._get_block_decode_query_start(
+                current_block_start=current_block_start,
+                current_block_end=current_block_end,
+                use_replace_cache=use_replace_cache,
+            )
+
             # Step 1: Initial forward (full sequence) to build cache
             initial_cache_start = _time_start()
             outputs = self._model_forward_with_cache(
@@ -187,10 +214,18 @@ class BlockDecodeMixin:
                 # Dual cache mode: keep full cache, will use replace_position later
                 cache_for_denoise = past_key_values
             else:
-                # Trim mode: keep only previous blocks
+                # Trim mode: keep only the positions before the query window.
+                # For models with query_start == current_block_start this keeps
+                # exactly the previous blocks (Fast-dLLM non-dual trimming,
+                # dev/repos/fast-dllm/v1/dream/model/generation_utils_block.py
+                # L459-465); for Dream (query_start == current_block_start - 1)
+                # the overlapping position is recomputed by the forward instead.
                 from .cache_utils import trim_kv_cache
 
-                cache_for_denoise = trim_kv_cache(past_key_values, current_block_start)
+                if query_start > 0:
+                    cache_for_denoise = trim_kv_cache(past_key_values, query_start)
+                else:
+                    cache_for_denoise = None
             _time_end(cache_prep_start, "cache_prep_s")
 
             # Step 3: Denoising loop for current block
@@ -220,11 +255,6 @@ class BlockDecodeMixin:
                 if use_replace_cache:
                     # Dual mode: forward the current block while replacing the
                     # corresponding absolute positions in the full cache.
-                    query_start = self._get_block_decode_query_start(
-                        current_block_start=current_block_start,
-                        current_block_end=current_block_end,
-                        use_replace_cache=use_replace_cache,
-                    )
                     x_forward = x[:, query_start:current_block_end]
                     if attention_mask is not None and attention_mask.ndim >= 3:
                         attn_forward = attention_mask[
@@ -237,10 +267,12 @@ class BlockDecodeMixin:
                     replace_position = torch.zeros_like(x, dtype=torch.bool)
                     replace_position[:, current_block_start:current_block_end] = True
                 else:
-                    # Trim mode: forward from current_block_start onwards
-                    x_forward = x[:, current_block_start:]
+                    # Trim mode: forward from the model's query start onwards
+                    # (query_start == current_block_start for LLaDA/TinyA2D;
+                    # current_block_start - 1 for Dream's right-shifted logits).
+                    x_forward = x[:, query_start:]
                     if attention_mask is not None and attention_mask.ndim >= 3:
-                        attn_forward = attention_mask[:, :, current_block_start:, :]
+                        attn_forward = attention_mask[:, :, query_start:, :]
                     else:
                         # 2-D padding masks describe the KEYS, which span the full
                         # sequence here (trimmed cache prefix + suffix). Slicing off
@@ -276,8 +308,14 @@ class BlockDecodeMixin:
                             :, current_block_start:current_block_end, :
                         ]
                 else:
-                    # Incremental forward: first block_length tokens are current block
-                    block_logits = logits[:, :block_length, :]
+                    # Incremental forward: the window starts at query_start, so
+                    # the current block begins at offset
+                    # current_block_start - query_start (0 for LLaDA/TinyA2D;
+                    # 1 for Dream, whose right-shift postprocess moves the
+                    # position current_block_start - 1 prediction onto the
+                    # block's first token).
+                    offset = current_block_start - query_start
+                    block_logits = logits[:, offset : offset + block_length, :]
 
                 # Get masked positions' logits
                 mask_logits = block_logits[mask_index_block]  # [N_masked, vocab_size]
@@ -290,45 +328,26 @@ class BlockDecodeMixin:
                     mask_logits[:, mask_token_id] = torch.finfo(mask_logits.dtype).min
                 _time_end(logits_slice_start, "logits_slice_s")
 
-                # Sample tokens with confidence
+                # Sample tokens with confidence (alg selects the confidence
+                # measure, matching the no-cache `_sample` dispatch).
                 sampling_start = _time_start()
-                if generation_config.parallel_decode:
-                    if alg == "maskgit_plus":
-                        sampled_confidence, sampled = sample_tokens(
-                            mask_logits,
-                            temperature=temperature,
-                            top_p=top_p,
-                            top_k=top_k,
-                            confidence_type="max_prob",
-                        )
-                    elif alg == "topk_margin":
-                        sampled_confidence, sampled = sample_tokens(
-                            mask_logits,
-                            temperature=temperature,
-                            top_p=top_p,
-                            top_k=top_k,
-                            confidence_type="margin",
-                        )
-                    elif alg == "entropy":
-                        sampled_confidence, sampled = sample_tokens(
-                            mask_logits,
-                            temperature=temperature,
-                            top_p=top_p,
-                            top_k=top_k,
-                            confidence_type="neg_entropy",
-                        )
-                    else:
-                        raise RuntimeError(
-                            f"Unknown alg: {alg!r}. Choose from 'origin', 'maskgit_plus', 'topk_margin', 'entropy'."
-                        )
-                else:
-                    sampled_confidence, sampled = sample_tokens(
-                        mask_logits,
-                        temperature=temperature,
-                        top_p=top_p,
-                        top_k=top_k,
-                        confidence_type="max_prob",
+                confidence_type_by_alg = {
+                    "origin": "max_prob",
+                    "maskgit_plus": "max_prob",
+                    "topk_margin": "margin",
+                    "entropy": "neg_entropy",
+                }
+                if alg not in confidence_type_by_alg:
+                    raise RuntimeError(
+                        f"Unknown alg: {alg!r}. Choose from 'origin', 'maskgit_plus', 'topk_margin', 'entropy'."
                     )
+                sampled_confidence, sampled = sample_tokens(
+                    mask_logits,
+                    temperature=temperature,
+                    top_p=top_p,
+                    top_k=top_k,
+                    confidence_type=confidence_type_by_alg[alg],
+                )
                 _time_end(sampling_start, "sampling_s")
 
                 transfer_start = _time_start()
@@ -352,8 +371,8 @@ class BlockDecodeMixin:
                         current_block[selected_mask] = sampled[
                             selected_mask[mask_index_block]
                         ]
-                else:
-                    # Phase M.1: Sequential decoding (origin algorithm)
+                elif alg == "origin":
+                    # Sequential decoding (origin algorithm): random transfer.
                     # Timestep transition
                     t = timesteps[step_idx]
                     s = timesteps[step_idx + 1]
@@ -376,6 +395,54 @@ class BlockDecodeMixin:
 
                     # Update sequence
                     x[:, current_block_start:current_block_end] = x0_block
+                else:
+                    # Confidence-ordered transfer: keep the schedule-driven
+                    # per-step count but pick positions by top confidence,
+                    # matching the no-cache `_sample` semantics
+                    # (diffusion_generation_utils.py, non-origin branch) and
+                    # Fast-dLLM's non-threshold ordering
+                    # (dev/repos/fast-dllm/v1/dream/model/generation_utils_block.py
+                    # L526-559: topk / alg_temp-multinomial over confidence).
+                    t = timesteps[step_idx]
+                    s = timesteps[step_idx + 1]
+                    num_mask_token = mask_index_block.sum() / mask_index_block.shape[0]
+                    n_transfer = (
+                        int(num_mask_token * (1 - s / t))
+                        if step_idx < steps_per_block - 1
+                        else int(num_mask_token)
+                    )
+
+                    if n_transfer > 0:
+                        full_confidence = torch.full_like(
+                            x[:, current_block_start:current_block_end],
+                            -torch.inf,
+                            dtype=logits.dtype,
+                        )
+                        full_confidence[mask_index_block] = sampled_confidence
+
+                        if alg_temp is None or alg_temp == 0:
+                            _, transfer_index = torch.topk(full_confidence, n_transfer)
+                        else:
+                            full_confidence = full_confidence / alg_temp
+                            full_confidence = F.softmax(full_confidence, dim=-1)
+                            transfer_index = torch.multinomial(
+                                full_confidence, num_samples=n_transfer
+                            )
+
+                        sampled_block = torch.full_like(
+                            x[:, current_block_start:current_block_end],
+                            mask_token_id,
+                            dtype=torch.long,
+                        )
+                        sampled_block[mask_index_block] = sampled
+                        row_idx = (
+                            torch.arange(x.size(0), device=device)
+                            .unsqueeze(1)
+                            .expand_as(transfer_index)
+                        )
+                        x[:, current_block_start:current_block_end][
+                            row_idx, transfer_index
+                        ] = sampled_block[row_idx, transfer_index]
 
                 _time_end(transfer_start, "threshold_transfer_s")
                 step_idx += 1
