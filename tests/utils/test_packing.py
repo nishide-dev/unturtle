@@ -140,6 +140,32 @@ def test_mask_packed_sequence_boundaries_across_multiple_rows():
     assert torch.any(flat != -100)
 
 
+def test_mask_packed_sequence_boundaries_warns_when_lengths_overflow(caplog):
+    """#49: lengths summing past the flat buffer must emit a validation warning."""
+    shift_labels = torch.arange(5, dtype=torch.long).view(1, 5)
+    lengths = torch.tensor([3, 4], dtype=torch.int32)  # sums to 7 > 5
+
+    with caplog.at_level("WARNING", logger="unturtle.utils.packing"):
+        changed = mask_packed_sequence_boundaries(shift_labels, lengths)
+
+    assert changed is True  # first boundary (index 2) still applied
+    assert shift_labels.view(-1)[2].item() == -100
+    assert any(
+        "packed seq_lengths sum to 7" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_mask_packed_sequence_boundaries_exact_fit_does_not_warn(caplog):
+    shift_labels = torch.arange(5, dtype=torch.long).view(1, 5)
+    lengths = torch.tensor([3, 2], dtype=torch.int32)
+
+    with caplog.at_level("WARNING", logger="unturtle.utils.packing"):
+        mask_packed_sequence_boundaries(shift_labels, lengths)
+
+    assert not [r for r in caplog.records if "packed seq_lengths" in r.getMessage()]
+
+
 def test_configure_sample_packing():
     config = SimpleNamespace()
     configure_sample_packing(config)

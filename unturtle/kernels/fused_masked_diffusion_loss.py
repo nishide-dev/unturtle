@@ -115,14 +115,22 @@ def fused_masked_diffusion_loss(
             logit_scaling,
         )  # [B*L], float32
     else:
-        # CPU fallback — identical semantics to fast_masked_diffusion_loss.
+        # Non-CUDA fallback — mirrors the Triton kernel's semantics exactly:
+        # logit scaling (Cohere: s * x) is applied BEFORE softcapping
+        # (Gemma-2: t * tanh(x / t)).  See unsloth
+        # kernels/cross_entropy_loss.py (_cross_entropy_forward).
         fused_labels = torch.where(
             flat_mask,
             flat_labels,
-            torch.tensor(-100, dtype=torch.long),
+            _get_neg100(flat_labels.device),
         )
+        ce_logits = logits.view(B * L, V)
+        if logit_scaling != 0:
+            ce_logits = ce_logits * logit_scaling
+        if logit_softcapping != 0:
+            ce_logits = logit_softcapping * torch.tanh(ce_logits / logit_softcapping)
         per_token_loss = F.cross_entropy(
-            logits.view(B * L, V),
+            ce_logits,
             fused_labels,
             ignore_index=-100,
             reduction="none",

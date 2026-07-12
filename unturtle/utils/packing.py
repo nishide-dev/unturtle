@@ -44,6 +44,11 @@ _PACKED_INFO_CACHE: dict = {}
 # Cache per device for build_sdpa_packed_attention_mask to avoid repeated D2H sync across layers
 _SDPA_MASK_CACHE: dict = {}
 
+# Cache per device for build_sdpa_packed_bidirectional_attention_mask
+_SDPA_BIDIRECTIONAL_MASK_CACHE: dict = {}
+
+logger = logging.getLogger(__name__)
+
 # Cache per device for build_xformers_block_causal_mask to avoid repeated D2H sync across layers
 _XFORMERS_BLOCK_MASK_CACHE: dict = {}
 
@@ -348,6 +353,65 @@ def build_sdpa_packed_attention_mask(
     return result
 
 
+def build_sdpa_packed_bidirectional_attention_mask(
+    seq_info: Tuple[torch.Tensor, torch.Tensor, int],
+    *,
+    dtype: torch.dtype,
+    device: torch.device,
+    sliding_window: Optional[int] = None,
+) -> torch.Tensor:
+    """Block-diagonal *bidirectional* SDPA mask for packed dLLM attention.
+
+    Same block-diagonal structure as :func:`build_sdpa_packed_attention_mask`
+    but WITHOUT the causal (upper-triangular) fill inside each block — every
+    token in a packed sample attends to every other token of the same sample.
+    An optional ``sliding_window`` applies a symmetric band
+    (``|q - k| < sliding_window``) inside each block.
+    """
+    seq_lengths, _, _ = seq_info
+
+    params = (dtype, sliding_window)
+    entry = _SDPA_BIDIRECTIONAL_MASK_CACHE.get(device)
+    if (
+        entry is not None
+        and entry["seq_lengths"] is seq_lengths
+        and entry["params"] == params
+    ):
+        return entry["mask"]
+
+    total_tokens = int(seq_lengths.sum().item())
+    mask = torch.full(
+        (total_tokens, total_tokens),
+        float("-inf"),
+        dtype=dtype,
+        device=device,
+    )
+    offset = 0
+    for length in seq_lengths.tolist():
+        length = int(length)
+        if length <= 0:
+            continue
+        block = torch.zeros((length, length), dtype=dtype, device=device)
+        if (
+            sliding_window is not None
+            and sliding_window > 0
+            and length > sliding_window
+        ):
+            idx = torch.arange(length, device=device)
+            dist = (idx.unsqueeze(1) - idx.unsqueeze(0)).abs()
+            block = block.masked_fill(dist >= sliding_window, float("-inf"))
+        mask[offset : offset + length, offset : offset + length] = block
+        offset += length
+
+    result = mask.unsqueeze(0).unsqueeze(0)
+    _SDPA_BIDIRECTIONAL_MASK_CACHE[device] = {
+        "seq_lengths": seq_lengths,
+        "params": params,
+        "mask": result,
+    }
+    return result
+
+
 def _normalize_packed_lengths(
     seq_lengths: Any,
     *,
@@ -382,6 +446,14 @@ def mask_packed_sequence_boundaries(
     boundary_positions = torch.cumsum(lengths, dim=0) - 1
     valid = boundary_positions < total_tokens
     if not torch.all(valid):
+        # Debug guard (#49): packed lengths silently summing past the flat
+        # buffer means the collator metadata and the batch disagree.
+        logger.warning(
+            "mask_packed_sequence_boundaries: packed seq_lengths sum to %d but "
+            "only %d tokens are available; boundaries past the buffer are ignored.",
+            int(boundary_positions[-1].item()) + 1,
+            total_tokens,
+        )
         boundary_positions = boundary_positions[valid]
     if boundary_positions.numel() == 0:
         return False
@@ -393,6 +465,7 @@ def clear_packed_caches():
     """Release cached masks/metadata to free device memory."""
     _PACKED_INFO_CACHE.clear()
     _SDPA_MASK_CACHE.clear()
+    _SDPA_BIDIRECTIONAL_MASK_CACHE.clear()
     _XFORMERS_BLOCK_MASK_CACHE.clear()
 
 
@@ -405,6 +478,7 @@ __all__ = [
     "get_packed_info_from_kwargs",
     "build_xformers_block_causal_mask",
     "build_sdpa_packed_attention_mask",
+    "build_sdpa_packed_bidirectional_attention_mask",
     "mask_packed_sequence_boundaries",
     "clear_packed_caches",
 ]

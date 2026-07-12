@@ -309,6 +309,16 @@ class DiffusionTrainer(UnturtleTrainer):
         diffusion_mask: torch.Tensor = inputs.pop("diffusion_mask")
         timesteps: torch.Tensor = inputs.pop("timesteps")
 
+        # Batch metadata consumed (read-only) by CART loss weighting: real-token
+        # mask and, for packed batches, per-row sample lengths.  Left in
+        # ``inputs`` — the model forward also consumes them.
+        attention_mask = inputs.get("attention_mask")
+        seq_lengths = inputs.get("seq_lengths")
+        if seq_lengths is None:
+            flat_lengths = inputs.get("packed_seq_lengths")
+            if flat_lengths is not None and labels.shape[0] == 1:
+                seq_lengths = [flat_lengths]
+
         outputs = model(**inputs)
         logits: torch.Tensor = outputs.logits  # [B, L, V]
 
@@ -323,7 +333,13 @@ class DiffusionTrainer(UnturtleTrainer):
         if self._right_shift_logits:
             logits = torch.cat([logits[:, :1], logits[:, :-1]], dim=1).contiguous()
 
-        loss_weights = self._build_loss_weights(timesteps, logits, diffusion_mask)
+        loss_weights = self._build_loss_weights(
+            timesteps,
+            logits,
+            diffusion_mask,
+            attention_mask=attention_mask,
+            seq_lengths=seq_lengths,
+        )
 
         loss = fast_masked_diffusion_loss(
             logits=logits,
@@ -344,8 +360,19 @@ class DiffusionTrainer(UnturtleTrainer):
         timesteps: torch.Tensor,
         logits: torch.Tensor,
         diffusion_mask: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        seq_lengths: Any | None = None,
     ) -> torch.Tensor | None:
-        """Return per-token loss weights based on ``loss_weight_type``."""
+        """Return per-token loss weights based on ``loss_weight_type``.
+
+        Args:
+            attention_mask: optional ``[B, L]`` real-token mask.  Used by CART
+                so padding never counts as clean context.
+            seq_lengths: optional per-row packed sample lengths (list of int
+                tensors/lists, one entry per batch row — the structure the
+                packed collator emits as ``seq_lengths``).  Used by CART so
+                clean context never crosses packed-sample boundaries.
+        """
         if self._loss_weight_type == "uniform":
             return None
 
@@ -369,13 +396,41 @@ class DiffusionTrainer(UnturtleTrainer):
             #
             # Reference: dev/repos/Dream/src/trainer/fsdp_sft_trainer.py L91-115, L805-821
             weight_matrix = context_adaptive_reweight(L, cart_p=self._cart_p).to(device)
-            # clean positions: maskable but NOT currently masked
-            # diffusion_mask is True where token is masked
+            # Clean context = REAL tokens that are not currently masked.
+            # Padding (attention_mask == 0) must not contribute geometric
+            # weight, otherwise identical samples padded to different lengths
+            # get different CART weights.
             clean_mask = ~diffusion_mask  # [B, L] — True at clean/unmasked positions
-            # weight[b, n] = sum of geometric weights from clean positions to n
-            weight = clean_mask.float().matmul(weight_matrix)  # [B, L]
-            # masked positions that are themselves clean get zero weight
-            weight = weight.masked_fill(clean_mask, 0.0)
+            if attention_mask is not None:
+                clean_mask = clean_mask & attention_mask.to(
+                    device=clean_mask.device, dtype=torch.bool
+                )
+            clean_f = clean_mask.float()
+            if seq_lengths is not None:
+                # Packed rows: clean context must not cross sample boundaries.
+                # The geometric weight is translation-invariant, so restricting
+                # the matmul to each sample's diagonal block reproduces the
+                # unpacked per-sample weights exactly.
+                weight = torch.zeros(
+                    diffusion_mask.shape, dtype=weight_matrix.dtype, device=device
+                )
+                for b, lengths in enumerate(seq_lengths):
+                    if isinstance(lengths, torch.Tensor):
+                        lengths = lengths.tolist()
+                    offset = 0
+                    for slen in lengths:
+                        end = min(offset + int(slen), L)
+                        if end <= offset:
+                            continue
+                        weight[b, offset:end] = clean_f[b, offset:end].matmul(
+                            weight_matrix[offset:end, offset:end]
+                        )
+                        offset = end
+            else:
+                # weight[b, n] = sum of geometric weights from clean positions to n
+                weight = clean_f.matmul(weight_matrix)  # [B, L]
+            # zero everywhere the diffusion loss is not computed (clean + pad)
+            weight = weight.masked_fill(~diffusion_mask, 0.0)
             return weight  # [B, L]
 
         raise ValueError(
