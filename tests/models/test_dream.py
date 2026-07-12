@@ -83,7 +83,7 @@ class TestDreamModel:
         assert out.logits.shape == (B, L, config.vocab_size)
 
     def test_forward_backward(self, config):
-        """Gradients flow through Dream."""
+        """Gradients flow through Dream (unshifted masked CE computed externally)."""
         from unturtle.models.backbones.dream import DreamModel
 
         model = DreamModel(config).cpu()
@@ -91,12 +91,27 @@ class TestDreamModel:
         input_ids = torch.randint(0, config.vocab_size, (B, L))
         labels = torch.randint(0, config.vocab_size, (B, L))
         labels[:, ::2] = -100
-        out = model(input_ids=input_ids, labels=labels)
-        assert out.loss is not None
-        assert not torch.isnan(out.loss)
-        out.loss.backward()
+        out = model(input_ids=input_ids)
+        loss = torch.nn.functional.cross_entropy(
+            out.logits.view(-1, config.vocab_size), labels.view(-1), ignore_index=-100
+        )
+        assert not torch.isnan(loss)
+        loss.backward()
         grads = [p.grad for p in model.parameters() if p.grad is not None]
         assert len(grads) > 0
+
+    def test_forward_labels_raises(self, config):
+        """DreamModel refuses `labels`: the inherited transformers fallback is a
+        shifted causal-LM loss, which is wrong for masked diffusion. Use
+        DiffusionTrainer (or an external unshifted masked CE) instead."""
+        from unturtle.models.backbones.dream import DreamModel
+
+        model = DreamModel(config).cpu()
+        B, L = 2, 8
+        input_ids = torch.randint(0, config.vocab_size, (B, L))
+        labels = torch.randint(0, config.vocab_size, (B, L))
+        with pytest.raises(NotImplementedError, match="DiffusionTrainer"):
+            model(input_ids=input_ids, labels=labels)
 
     def test_gradient_checkpointing_forward_backward(self, config):
         """Training-mode forward+backward with gradient checkpointing must not raise.
@@ -113,12 +128,48 @@ class TestDreamModel:
         input_ids = torch.randint(0, config.vocab_size, (B, L))
         labels = torch.randint(0, config.vocab_size, (B, L))
         labels[:, ::2] = -100
-        out = model(input_ids=input_ids, labels=labels)
-        assert out.loss is not None
-        assert not torch.isnan(out.loss)
-        out.loss.backward()
+        out = model(input_ids=input_ids)
+        loss = torch.nn.functional.cross_entropy(
+            out.logits.view(-1, config.vocab_size), labels.view(-1), ignore_index=-100
+        )
+        assert not torch.isnan(loss)
+        loss.backward()
         grads = [p.grad for p in model.parameters() if p.grad is not None]
         assert len(grads) > 0
+
+    def test_gradient_checkpointing_dual_cache_raises(self, config):
+        """dual_cache is inference-only; combined with training-mode gradient
+        checkpointing it used to be silently dropped — now it must raise."""
+        from unturtle.models.backbones.dream import DreamModel
+
+        model = DreamModel(config).cpu()
+        model.gradient_checkpointing_enable()
+        model.train()
+        input_ids = torch.randint(0, config.vocab_size, (2, 8))
+        with pytest.raises(ValueError, match="dual_cache"):
+            model(input_ids=input_ids, dual_cache=True)
+
+    def test_gradient_checkpointing_matches_plain_forward_with_padding_mask(
+        self, config
+    ):
+        """Checkpointed forward under a 2-D padding mask matches the plain path."""
+        from unturtle.models.backbones.dream import DreamModel
+
+        torch.manual_seed(0)
+        model = DreamModel(config).cpu()
+        model.train()
+        B, L = 2, 8
+        input_ids = torch.randint(2, config.vocab_size, (B, L))
+        attention_mask = torch.ones(B, L, dtype=torch.long)
+        attention_mask[0, -3:] = 0
+        plain = model(
+            input_ids=input_ids, attention_mask=attention_mask
+        ).logits.detach()
+        model.gradient_checkpointing_enable()
+        checkpointed = model(
+            input_ids=input_ids, attention_mask=attention_mask
+        ).logits.detach()
+        assert torch.allclose(plain, checkpointed, atol=1e-6)
 
     def test_gradient_checkpointing_matches_plain_forward(self, config):
         """Checkpointed forward must be numerically identical to the plain path."""
@@ -455,6 +506,30 @@ class TestDreamGenerationUtils:
         assert out.shape == (2, 8)
         assert not torch.any(out == config.mask_token_id)
 
+    def test_generate_without_pad_token_id(self, config):
+        """Regression (#48): `generate` must not crash when pad_token_id is None.
+
+        The padding-detection check used to evaluate
+        ``torch.any(input_ids == None)`` -> TypeError. The original Dream guard
+        only runs the check when a pad token is actually set.
+        """
+        from unturtle.models.backbones.dream import DreamGenerationConfig, DreamModel
+
+        torch.manual_seed(0)
+        model = DreamModel(config).cpu().eval()
+        inputs = torch.tensor([[2, 3, 4, 5]])
+        generation_config = DreamGenerationConfig(
+            max_new_tokens=4,
+            steps=4,
+            mask_token_id=config.mask_token_id,
+            pad_token_id=None,
+            eos_token_id=None,
+        )
+        with torch.no_grad():
+            out = model.generate(inputs=inputs, generation_config=generation_config)
+        assert out.shape == (1, 8)
+        assert not torch.any(out == config.mask_token_id)
+
     def test_dream_generate_accepts_algorithm(self, config):
         from unturtle.models.backbones.dream import DreamGenerationConfig, DreamModel
 
@@ -508,6 +583,27 @@ class TestDreamFastRoPE:
             pad_token_id=0,
             mask_token_id=1,
         )
+
+    @staticmethod
+    def _install_fast_forward(model):
+        """Install apply_qkv/apply_o stubs and the fast attention forward on
+        every layer (CPU-safe simulation of what _patch_dream_peft injects)."""
+        import types
+
+        from unturtle.fast_diffusion_model import (
+            _original_apply_o,
+            _original_apply_qkv,
+        )
+        from unturtle.models.backbones.dream.modeling_dream import (
+            DreamAttention_fast_forward,
+        )
+
+        for layer in model.model.layers:
+            attn = layer.self_attn
+            if not hasattr(attn, "apply_qkv"):
+                attn.apply_qkv = _original_apply_qkv
+                attn.apply_o = _original_apply_o
+            attn.forward = types.MethodType(DreamAttention_fast_forward, attn)
 
     def test_fast_forward_importable(self):
         from unturtle.models.backbones.dream.modeling_dream import (
@@ -888,6 +984,67 @@ class TestDreamFastRoPE:
             out = model(input_ids=input_ids)
         assert out.logits.shape == (B, L, config.vocab_size)
         assert not torch.isnan(out.logits).any()
+
+    def test_fast_forward_bool_padding_keep_mask(self, config):
+        """Fast forward masks padding via the shared bool [B,1,L,L] keep-mask
+        path (_apply_eager_attention_mask). Non-pad positions must match an
+        unpadded run and differ from an unmasked padded run."""
+        from unturtle.models.backbones.dream import DreamModel
+
+        torch.manual_seed(0)
+        model = DreamModel(config).cpu().eval()
+        self._install_fast_forward(model)
+
+        L_real, L_pad = 6, 8
+        real_ids = torch.randint(2, config.vocab_size, (1, L_real))
+        padded_ids = torch.full((1, L_pad), config.pad_token_id, dtype=torch.long)
+        padded_ids[:, :L_real] = real_ids
+        attention_mask = torch.zeros(1, L_pad, dtype=torch.long)
+        attention_mask[:, :L_real] = 1
+
+        with torch.no_grad():
+            ref = model(input_ids=real_ids).logits
+            masked = model(input_ids=padded_ids, attention_mask=attention_mask).logits
+            unmasked = model(input_ids=padded_ids).logits
+
+        assert torch.allclose(ref, masked[:, :L_real], atol=1e-5), (
+            f"max_diff={(ref - masked[:, :L_real]).abs().max().item():.2e}"
+        )
+        assert not torch.allclose(ref, unmasked[:, :L_real], atol=1e-5)
+
+    @pytest.mark.parametrize("use_replace_cache", [False, True])
+    def test_patched_model_cached_generate(self, config, use_replace_cache):
+        """Regression (#48): the fast forward used to raise TypeError on Dream's
+        tuple caches, so generate(use_cache=True) crashed on a patched model.
+        It now delegates to the standard attention forward, so cached block
+        decode works and matches the unpatched model exactly."""
+        from unturtle.models.backbones.dream import DreamGenerationConfig, DreamModel
+
+        generation_config = DreamGenerationConfig(
+            max_new_tokens=4,
+            steps=4,
+            block_length=2,
+            use_cache=True,
+            use_replace_cache=use_replace_cache,
+            mask_token_id=config.mask_token_id,
+            pad_token_id=config.pad_token_id,
+        )
+        inputs = torch.tensor([[2, 3, 4, 5]])
+
+        torch.manual_seed(0)
+        model = DreamModel(config).cpu().eval()
+
+        torch.manual_seed(42)
+        with torch.no_grad():
+            ref = model.generate(inputs=inputs, generation_config=generation_config)
+
+        self._install_fast_forward(model)
+        torch.manual_seed(42)
+        with torch.no_grad():
+            patched = model.generate(inputs=inputs, generation_config=generation_config)
+
+        assert torch.equal(ref, patched)
+        assert not torch.any(patched == config.mask_token_id)
 
 
 class TestDreamSavePretrained:

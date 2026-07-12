@@ -893,8 +893,15 @@ class DreamBaseModel(DreamPreTrainedModel):
             )
             use_cache = False
 
-        if inputs_embeds is None:
-            inputs_embeds = self.embed_tokens(input_ids)
+        if self.gradient_checkpointing and self.training and dual_cache:
+            # dual_cache / replace_position are inference-only kwargs; the
+            # checkpointed layer call cannot forward them (DreamDecoderLayer
+            # accepts only 8 positionals), so fail loudly instead of silently
+            # dropping the cache-replacement semantics.
+            raise ValueError(
+                "dual_cache=True is inference-only and cannot be combined with "
+                "gradient checkpointing during training."
+            )
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
@@ -1128,7 +1135,21 @@ class DreamModel(DreamGenerationMixin, DreamPreTrainedModel):
 
         loss = None
         if labels is not None:
-            loss = self.loss_function(logits, labels, self.vocab_size, **loss_kwargs)
+            # The original Dream reference (dev/repos/dllm/dllm/pipelines/dream/
+            # models/modeling_dream.py) inherits transformers' fallback
+            # ForCausalLMLoss here, which SHIFTS labels — a causal-LM objective
+            # that is incorrect for Dream's masked-diffusion semantics (loss on
+            # masked positions, unshifted; the Dream shift operation is applied
+            # to logits by the trainer, not by shifting labels). Rather than
+            # silently computing a wrong loss, refuse `labels`.
+            raise NotImplementedError(
+                "DreamModel.forward does not compute a loss from `labels`: the "
+                "inherited transformers loss is a shifted causal-LM loss, which is "
+                "wrong for masked diffusion. Train Dream with "
+                "unturtle.diffusion.DiffusionTrainer (it supplies the "
+                "masked-diffusion objective from the logits), or compute a masked "
+                "cross-entropy from `outputs.logits` yourself."
+            )
 
         if not return_dict:
             output = (logits,) + outputs[1:]
@@ -1208,7 +1229,32 @@ def DreamAttention_fast_forward(
     The rest of the forward pass is unchanged.
 
     Injected by ``FastDiffusionModel._patch_dream_peft`` when the model is on CUDA.
+
+    Cache-enabled block decode (Dream's tuple KV caches, ``dual_cache`` /
+    ``replace_position``) is not implemented by this fast path; those calls are
+    delegated to the standard (unpatched) attention forward.  Patching is done
+    at instance level (``self_attn.forward = MethodType(...)``), so
+    ``type(self).forward`` is always the original class implementation.
     """
+    dual_cache = kwargs.get("dual_cache", False)
+    replace_position = kwargs.get("replace_position")
+    if use_cache or past_key_value is not None or dual_cache:
+        # Delegate cached generation to the standard Dream attention forward,
+        # which owns tuple-cache concat / dual-cache replace semantics.
+        return type(self).forward(
+            self,
+            hidden_states,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_value=past_key_value,
+            output_attentions=output_attentions,
+            use_cache=use_cache,
+            cache_position=cache_position,
+            position_embeddings=position_embeddings,
+            replace_position=replace_position,
+            dual_cache=dual_cache,
+        )
+
     bsz, q_len, _ = hidden_states.size()
 
     query_states, key_states, value_states = self.apply_qkv(self, hidden_states)
@@ -1231,17 +1277,6 @@ def DreamAttention_fast_forward(
     query_states, key_states = _apply_dream_rope(
         query_states, key_states, cos, sin, bsz, q_len
     )
-
-    if past_key_value is not None:
-        if not hasattr(past_key_value, "update"):
-            raise TypeError(
-                "DreamAttention_fast_forward expects a cache object with update(); tuple-based block-decode caches "
-                "should use the standard Dream attention path."
-            )
-        cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
-        key_states, value_states = past_key_value.update(
-            key_states, value_states, self.layer_idx, cache_kwargs
-        )
 
     key_states = repeat_kv(key_states, self.num_key_value_groups)
     value_states = repeat_kv(value_states, self.num_key_value_groups)
