@@ -1181,3 +1181,103 @@ class TestLLaDABlockDecode:
         assert not torch.allclose(q1, q3, atol=1e-6), (
             "block_end_index=12 should produce different positions"
         )
+
+
+class TestLLaDABlockDecodePaddedBatchMask:
+    """#49: trim-mode block-decode must pass the FULL-length 2-D padding mask
+    to the inner forward — slicing it to the suffix drops exactly the
+    prompt-padding info and desyncs the mask from the KV length (LLaDA variant
+    of the TinyA2D regression in test_a2d.py::TestBlockDecodePaddedBatchMask)."""
+
+    @pytest.fixture
+    def tiny_config(self):
+        from unturtle.models.backbones.llada import LLaDAConfig
+
+        return LLaDAConfig(
+            d_model=64,
+            n_heads=4,
+            n_layers=2,
+            vocab_size=512,
+            mlp_ratio=4,
+            max_sequence_length=64,
+            attention_dropout=0.0,
+            residual_dropout=0.0,
+            embedding_dropout=0.0,
+            rope=True,
+            block_type="llama",
+            activation_type="silu",
+            init_device="cpu",
+            mask_token_id=511,
+            pad_token_id=2,
+        )
+
+    @pytest.fixture
+    def tiny_model(self, tiny_config):
+        from unturtle.models.backbones.llada import LLaDAModelLM
+
+        torch.manual_seed(42)
+        return LLaDAModelLM(tiny_config).eval()
+
+    def test_padded_batch_2d_mask_keeps_full_key_length(
+        self, tiny_model, tiny_config, monkeypatch
+    ):
+        from unturtle.models.generation.diffusion_generation_utils import (
+            MaskedDiffusionGenerationConfig,
+        )
+
+        torch.manual_seed(0)
+        B, prompt_len, max_new = 2, 6, 8
+        total_len = prompt_len + max_new
+        input_ids = torch.randint(3, 500, (B, prompt_len))
+        # Row 1 is left-padded by 2 positions.
+        attention_mask = torch.ones(B, prompt_len, dtype=torch.long)
+        input_ids[1, :2] = 2
+        attention_mask[1, :2] = 0
+
+        recorded = []
+        original = tiny_model._model_forward_with_cache
+
+        def spy(*args, **kwargs):
+            am = kwargs.get("attention_mask")
+            ids = kwargs.get("input_ids")
+            pkv = kwargs.get("past_key_values")
+            recorded.append(
+                (
+                    None if am is None else tuple(am.shape),
+                    None if ids is None else ids.shape[1],
+                    pkv is not None,
+                )
+            )
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(tiny_model, "_model_forward_with_cache", spy)
+
+        gen_config = MaskedDiffusionGenerationConfig(
+            max_new_tokens=max_new,
+            steps=4,
+            alg="origin",
+            use_cache=True,
+            use_replace_cache=False,  # trim mode
+            block_length=4,
+            mask_token_id=tiny_config.mask_token_id,
+            temperature=0.0,
+        )
+        with torch.no_grad():
+            output = tiny_model.generate(
+                inputs=input_ids,
+                attention_mask=attention_mask,
+                generation_config=gen_config,
+            )
+
+        assert output.shape == (B, total_len)
+        assert torch.equal(output[:, :prompt_len], input_ids)
+
+        # Every trim-mode denoise forward (cached, suffix input) must receive
+        # the full-length 2-D mask covering all keys, not just the suffix.
+        cached_calls = [r for r in recorded if r[2] and r[0] is not None]
+        assert cached_calls, "expected cached denoise forwards with a mask"
+        for mask_shape, q_len, _ in cached_calls:
+            assert mask_shape == (B, total_len), (
+                f"2-D mask must span all {total_len} keys (got {mask_shape}, "
+                f"q_len={q_len}) — prompt-padding columns were sliced off"
+            )

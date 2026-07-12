@@ -401,6 +401,11 @@ def prepare_for_sampling(
 
     attn_mask = (bid_k <= bid_q) & valid_q & valid_k  # [B, 1, T, T]
 
+    # NOTE: padding query rows are all-False here (pads neither query nor
+    # serve as keys).  Consumers that feed this mask to SDPA must make those
+    # rows safe first — the BD3LM loop applies
+    # ``masked_diffusion_block_mixin._pad_safe_attention_mask`` (run_attention's
+    # ``no_allowed`` pattern) to avoid NaN softmax rows.
     return attn_mask, position_ids
 
 
@@ -1124,6 +1129,19 @@ class MaskedDiffusionGenerationMixin:
             raise ValueError(
                 "`parallel_decode=True` does not support `alg='origin'`. "
                 "Use one of 'maskgit_plus', 'topk_margin', or 'entropy'."
+            )
+        if parallel_decode and alg == "entropy":
+            # Fast-dLLM's threshold mode uses max-probability confidence only
+            # (dev/repos/fast-dllm/v1/dream/model/generation_utils_block.py
+            # L495-524); negative-entropy confidences are <= 0 and never reach a
+            # confidence_threshold in [0, 1].
+            warnings.warn(
+                "alg='entropy' uses negative-entropy confidences (<= 0), which never "
+                "reach a confidence_threshold in [0, 1]; threshold-based parallel "
+                "decode degenerates to one token per step (the max-confidence "
+                "fallback). Use alg='maskgit_plus' or 'topk_margin' with "
+                "parallel_decode, or disable parallel_decode for entropy ordering.",
+                UserWarning,
             )
 
         if mask_token_id is None:
