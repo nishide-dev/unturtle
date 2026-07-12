@@ -346,6 +346,7 @@ def prepare_for_sampling(
     x: torch.Tensor,
     block_size: int,
     pad_token_id: int,
+    valid_mask: Optional[torch.Tensor] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Build block-causal attention mask and logical position IDs.
 
@@ -357,6 +358,13 @@ def prepare_for_sampling(
         x: Token ID tensor of shape ``[B, T]``.
         block_size: Number of tokens per block.
         pad_token_id: Token ID used for padding (will be masked out).
+        valid_mask: Optional ``[B, T]`` bool tensor marking valid (non-padding)
+            positions explicitly.  When provided it is authoritative — padding
+            is NOT inferred from ``pad_token_id`` equality, so prompts that
+            legitimately contain ``pad_token_id`` tokens (e.g. pad==eos chat
+            templates) are handled correctly.  When ``None`` (default),
+            validity falls back to ``x != pad_token_id`` (documented
+            limitation since #53).
 
     Returns:
         attn_mask: ``[B, 1, T, T]`` bool tensor — ``True`` means the query can
@@ -367,8 +375,16 @@ def prepare_for_sampling(
     B, T = x.shape
     device = x.device
 
-    # Per-sample valid mask
-    valid = x != pad_token_id  # [B, T]
+    # Per-sample valid mask: explicit mask wins; else infer from pad_token_id.
+    if valid_mask is not None:
+        if valid_mask.shape != x.shape:
+            raise ValueError(
+                f"`valid_mask` shape {tuple(valid_mask.shape)} must match "
+                f"`x` shape {tuple(x.shape)}."
+            )
+        valid = valid_mask.to(device=device, dtype=torch.bool)  # [B, T]
+    else:
+        valid = x != pad_token_id  # [B, T]
 
     # Logical positions for RoPE (cumsum over valid tokens, 0-based)
     pos_raw = torch.cumsum(valid.to(torch.long), dim=-1)  # [B, T] 1-based
@@ -928,7 +944,9 @@ class MaskedDiffusionGenerationMixin:
             return self._sample_with_cache(input_ids, attention_mask, generation_config)
 
         if generation_config.use_block_diffusion:
-            return self._sample_block_diffusion(input_ids, generation_config)
+            return self._sample_block_diffusion(
+                input_ids, generation_config, attention_mask=attention_mask
+            )
 
         output_history = generation_config.output_history
         return_dict_out = generation_config.return_dict

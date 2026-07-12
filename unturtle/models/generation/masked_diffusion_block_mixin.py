@@ -198,6 +198,7 @@ class MaskedDiffusionBlockGenerationMixin(
         self,
         input_ids: torch.Tensor,
         generation_config: "MaskedDiffusionGenerationConfig",
+        attention_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """BD3LM block-diffusion generation loop.
 
@@ -208,6 +209,18 @@ class MaskedDiffusionBlockGenerationMixin(
 
         Called by :meth:`MaskedDiffusionGenerationMixin._sample` when
         ``generation_config.use_block_diffusion=True``.
+
+        Args:
+            input_ids: ``[B, prompt_len]`` prompt token IDs.
+            generation_config: Resolved generation configuration.
+            attention_mask: Optional ``[B, prompt_len]`` padding mask (1 = real
+                token, 0 = padding), matching the convention of ``_sample`` /
+                ``_sample_with_cache``.  When provided it is authoritative:
+                prompt validity is derived from the mask, so prompts that
+                legitimately contain ``pad_token_id`` tokens (e.g. pad==eos
+                chat templates) are treated as real tokens.  When ``None``,
+                padding is inferred from ``pad_token_id`` equality (the
+                documented pre-#57 fallback, kept for backward compatibility).
         """
         from unturtle.models.generation.diffusion_generation_utils import (
             _add_gumbel_noise,
@@ -235,12 +248,13 @@ class MaskedDiffusionBlockGenerationMixin(
                 "before calling `generate(algorithm='bd3lm')`."
             )
 
-        # Known limitation: padding is inferred purely from pad_id token values
-        # (both here for the internal left-pad and in prepare_for_sampling),
-        # not from an attention_mask.  Genuine pad_id tokens inside the prompt
-        # would be treated as padding.  prepare_for_sampling keeps pad rows
-        # numerically safe (no all-False attention rows), but the inference
-        # itself is intentionally not redesigned here.
+        # Padding semantics (#57): when `attention_mask` is provided, prompt
+        # validity comes from the mask (authoritative) and is threaded through
+        # `prepare_for_sampling` via `valid_mask`, so genuine pad_id tokens in
+        # the prompt are treated as real.  Without a mask, padding falls back
+        # to pad_id-equality inference (documented limitation since #53).
+        # In both paths, prepare_for_sampling output is made numerically safe
+        # via _pad_safe_attention_mask (no all-False attention rows).
         pad_id = generation_config.pad_token_id
         if pad_id is None:
             pad_id = getattr(self.config, "pad_token_id", None)
@@ -256,6 +270,17 @@ class MaskedDiffusionBlockGenerationMixin(
 
         device = input_ids.device
         B, prompt_len = input_ids.shape
+
+        if attention_mask is not None:
+            if attention_mask.shape != input_ids.shape:
+                raise ValueError(
+                    f"`attention_mask` shape {tuple(attention_mask.shape)} must "
+                    f"match `input_ids` shape {tuple(input_ids.shape)} for BD3LM "
+                    "generation."
+                )
+            prompt_valid = attention_mask.to(device=device, dtype=torch.bool)
+        else:
+            prompt_valid = None
 
         if max_new_tokens is None:
             if generation_config.max_length is None:
@@ -277,8 +302,23 @@ class MaskedDiffusionBlockGenerationMixin(
             offset = padded_prompt_len - prompt_len
             x[b, offset : offset + prompt_len] = input_ids[b]
 
+        # Canvas-wide validity mask (mask-driven path only).  The internal
+        # left-pad region is invalid; prompt validity comes from the caller's
+        # attention_mask.  Extended per appended block below and passed to
+        # prepare_for_sampling as `valid_mask`.  None => pad_id-inference
+        # fallback inside prepare_for_sampling.
+        canvas_valid = None
+        if prompt_valid is not None:
+            canvas_valid = torch.zeros(
+                B, padded_prompt_len, dtype=torch.bool, device=device
+            )
+            canvas_valid[:, prompt_left_pad:] = prompt_valid
+
         # Track "given" tokens for CFG unconditional branch
-        unmasked_index = (x != mask_id) & (x != pad_id)
+        if canvas_valid is not None:
+            unmasked_index = (x != mask_id) & canvas_valid
+        else:
+            unmasked_index = (x != mask_id) & (x != pad_id)
 
         done = torch.zeros(B, dtype=torch.bool, device=device)
 
@@ -300,7 +340,9 @@ class MaskedDiffusionBlockGenerationMixin(
             T_prefix = x.shape[1]
 
             # Build block-causal attention mask + logical position IDs for prefix
-            prefix_attn, prefix_pos = prepare_for_sampling(x, block_size, pad_id)
+            prefix_attn, prefix_pos = prepare_for_sampling(
+                x, block_size, pad_id, valid_mask=canvas_valid
+            )
             prefix_attn = _pad_safe_attention_mask(prefix_attn)
 
             # Obtain KV cache for the prefix when the model's forward supports
@@ -351,6 +393,9 @@ class MaskedDiffusionBlockGenerationMixin(
             )
             new_block[done] = pad_id
             x = torch.cat([x, new_block], dim=1)
+            if canvas_valid is not None:
+                block_valid = (~done).unsqueeze(1).expand(B, cur_block_len)
+                canvas_valid = torch.cat([canvas_valid, block_valid], dim=1)
             unmasked_index = torch.cat(
                 [
                     unmasked_index,
@@ -367,7 +412,9 @@ class MaskedDiffusionBlockGenerationMixin(
             )
             effective_steps = num_transfer_tokens.shape[1]
 
-            full_attn, full_pos = prepare_for_sampling(x, block_size, pad_id)
+            full_attn, full_pos = prepare_for_sampling(
+                x, block_size, pad_id, valid_mask=canvas_valid
+            )
             full_attn = _pad_safe_attention_mask(full_attn)
             attn_block = full_attn[:, :, T_prefix:T_total, :]
             pos_block = full_pos[:, T_prefix:T_total]
@@ -415,7 +462,7 @@ class MaskedDiffusionBlockGenerationMixin(
                         self, ("position_ids",)
                     )
                     full_attn_step, full_pos_step = prepare_for_sampling(
-                        x, block_size, pad_id
+                        x, block_size, pad_id, valid_mask=canvas_valid
                     )
                     full_attn_step = _pad_safe_attention_mask(full_attn_step)
                     if supports_position_ids:
