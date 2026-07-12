@@ -436,7 +436,7 @@ class DreamGenerationMixin(BlockDecodeMixin):
                 UserWarning,
             )
         if (
-            hasattr(generation_config, "pad_token_id")
+            getattr(generation_config, "pad_token_id", None) is not None
             and torch.any(input_ids == generation_config.pad_token_id)
             and attention_mask is None
         ):
