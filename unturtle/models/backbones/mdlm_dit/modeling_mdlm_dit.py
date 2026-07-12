@@ -163,6 +163,7 @@ class DDiTBlock(nn.Module):
         if (
             self.flash_attn_func is not None
             and q.device.type == "cuda"
+            and q.dtype in (torch.float16, torch.bfloat16)
             and attn_bias is None
         ):
             out = self.flash_attn_func(
@@ -171,6 +172,16 @@ class DDiTBlock(nn.Module):
             return out.reshape(b, length, -1)
         # SDPA expects [B, H, L, D]
         qs, ks, vs = (t.transpose(1, 2) for t in (q, k, v))
+        if (
+            attn_bias is not None
+            and attn_bias.is_floating_point()
+            and attn_bias.dtype != qs.dtype
+        ):
+            # Under autocast the query dtype can differ from the dtype the bias
+            # was built in; SDPA rejects mismatched float masks. Cast at use
+            # time, clamping so finfo.min of a wider dtype does not overflow to
+            # -inf in the narrower one (-inf can NaN fully-masked query rows).
+            attn_bias = attn_bias.to(qs.dtype).clamp_min(torch.finfo(qs.dtype).min)
         out = F.scaled_dot_product_attention(
             qs, ks, vs, attn_mask=attn_bias, dropout_p=0.0, is_causal=False
         )
@@ -297,7 +308,8 @@ class MDLMDiTPreTrainedModel(PreTrainedModel):
 def _normalize_attention_mask(
     attention_mask: Optional[torch.Tensor], dtype: torch.dtype
 ) -> Optional[torch.Tensor]:
-    """Convert a [B,L] padding mask or [B,1,L,L] bool mask to an additive SDPA bias.
+    """Convert a [B,L] padding mask or a [B,1,L,L] bool / HF-additive-float mask
+    to an additive SDPA bias.
 
     Returns None when no positions are masked (lets the flash fast path run).
     """
@@ -309,7 +321,17 @@ def _normalize_attention_mask(
             attention_mask.bool().unsqueeze(1).unsqueeze(-2),
             attention_mask.bool().unsqueeze(1).unsqueeze(-1),
         )
+    elif attention_mask.is_floating_point():
+        # HF-standard additive convention (transformers'
+        # _prepare_4d_attention_mask): 0.0 = keep, a large negative value
+        # (finfo.min or -inf) = masked. `.bool()` would invert this — 0.0 keep
+        # positions become False and negative masked positions become True.
+        # CAVEAT: a float mask with 0/1 *keep* semantics is ambiguous at 0.0 and
+        # is treated as additive here (0.0 -> keep). Pass bool masks for
+        # keep-mask semantics.
+        keep = attention_mask >= 0
     else:
+        # bool / integer masks use keep-mask semantics (nonzero = keep).
         keep = attention_mask.bool()
     if keep.all():
         return None
