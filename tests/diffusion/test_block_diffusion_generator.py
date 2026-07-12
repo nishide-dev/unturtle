@@ -89,6 +89,40 @@ class TestPrepareForSampling:
         assert not mask[0, 0, :, 3:].any(), "Padding columns must not be attended to"
         assert not mask[0, 0, 3:, :].any(), "Padding rows must not attend"
 
+    def test_explicit_valid_mask_overrides_pad_id_inference(self):
+        # Token value == PAD_ID at position 1, but the explicit valid_mask marks
+        # it as real: it must be attended and counted in logical positions.
+        x = torch.tensor([[5, PAD_ID, 7, 0, 0]])
+        valid = torch.tensor([[True, True, True, False, False]])
+        mask, pos = prepare_for_sampling(
+            x, block_size=2, pad_token_id=PAD_ID, valid_mask=valid
+        )
+        # Position 1 (pad_id token, valid) serves as key and queries
+        assert mask[0, 0, 0, 1], "Valid pad_id token must serve as a key"
+        assert mask[0, 0, 1, 0], "Valid pad_id token must query"
+        # Logical positions count the pad_id token as real
+        assert pos[0].tolist()[:3] == [0, 1, 2]
+        # Invalid positions still excluded regardless of token value
+        assert not mask[0, 0, :, 3:].any()
+        assert not mask[0, 0, 3:, :].any()
+
+    def test_explicit_valid_mask_excludes_non_pad_tokens(self):
+        # Non-pad token values marked invalid by the mask must be excluded.
+        x = torch.tensor([[9, 8, 7, 6]])
+        valid = torch.tensor([[False, False, True, True]])
+        mask, pos = prepare_for_sampling(
+            x, block_size=2, pad_token_id=PAD_ID, valid_mask=valid
+        )
+        assert not mask[0, 0, :, :2].any(), "Masked-out columns must be excluded"
+        assert not mask[0, 0, :2, :].any(), "Masked-out rows must be excluded"
+        assert pos[0].tolist() == [0, 0, 0, 1]
+
+    def test_valid_mask_shape_mismatch_raises(self):
+        x = torch.tensor([[5, 6, 7, 0]])
+        bad = torch.ones(1, 3, dtype=torch.bool)
+        with pytest.raises(ValueError, match="valid_mask"):
+            prepare_for_sampling(x, block_size=2, pad_token_id=PAD_ID, valid_mask=bad)
+
 
 # ---------------------------------------------------------------------------
 # BD3LM generation via model.generate(use_block_diffusion=True)
@@ -214,6 +248,181 @@ class TestBD3LMViaModelAPI:
             assert not (out[:, first_eos + 1 :] == MASK_ID).any(), (
                 "No mask tokens should remain after EOS"
             )
+
+
+# ---------------------------------------------------------------------------
+# BD3LM attention_mask plumbing (#57): explicit padding mask vs pad_id inference
+# ---------------------------------------------------------------------------
+
+
+class TestBD3LMAttentionMask:
+    def _spy_prepare_for_sampling(self, monkeypatch):
+        """Capture (x, valid_mask) for every prepare_for_sampling call."""
+        import unturtle.models.generation.diffusion_generation_utils as dgu
+
+        calls = []
+        original = dgu.prepare_for_sampling
+
+        def spy(x, block_size, pad_token_id, valid_mask=None):
+            calls.append((x.detach().clone(), valid_mask))
+            return original(x, block_size, pad_token_id, valid_mask=valid_mask)
+
+        monkeypatch.setattr(dgu, "prepare_for_sampling", spy)
+        return calls
+
+    def test_prompt_containing_pad_id_with_mask_treated_as_real(
+        self, tiny_model, monkeypatch
+    ):
+        """(a) pad_id tokens in the prompt + explicit all-ones attention_mask:
+
+        the mask is authoritative, so those positions are valid — unlike the
+        pad_id-inference fallback, which would treat them as padding.
+        """
+        calls = self._spy_prepare_for_sampling(monkeypatch)
+        prompt = torch.tensor([[1, PAD_ID, 3, 4]])  # genuine pad_id at pos 1
+        block_size = 4
+        with torch.no_grad():
+            out = tiny_model.generate(
+                inputs=prompt,
+                attention_mask=torch.ones_like(prompt),
+                use_block_diffusion=True,
+                bd3lm_block_size=block_size,
+                max_new_tokens=4,
+                steps=2,
+                mask_token_id=MASK_ID,
+                pad_token_id=PAD_ID,
+                temperature=0.0,
+            )
+        assert out.shape == (1, 4 + 4)
+        assert len(calls) > 0
+        # Every call received an explicit valid_mask (mask-driven path)
+        assert all(vm is not None for _, vm in calls)
+        # First (prefix) call: the pad_id token at position 1 is marked valid
+        first_x, first_vm = calls[0]
+        assert first_x[0, 1].item() == PAD_ID
+        assert bool(first_vm[0, 1]), "pad_id token under mask=1 must be valid"
+        assert first_vm[0].all(), "All prompt positions must be valid per the mask"
+
+    def test_prompt_containing_pad_id_without_mask_uses_inference_fallback(
+        self, tiny_model, monkeypatch
+    ):
+        """(c) No attention_mask: fallback passes valid_mask=None so padding is
+
+        inferred from pad_id equality inside prepare_for_sampling (pre-#57
+        behavior, unchanged).
+        """
+        calls = self._spy_prepare_for_sampling(monkeypatch)
+        prompt = torch.tensor([[1, PAD_ID, 3, 4]])
+        with torch.no_grad():
+            out = tiny_model.generate(
+                inputs=prompt,
+                use_block_diffusion=True,
+                bd3lm_block_size=4,
+                max_new_tokens=4,
+                steps=2,
+                mask_token_id=MASK_ID,
+                pad_token_id=PAD_ID,
+                temperature=0.0,
+            )
+        assert out.shape == (1, 4 + 4)
+        assert len(calls) > 0
+        assert all(vm is None for _, vm in calls), (
+            "Without attention_mask, prepare_for_sampling must run the "
+            "pad_id-inference fallback (valid_mask=None)"
+        )
+
+    def test_padded_batch_mask_derived_validity(self, tiny_model, monkeypatch):
+        """(b) 2-row batch: row 1 is left-padded with NON-pad token values under
+
+        mask=0.  Only the attention_mask can mark them invalid — assert the
+        canvas validity handed to prepare_for_sampling reflects the mask, not
+        the token values.
+        """
+        calls = self._spy_prepare_for_sampling(monkeypatch)
+        prompt = torch.tensor(
+            [
+                [1, 2, 3, 4],
+                [9, 9, 3, 4],  # first two positions are padding per the mask
+            ]
+        )
+        attn = torch.tensor([[1, 1, 1, 1], [0, 0, 1, 1]])
+        with torch.no_grad():
+            out = tiny_model.generate(
+                inputs=prompt,
+                attention_mask=attn,
+                use_block_diffusion=True,
+                bd3lm_block_size=4,
+                max_new_tokens=4,
+                steps=2,
+                mask_token_id=MASK_ID,
+                pad_token_id=PAD_ID,
+                temperature=0.0,
+            )
+        assert out.shape == (2, 4 + 4)
+        first_x, first_vm = calls[0]
+        assert first_vm is not None
+        # Row 0 fully valid; row 1: mask=0 positions invalid despite tokens != pad_id
+        assert first_vm[0].all()
+        assert not first_vm[1, 0] and not first_vm[1, 1]
+        assert first_vm[1, 2] and first_vm[1, 3]
+        assert first_x[1, 0].item() == 9  # token value untouched — mask decided
+        # No mask tokens left in the generated region
+        assert not (out[:, 4:] == MASK_ID).any()
+
+    def test_padded_batch_unpadded_row_matches_single_run(self, tiny_model):
+        """(b) The unpadded row of a masked, padded batch matches a single-row run."""
+        row0 = torch.tensor([[1, 2, 3, 4]])
+        batch = torch.tensor([[1, 2, 3, 4], [9, 9, 3, 4]])
+        attn = torch.tensor([[1, 1, 1, 1], [0, 0, 1, 1]])
+        gen_kwargs = dict(
+            use_block_diffusion=True,
+            bd3lm_block_size=4,
+            max_new_tokens=4,
+            steps=2,
+            mask_token_id=MASK_ID,
+            pad_token_id=PAD_ID,
+            temperature=0.0,
+        )
+        with torch.no_grad():
+            out_single = tiny_model.generate(
+                inputs=row0, attention_mask=torch.ones_like(row0), **gen_kwargs
+            )
+            out_batch = tiny_model.generate(
+                inputs=batch, attention_mask=attn, **gen_kwargs
+            )
+        assert torch.equal(out_batch[0], out_single[0])
+
+    def test_attention_mask_shape_mismatch_raises(self, tiny_model):
+        prompt = torch.tensor([[1, 2, 3, 4]])
+        bad_mask = torch.ones(1, 3, dtype=torch.long)
+        with pytest.raises(ValueError, match="attention_mask"):
+            tiny_model.generate(
+                inputs=prompt,
+                attention_mask=bad_mask,
+                use_block_diffusion=True,
+                bd3lm_block_size=4,
+                max_new_tokens=4,
+                steps=2,
+                mask_token_id=MASK_ID,
+                pad_token_id=PAD_ID,
+            )
+
+    def test_no_mask_runs_match_before_and_after(self, tiny_model):
+        """(c) Fallback determinism: two identical no-mask runs agree (temperature=0)."""
+        prompt = torch.tensor([[1, 2, 3, 4]])
+        gen_kwargs = dict(
+            use_block_diffusion=True,
+            bd3lm_block_size=4,
+            max_new_tokens=4,
+            steps=2,
+            mask_token_id=MASK_ID,
+            pad_token_id=PAD_ID,
+            temperature=0.0,
+        )
+        with torch.no_grad():
+            out1 = tiny_model.generate(inputs=prompt, **gen_kwargs)
+            out2 = tiny_model.generate(inputs=prompt, **gen_kwargs)
+        assert torch.equal(out1, out2)
 
 
 # ---------------------------------------------------------------------------
