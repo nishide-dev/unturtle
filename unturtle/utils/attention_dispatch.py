@@ -30,6 +30,7 @@ from unsloth.models._utils import HAS_FLASH_ATTENTION, xformers, xformers_attent
 from .packing import (
     build_sdpa_packed_attention_mask,
     build_sdpa_packed_bidirectional_attention_mask,
+    build_xformers_block_bidirectional_mask,
     build_xformers_block_causal_mask,
 )
 
@@ -52,8 +53,17 @@ XFORMERS = "xformers"
 SDPA = "sdpa"
 
 
+# Base class covering both the causal (BlockDiagonalCausalMask) and the
+# non-causal (BlockDiagonalMask) packed biases — the causal mask subclasses
+# the non-causal one in xformers.
 XFORMERS_BLOCK_DIAG_CLS = (
-    xformers.attn_bias.BlockDiagonalCausalMask if HAS_XFORMERS else None
+    getattr(
+        xformers.attn_bias,
+        "BlockDiagonalMask",
+        xformers.attn_bias.BlockDiagonalCausalMask,
+    )
+    if HAS_XFORMERS
+    else None
 )
 
 
@@ -123,11 +133,20 @@ def run_attention(
     ):
         backend = SDPA
 
-    if backend == XFORMERS and context.seq_info is not None and not config.causal:
-        # The xformers packed path builds a *causal* block-diagonal bias
-        # (build_xformers_block_causal_mask).  Bidirectional configs must not
-        # receive causal masking, so fall back to the SDPA packed path which
-        # builds a bidirectional block mask below.
+    # Bidirectional packed attention uses the non-causal BlockDiagonalMask
+    # bias.  When it cannot be built (xformers class unavailable, or a
+    # sliding window is set — xformers has no *bidirectional* local block
+    # bias), fall back to the SDPA packed path which builds a dense
+    # bidirectional block mask below.
+    if (
+        backend == XFORMERS
+        and context.seq_info is not None
+        and not config.causal
+        and build_xformers_block_bidirectional_mask(
+            context.seq_info, sliding_window=context.sliding_window
+        )
+        is None
+    ):
         backend = SDPA
 
     flash_dense_kwargs = config.flash_dense_kwargs or {}
@@ -166,11 +185,18 @@ def run_attention(
             bsz, q_len, n_heads, head_dim
         )
     if backend == XFORMERS:
-        attn_bias = build_xformers_block_causal_mask(
-            context.seq_info,
-            sliding_window=sliding_window,
-            base_mask=context.causal_mask,
-        )
+        if not config.causal and context.seq_info is not None:
+            # Non-causal packed: block-diagonal bias WITHOUT the causal
+            # triangle (guaranteed non-None by the routing check above).
+            attn_bias = build_xformers_block_bidirectional_mask(
+                context.seq_info, sliding_window=sliding_window
+            )
+        else:
+            attn_bias = build_xformers_block_causal_mask(
+                context.seq_info,
+                sliding_window=sliding_window,
+                base_mask=context.causal_mask,
+            )
 
         Q_t = Q.transpose(1, 2)
         K_t = K.transpose(1, 2)
@@ -359,6 +385,7 @@ __all__ = [
     "XFORMERS",
     "build_sdpa_packed_attention_mask",
     "build_sdpa_packed_bidirectional_attention_mask",
+    "build_xformers_block_bidirectional_mask",
     "build_xformers_block_causal_mask",
     "run_attention",
     "select_attention_backend",

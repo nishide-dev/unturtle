@@ -601,3 +601,34 @@ class TestMDLMDiTGradientCheckpointing:
             got = model(input_ids=input_ids).logits
 
         assert torch.allclose(ref, got, atol=1e-5)
+
+
+class TestNormalizeAttentionMaskFloatKeepHeuristic:
+    """Float masks with 0/1 keep semantics are detected via max() > 0 and not
+    misread as HF-additive all-keep."""
+
+    def test_float_binary_keep_mask(self):
+        from unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit import (
+            _normalize_attention_mask,
+        )
+
+        B, L = 1, 4
+        keep_mask = torch.ones(B, 1, L, L)
+        keep_mask[:, :, :, -1] = 0.0  # last key masked (keep semantics)
+        bias = _normalize_attention_mask(keep_mask, torch.float32)
+        assert bias is not None
+        assert (bias[:, :, :, -1] < 0).all(), "0.0 keep-positions must be masked"
+        assert (bias[:, :, :, :-1] == 0).all()
+
+    def test_additive_mask_still_additive(self):
+        from unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit import (
+            _normalize_attention_mask,
+        )
+
+        B, L = 1, 4
+        additive = torch.zeros(B, 1, L, L)
+        additive[:, :, :, -1] = torch.finfo(torch.float32).min
+        bias = _normalize_attention_mask(additive, torch.float32)
+        assert bias is not None
+        assert (bias[:, :, :, -1] < 0).all()
+        assert (bias[:, :, :, :-1] == 0).all()

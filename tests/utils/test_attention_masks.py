@@ -403,8 +403,110 @@ def test_run_attention_bidirectional_no_mask_disables_is_causal(monkeypatch):
     assert captured["is_causal"] is False
 
 
+def test_xformers_block_bidirectional_mask_is_noncausal_block_diagonal():
+    """The non-causal BlockDiagonalMask must match the dense bidirectional mask."""
+    if packing_utils._XFormersBidirectionalBlockMask is None:
+        pytest.skip("xformers BlockDiagonalMask not available")
+    packing_utils.clear_packed_caches()
+
+    seq_info = _make_seq_info([3, 5])
+    bias = packing_utils.build_xformers_block_bidirectional_mask(seq_info)
+    assert bias is not None
+    assert isinstance(bias, packing_utils._XFormersBidirectionalBlockMask)
+    # Must NOT be the causal subclass.
+    assert not isinstance(bias, packing_utils._XFormersBlockMask)
+
+    dense = bias.materialize((8, 8))
+    expected = packing_utils.build_sdpa_packed_bidirectional_attention_mask(
+        seq_info, dtype=dense.dtype, device=torch.device("cpu")
+    )[0, 0]
+    assert torch.equal(dense.isinf(), expected.isinf())
+    # Bidirectional inside each block (upper triangle allowed).
+    assert dense[0, 2].item() == 0.0
+    assert dense[3, 7].item() == 0.0
+    # Blocked across samples.
+    assert dense[0, 3].item() == float("-inf")
+    assert dense[7, 2].item() == float("-inf")
+
+
+def test_xformers_block_bidirectional_mask_sliding_window_unsupported():
+    """sliding_window has no non-causal xformers bias → must return None."""
+    if packing_utils._XFormersBidirectionalBlockMask is None:
+        pytest.skip("xformers BlockDiagonalMask not available")
+    packing_utils.clear_packed_caches()
+
+    seq_info = _make_seq_info([4, 4])
+    assert (
+        packing_utils.build_xformers_block_bidirectional_mask(
+            seq_info, sliding_window=2
+        )
+        is None
+    )
+    # window<=0 means "no window" and must still build the bias
+    assert (
+        packing_utils.build_xformers_block_bidirectional_mask(
+            seq_info, sliding_window=0
+        )
+        is not None
+    )
+
+
+def test_run_attention_bidirectional_xformers_packed_uses_noncausal_bias(monkeypatch):
+    """causal=False + seq_info must route through xformers with a NON-causal bias."""
+    if packing_utils._XFormersBidirectionalBlockMask is None:
+        pytest.skip("xformers BlockDiagonalMask not available")
+    packing_utils.clear_packed_caches()
+    captured = {}
+
+    def _fail_sdpa(*args, **kwargs):  # pragma: no cover - must not run
+        raise AssertionError("SDPA fallback must not be used when the bias exists")
+
+    def _fake_xformers(Q, K, V, attn_bias=None, **kwargs):
+        captured["bias"] = attn_bias
+        return torch.zeros(Q.shape)
+
+    monkeypatch.setattr(attention_dispatch, "scaled_dot_product_attention", _fail_sdpa)
+    monkeypatch.setattr(
+        attention_dispatch, "xformers_attention", _fake_xformers, raising=False
+    )
+
+    config = attention_dispatch.AttentionConfig(
+        backend=attention_dispatch.XFORMERS,
+        n_kv_heads=1,
+        n_groups=1,
+        causal=False,
+    )
+    seq_info = _make_seq_info([2, 2])
+    context = attention_dispatch.AttentionContext(
+        bsz=1,
+        q_len=4,
+        kv_seq_len=4,
+        n_heads=1,
+        head_dim=1,
+        requires_grad=False,
+        seq_info=seq_info,
+        attention_mask=None,
+        causal_mask=None,
+    )
+
+    Q = torch.zeros(1, 1, 4, 1)
+    attention_dispatch.run_attention(
+        config=config, context=context, Q=Q, K=Q.clone(), V=Q.clone()
+    )
+
+    bias = captured["bias"]
+    assert isinstance(bias, packing_utils._XFormersBidirectionalBlockMask)
+    assert not isinstance(bias, packing_utils._XFormersBlockMask)
+    dense = bias.materialize((4, 4))
+    assert dense[0, 1].item() == 0.0  # bidirectional inside block
+    assert dense[1, 0].item() == 0.0
+    assert dense[0, 2].item() == float("-inf")  # blocked across samples
+
+
 def test_run_attention_bidirectional_xformers_packed_falls_back_to_sdpa(monkeypatch):
-    """causal=False must never route packed input through the causal xformers bias."""
+    """When the non-causal bias can't be built (no xformers class, or a sliding
+    window), causal=False + seq_info must fall back to the SDPA dense mask —
+    never the causal xformers bias."""
     packing_utils.clear_packed_caches()
     captured = {}
 
@@ -418,6 +520,10 @@ def test_run_attention_bidirectional_xformers_packed_falls_back_to_sdpa(monkeypa
     monkeypatch.setattr(attention_dispatch, "scaled_dot_product_attention", _fake_sdpa)
     monkeypatch.setattr(
         attention_dispatch, "xformers_attention", _fail_xformers, raising=False
+    )
+    # Simulate xformers BlockDiagonalMask being unavailable.
+    monkeypatch.setattr(
+        packing_utils, "_XFormersBidirectionalBlockMask", None, raising=False
     )
 
     config = attention_dispatch.AttentionConfig(
@@ -448,6 +554,137 @@ def test_run_attention_bidirectional_xformers_packed_falls_back_to_sdpa(monkeypa
     assert mask is not None and mask.shape == (1, 1, 4, 4)
     assert mask[0, 0, 0, 1].item() == 0.0  # bidirectional inside block
     assert mask[0, 0, 0, 2].item() == float("-inf")  # blocked across samples
+
+
+def test_run_attention_bidirectional_xformers_packed_sliding_window_uses_sdpa(
+    monkeypatch,
+):
+    """Sliding window + bidirectional packed cannot be an xformers bias → SDPA band."""
+    packing_utils.clear_packed_caches()
+    captured = {}
+
+    def _fake_sdpa(Q, K, V, **kwargs):
+        captured["mask"] = kwargs.get("attn_mask")
+        return torch.zeros_like(Q)
+
+    def _fail_xformers(*args, **kwargs):  # pragma: no cover - must not run
+        raise AssertionError("xformers has no bidirectional local block bias")
+
+    monkeypatch.setattr(attention_dispatch, "scaled_dot_product_attention", _fake_sdpa)
+    monkeypatch.setattr(
+        attention_dispatch, "xformers_attention", _fail_xformers, raising=False
+    )
+
+    config = attention_dispatch.AttentionConfig(
+        backend=attention_dispatch.XFORMERS,
+        n_kv_heads=1,
+        n_groups=1,
+        causal=False,
+    )
+    seq_info = _make_seq_info([4])
+    context = attention_dispatch.AttentionContext(
+        bsz=1,
+        q_len=4,
+        kv_seq_len=4,
+        n_heads=1,
+        head_dim=1,
+        requires_grad=False,
+        seq_info=seq_info,
+        attention_mask=None,
+        causal_mask=None,
+        sliding_window=2,
+    )
+
+    Q = torch.zeros(1, 1, 4, 1)
+    attention_dispatch.run_attention(
+        config=config, context=context, Q=Q, K=Q.clone(), V=Q.clone()
+    )
+
+    mask = captured["mask"]
+    assert mask is not None and mask.shape == (1, 1, 4, 4)
+    assert mask[0, 0, 0, 1].item() == 0.0  # within symmetric band
+    assert mask[0, 0, 1, 0].item() == 0.0
+    assert mask[0, 0, 0, 2].item() == float("-inf")  # outside band
+    assert mask[0, 0, 3, 0].item() == float("-inf")
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("n_kv_heads,n_groups", [(4, 1), (2, 2)])
+def test_xformers_bidirectional_packed_matches_sdpa_gpu(n_kv_heads, n_groups):
+    """Numerics: xformers non-causal packed bias must match the SDPA dense path."""
+    if not torch.cuda.is_available():
+        pytest.skip("requires CUDA")
+    if not attention_dispatch.HAS_XFORMERS:
+        pytest.skip("xformers unavailable/unsupported on this GPU")
+    if packing_utils._XFormersBidirectionalBlockMask is None:
+        pytest.skip("xformers BlockDiagonalMask not available")
+
+    device = torch.device("cuda")
+    torch.manual_seed(0)
+    lengths = [5, 3, 8]
+    total = sum(lengths)
+    n_heads = n_kv_heads * n_groups
+    head_dim = 32
+
+    seq_lengths = torch.tensor(lengths, dtype=torch.int32, device=device)
+    cu = torch.cat(
+        [
+            torch.zeros(1, dtype=torch.int32, device=device),
+            torch.cumsum(seq_lengths, dim=0, dtype=torch.int32),
+        ]
+    )
+    seq_info = (seq_lengths, cu, max(lengths))
+
+    Q = torch.randn(1, n_heads, total, head_dim, device=device, dtype=torch.float16)
+    K = torch.randn(1, n_kv_heads, total, head_dim, device=device, dtype=torch.float16)
+    V = torch.randn(1, n_kv_heads, total, head_dim, device=device, dtype=torch.float16)
+
+    def _context():
+        return attention_dispatch.AttentionContext(
+            bsz=1,
+            q_len=total,
+            kv_seq_len=total,
+            n_heads=n_heads,
+            head_dim=head_dim,
+            requires_grad=False,
+            seq_info=seq_info,
+            attention_mask=None,
+            causal_mask=None,
+        )
+
+    packing_utils.clear_packed_caches()
+    out_xf = attention_dispatch.run_attention(
+        config=attention_dispatch.AttentionConfig(
+            backend=attention_dispatch.XFORMERS,
+            n_kv_heads=n_kv_heads,
+            n_groups=n_groups,
+            causal=False,
+        ),
+        context=_context(),
+        Q=Q,
+        K=K,
+        V=V,
+    )
+
+    packing_utils.clear_packed_caches()
+    out_sdpa = attention_dispatch.run_attention(
+        config=attention_dispatch.AttentionConfig(
+            backend=attention_dispatch.SDPA,
+            n_kv_heads=n_kv_heads,
+            n_groups=n_groups,
+            sdpa_kwargs={"is_causal": False},
+            causal=False,
+        ),
+        context=_context(),
+        Q=Q,
+        K=K,
+        V=V,
+    )
+
+    assert out_xf.shape == out_sdpa.shape
+    assert torch.allclose(out_xf.float(), out_sdpa.float(), atol=2e-3, rtol=2e-3), (
+        f"max diff {(out_xf.float() - out_sdpa.float()).abs().max().item()}"
+    )
 
 
 def test_run_attention_packed_lengths_exceeding_seq_len_raises(monkeypatch):

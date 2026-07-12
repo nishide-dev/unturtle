@@ -29,14 +29,24 @@ try:
     from xformers.ops.fmha.attn_bias import (
         BlockDiagonalCausalMask as _XFormersBlockMask,
     )
+    from xformers.ops.fmha.attn_bias import (
+        BlockDiagonalMask as _XFormersBidirectionalBlockMask,
+    )
 except Exception:
     try:
-        from xformers.attn_bias import BlockDiagonalCausalMask as _XFormersBlockMask
+        from xformers.attn_bias import (
+            BlockDiagonalCausalMask as _XFormersBlockMask,
+        )
+        from xformers.attn_bias import (
+            BlockDiagonalMask as _XFormersBidirectionalBlockMask,
+        )
     except Exception:
         _XFormersBlockMask = None
+        _XFormersBidirectionalBlockMask = None
 
 _XFORMERS_MASK_CACHE_MAXSIZE = 32
 _XFORMERS_MASK_CACHE: OrderedDict[Tuple[Tuple[int, ...], int], Any] = OrderedDict()
+_XFORMERS_BIDIRECTIONAL_MASK_CACHE: OrderedDict[Tuple[int, ...], Any] = OrderedDict()
 
 # Cache per device for get_packed_info_from_kwargs to avoid repeated D2H sync across layers
 _PACKED_INFO_CACHE: dict = {}
@@ -51,6 +61,9 @@ logger = logging.getLogger(__name__)
 
 # Cache per device for build_xformers_block_causal_mask to avoid repeated D2H sync across layers
 _XFORMERS_BLOCK_MASK_CACHE: dict = {}
+
+# Cache per device for build_xformers_block_bidirectional_mask
+_XFORMERS_BIDIRECTIONAL_BLOCK_MASK_CACHE: dict = {}
 
 
 def _window_cache_key(sliding_window: Optional[int]) -> int:
@@ -80,6 +93,23 @@ def _get_cached_block_mask(
     _XFORMERS_MASK_CACHE[cache_key] = mask
     if len(_XFORMERS_MASK_CACHE) > _XFORMERS_MASK_CACHE_MAXSIZE:
         _XFORMERS_MASK_CACHE.popitem(last=False)
+    return mask
+
+
+def _get_cached_bidirectional_block_mask(lengths: Tuple[int, ...]):
+    if _XFormersBidirectionalBlockMask is None:
+        return None
+
+    cached = _XFORMERS_BIDIRECTIONAL_MASK_CACHE.get(lengths)
+    if cached is not None:
+        _XFORMERS_BIDIRECTIONAL_MASK_CACHE.move_to_end(lengths)
+        return cached
+
+    mask = _XFormersBidirectionalBlockMask.from_seqlens(list(lengths))
+
+    _XFORMERS_BIDIRECTIONAL_MASK_CACHE[lengths] = mask
+    if len(_XFORMERS_BIDIRECTIONAL_MASK_CACHE) > _XFORMERS_MASK_CACHE_MAXSIZE:
+        _XFORMERS_BIDIRECTIONAL_MASK_CACHE.popitem(last=False)
     return mask
 
 
@@ -297,6 +327,53 @@ def build_xformers_block_causal_mask(
     return mask
 
 
+def build_xformers_block_bidirectional_mask(
+    seq_info: Optional[Tuple[torch.Tensor, torch.Tensor, int]],
+    *,
+    sliding_window: Optional[int] = None,
+):
+    """Non-causal ``BlockDiagonalMask`` for packed *bidirectional* attention.
+
+    Mirrors :func:`build_xformers_block_causal_mask` but every token in a
+    packed sample attends to every other token of the same sample — the
+    xformers-native equivalent of
+    :func:`build_sdpa_packed_bidirectional_attention_mask` (O(T) bias instead
+    of a dense O(T^2) additive mask).
+
+    Returns ``None`` — callers must fall back to the SDPA dense mask — when:
+
+      * xformers (or ``BlockDiagonalMask``) is unavailable,
+      * ``seq_info`` is ``None`` or empty, or
+      * ``sliding_window`` is set: ``BlockDiagonalMask.make_local_attention``
+        returns a *causal* local bias (``BlockDiagonalCausalLocalAttentionMask``
+        as of xformers 0.0.35), so the symmetric bidirectional band
+        (``|q - k| < sliding_window``) cannot be represented as an xformers
+        attn_bias.
+    """
+    if _XFormersBidirectionalBlockMask is None or seq_info is None:
+        return None
+    if sliding_window is not None and sliding_window > 0:
+        return None
+
+    seq_lengths, _, _ = seq_info
+    device = seq_lengths.device
+    entry = _XFORMERS_BIDIRECTIONAL_BLOCK_MASK_CACHE.get(device)
+    if entry is not None and entry["seq_lengths"] is seq_lengths:
+        return entry["mask"]
+
+    lengths_tensor = seq_lengths.to("cpu", torch.int32)
+    if lengths_tensor.numel() == 0:
+        return None
+    lengths = tuple(int(x) for x in lengths_tensor.tolist())
+    mask = _get_cached_bidirectional_block_mask(lengths)
+
+    _XFORMERS_BIDIRECTIONAL_BLOCK_MASK_CACHE[device] = {
+        "seq_lengths": seq_lengths,
+        "mask": mask,
+    }
+    return mask
+
+
 def build_sdpa_packed_attention_mask(
     seq_info: Tuple[torch.Tensor, torch.Tensor, int],
     *,
@@ -467,6 +544,9 @@ def clear_packed_caches():
     _SDPA_MASK_CACHE.clear()
     _SDPA_BIDIRECTIONAL_MASK_CACHE.clear()
     _XFORMERS_BLOCK_MASK_CACHE.clear()
+    _XFORMERS_BIDIRECTIONAL_BLOCK_MASK_CACHE.clear()
+    _XFORMERS_MASK_CACHE.clear()
+    _XFORMERS_BIDIRECTIONAL_MASK_CACHE.clear()
 
 
 __all__ = [
@@ -477,6 +557,7 @@ __all__ = [
     "mark_allow_overlength",
     "get_packed_info_from_kwargs",
     "build_xformers_block_causal_mask",
+    "build_xformers_block_bidirectional_mask",
     "build_sdpa_packed_attention_mask",
     "build_sdpa_packed_bidirectional_attention_mask",
     "mask_packed_sequence_boundaries",

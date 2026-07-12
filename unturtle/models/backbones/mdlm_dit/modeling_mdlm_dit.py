@@ -326,10 +326,11 @@ def _normalize_attention_mask(
         # _prepare_4d_attention_mask): 0.0 = keep, a large negative value
         # (finfo.min or -inf) = masked. `.bool()` would invert this — 0.0 keep
         # positions become False and negative masked positions become True.
-        # CAVEAT: a float mask with 0/1 *keep* semantics is ambiguous at 0.0 and
-        # is treated as additive here (0.0 -> keep). Pass bool masks for
-        # keep-mask semantics.
-        keep = attention_mask >= 0
+        # Heuristic for float masks with 0/1 *keep* semantics: additive masks
+        # never contain positive values, so max() > 0 identifies a keep-mask
+        # (an all-zero 0/1 keep-mask remains ambiguous and is read as additive
+        # all-keep — pass bool masks to be explicit).
+        keep = attention_mask > 0 if attention_mask.max() > 0 else attention_mask >= 0
     else:
         # bool / integer masks use keep-mask semantics (nonzero = keep).
         keep = attention_mask.bool()
