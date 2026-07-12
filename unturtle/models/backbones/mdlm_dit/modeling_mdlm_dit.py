@@ -330,9 +330,7 @@ def _normalize_attention_mask(
         # never contain positive values, so max() > 0 identifies a keep-mask
         # (an all-zero 0/1 keep-mask remains ambiguous and is read as additive
         # all-keep — pass bool masks to be explicit).
-        keep = (
-            attention_mask > 0 if attention_mask.max() > 0 else attention_mask >= 0
-        )
+        keep = attention_mask > 0 if attention_mask.max() > 0 else attention_mask >= 0
     else:
         # bool / integer masks use keep-mask semantics (nonzero = keep).
         keep = attention_mask.bool()
