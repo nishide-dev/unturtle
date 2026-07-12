@@ -173,6 +173,82 @@ class TestMDLMDiTAttention:
             out = model(input_ids=input_ids, attention_mask=m4d).logits
         assert out.shape == (1, 8, tiny_config.vocab_size)
 
+    def test_attention_mask_4d_hf_additive(self, tiny_config):
+        """An HF-additive 4-D float mask (0.0 keep / finfo.min masked) must match
+        the 2-D padding path — not be inverted (regression for #48)."""
+        from transformers.modeling_attn_mask_utils import _prepare_4d_attention_mask
+
+        from unturtle.models.backbones.mdlm_dit import MDLMDiTForMaskedDiffusionLM
+
+        model = MDLMDiTForMaskedDiffusionLM(tiny_config).cpu().eval()
+        _activate_adaln(model)
+        input_ids = torch.randint(0, tiny_config.vocab_size, (1, 8))
+        padding = torch.ones(1, 8, dtype=torch.long)
+        padding[0, -2:] = 0  # last two positions are padding
+        additive = _prepare_4d_attention_mask(padding, torch.float32)  # [1,1,8,8]
+        with torch.no_grad():
+            out_2d = model(input_ids=input_ids, attention_mask=padding).logits
+            out_4d = model(input_ids=input_ids, attention_mask=additive).logits
+        # Real-token positions must agree with the 2-D padding path.
+        assert torch.allclose(out_2d[0, :6], out_4d[0, :6], atol=1e-5)
+        # And the mask must actually restrict attention (differ from no-mask).
+        with torch.no_grad():
+            out_nomask = model(input_ids=input_ids).logits
+        assert not torch.allclose(out_nomask[0, 0], out_4d[0, 0], atol=1e-5)
+
+    def test_attention_mask_4d_additive_neg_inf(self, tiny_config):
+        """-inf-style additive masks are also treated as masked (not kept) and
+        must not produce NaNs (bias is rebuilt with finfo.min)."""
+        from unturtle.models.backbones.mdlm_dit import MDLMDiTForMaskedDiffusionLM
+
+        model = MDLMDiTForMaskedDiffusionLM(tiny_config).cpu().eval()
+        _activate_adaln(model)
+        input_ids = torch.randint(0, tiny_config.vocab_size, (1, 8))
+        padding = torch.ones(1, 8, dtype=torch.long)
+        padding[0, -2:] = 0
+        additive = torch.zeros(1, 1, 8, 8)
+        additive[:, :, :, -2:] = float("-inf")
+        with torch.no_grad():
+            out_2d = model(input_ids=input_ids, attention_mask=padding).logits
+            out_4d = model(input_ids=input_ids, attention_mask=additive).logits
+        assert torch.isfinite(out_4d).all()
+        # Key-masking of the last two columns matches the 2-D path on real rows.
+        assert torch.allclose(out_2d[0, :6], out_4d[0, :6], atol=1e-5)
+
+    def test_sdpa_bias_cast_to_query_dtype(self, tiny_config):
+        """A float bias built in a wider dtype than q (autocast scenario) is cast
+        to the query dtype at use time, with finfo.min clamped (no -inf NaNs)."""
+        from unturtle.models.backbones.mdlm_dit import MDLMDiTForMaskedDiffusionLM
+
+        model = MDLMDiTForMaskedDiffusionLM(tiny_config).cpu().eval()
+        block = model.model.blocks[0]
+        B, L, H = 1, 8, tiny_config.num_attention_heads
+        D = tiny_config.hidden_size // H
+        torch.manual_seed(0)
+        q = torch.randn(B, L, H, D, dtype=torch.bfloat16)
+        k = torch.randn(B, L, H, D, dtype=torch.bfloat16)
+        v = torch.randn(B, L, H, D, dtype=torch.bfloat16)
+        # fp32 bias with finfo.min entries and one fully-masked query row.
+        bias = torch.zeros(B, 1, L, L, dtype=torch.float32)
+        bias[:, :, :, -2:] = torch.finfo(torch.float32).min
+        bias[:, :, -1, :] = torch.finfo(torch.float32).min
+        out = block._attention(q, k, v, bias)
+        assert out.dtype == torch.bfloat16
+        assert torch.isfinite(out.float()).all()
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+    def test_fp32_cuda_forward_no_flash_crash(self, tiny_config):
+        """fp32 on CUDA must not hit flash_attn (fp16/bf16-only) — SDPA fallback."""
+        from unturtle.models.backbones.mdlm_dit import MDLMDiTForMaskedDiffusionLM
+
+        model = MDLMDiTForMaskedDiffusionLM(tiny_config).cuda().float().eval()
+        input_ids = torch.randint(0, tiny_config.vocab_size, (2, 8), device="cuda")
+        with torch.no_grad():
+            out = model(input_ids=input_ids).logits
+        assert out.dtype == torch.float32
+        assert torch.isfinite(out).all()
+
     def test_fully_masked_query_row_is_finite(self, tiny_config):
         """A fully-masked query row must not produce NaNs (finfo.min, not -inf)."""
         from unturtle.models.backbones.mdlm_dit import MDLMDiTForMaskedDiffusionLM
