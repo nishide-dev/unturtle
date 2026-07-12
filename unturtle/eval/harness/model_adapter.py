@@ -21,7 +21,10 @@ requires ``lm_eval``.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+_logger = logging.getLogger(__name__)
 
 
 def _import_lm_base() -> type:
@@ -85,6 +88,7 @@ def build_harness_lm(
             self._temperature = temperature
             self._use_chat_template = use_chat_template
             self._algorithm = algorithm
+            self._warned_max_gen_toks: set[tuple[int, int]] = set()
 
         def _build_prompt(self, context: str) -> str:
             apply = getattr(self._tokenizer, "apply_chat_template", None)
@@ -104,7 +108,26 @@ def build_harness_lm(
             device = next(iter(self._model.parameters())).device
             input_ids = input_ids.to(device)
             prompt_len = input_ids.shape[1]
-            max_new = int(gen_kwargs.get("max_gen_toks", self._max_new_tokens))
+            # Reproducibility contract (see harness/configs.py): the pinned
+            # DecodingConfig is recorded with the score, so it must be what
+            # actually ran. Task-supplied max_gen_toks is therefore IGNORED in
+            # favor of the pinned max_new_tokens — with a warning when they
+            # differ, so the discrepancy is visible in logs.
+            task_max = gen_kwargs.get("max_gen_toks")
+            if task_max is not None and int(task_max) != self._max_new_tokens:
+                # Warn once per (task_max, pinned) pair — this runs per request,
+                # and a full task emits hundreds of identical calls.
+                warn_key = (int(task_max), self._max_new_tokens)
+                if warn_key not in self._warned_max_gen_toks:
+                    self._warned_max_gen_toks.add(warn_key)
+                    _logger.warning(
+                        "UnturtleHarnessLM: task-supplied max_gen_toks=%s ignored — "
+                        "using pinned DecodingConfig.max_new_tokens=%s (the recorded "
+                        "config must match the actual decode).",
+                        task_max,
+                        self._max_new_tokens,
+                    )
+            max_new = self._max_new_tokens
             max_length = prompt_len + max_new
 
             if self._algorithm == "block_ar":

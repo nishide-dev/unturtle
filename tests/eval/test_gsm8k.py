@@ -52,6 +52,29 @@ class TestExtractNumericAnswer:
     def test_boxed_takes_priority_over_bare(self):
         assert extract_numeric_answer(r"99 and \boxed{42}") == 42.0
 
+    # --- non-numeric boxed content: extract the number INSIDE the box -----
+
+    def test_boxed_dollar_sign(self):
+        assert extract_numeric_answer(r"the total is \boxed{$72}") == 72.0
+
+    def test_boxed_trailing_words(self):
+        assert extract_numeric_answer(r"answer: \boxed{72 dollars}") == 72.0
+
+    def test_boxed_dollar_with_commas(self):
+        assert extract_numeric_answer(r"cost \boxed{$1,234}") == 1234.0
+
+    def test_boxed_dollar_negative(self):
+        assert extract_numeric_answer(r"net \boxed{$-5}") == -5.0
+
+    def test_boxed_number_beats_text_before_box(self):
+        # The number inside the box wins over earlier bare numbers.
+        assert extract_numeric_answer(r"first 99 then \boxed{72 dollars}") == 72.0
+
+    def test_boxed_without_any_number_falls_back_before_box(self):
+        # Boxed content with NO number: fall back to text before the marker,
+        # never to text after it.
+        assert extract_numeric_answer(r"we get 17 so \boxed{unknown} 99") == 17.0
+
 
 # ---------------------------------------------------------------------------
 # Stub model — mimics generate behaviour without real weights

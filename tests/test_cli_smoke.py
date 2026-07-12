@@ -251,3 +251,100 @@ def test_list_checkpoints_reports_unreadable_trainer_state(tmp_path, capsys):
     captured = capsys.readouterr()
     assert "unreadable trainer_state.json" in captured.out
     assert "Warning: failed to read loss" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# CLI override validation — Config.apply_overrides / _SectionConfig
+# ---------------------------------------------------------------------------
+
+
+def test_apply_overrides_invalid_literal_raises_immediately():
+    # setattr used to bypass pydantic validation: an invalid --task/--model-type
+    # only failed late (or silently). validate_assignment must reject it here.
+    from unturtle.cli.config import Config
+
+    cfg = Config()
+    with pytest.raises(ValueError, match=r"--task"):
+        cfg.apply_overrides(task="not-a-task")
+
+    with pytest.raises(ValueError, match=r"--model-type"):
+        cfg.apply_overrides(model_type="not-a-model-type")
+
+
+def test_apply_overrides_valid_values_still_apply():
+    from unturtle.cli.config import Config
+
+    cfg = Config()
+    cfg.apply_overrides(task="grpo", model_type="llada", learning_rate=1e-4)
+    assert cfg.training.task == "grpo"
+    assert cfg.model.model_type == "llada"
+    assert cfg.training.learning_rate == 1e-4
+
+
+def test_train_invalid_override_exits_with_clear_error(capsys):
+    config_path = CONFIG_DIR / "llada_sft.yaml"
+    # The add_options_from_config wrapper rebuilds config_overrides from field
+    # kwargs, so the override is passed as `task=` (as the CLI would).
+    with pytest.raises(Exit) as exc_info:
+        train(config=config_path, dry_run=True, task="bogus")
+    assert exc_info.value.exit_code == 2
+    captured = capsys.readouterr()
+    assert "Invalid value for --task" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# export --load-in-4bit default is format-aware
+# ---------------------------------------------------------------------------
+
+
+def _run_export_capture_load_kwargs(monkeypatch, tmp_path, *, format, load_in_4bit):
+    from unturtle import fast_diffusion_model as fdm
+    from unturtle.cli.commands.export import export
+
+    recorded = {}
+
+    def _fake_from_pretrained(**kwargs):
+        recorded.update(kwargs)
+        raise RuntimeError("stop after recording")
+
+    monkeypatch.setattr(
+        fdm.FastDiffusionModel, "from_pretrained", staticmethod(_fake_from_pretrained)
+    )
+    with pytest.raises(Exit) as exc_info:
+        export(
+            checkpoint=tmp_path,
+            output_dir=tmp_path / "out",
+            format=format,
+            quantization="q4_k_m",
+            push_to_hub=False,
+            repo_id=None,
+            hf_token=None,
+            private=False,
+            max_seq_length=2048,
+            load_in_4bit=load_in_4bit,
+        )
+    assert exc_info.value.exit_code == 1  # load intentionally aborted
+    return recorded
+
+
+def test_export_merged_16bit_defaults_to_16bit_load(monkeypatch, tmp_path):
+    recorded = _run_export_capture_load_kwargs(
+        monkeypatch, tmp_path, format="merged-16bit", load_in_4bit=None
+    )
+    assert recorded["load_in_4bit"] is False
+
+
+def test_export_lora_defaults_to_4bit_load(monkeypatch, tmp_path):
+    recorded = _run_export_capture_load_kwargs(
+        monkeypatch, tmp_path, format="lora", load_in_4bit=None
+    )
+    assert recorded["load_in_4bit"] is True
+
+
+def test_export_merged_16bit_explicit_4bit_warns(monkeypatch, tmp_path, capsys):
+    recorded = _run_export_capture_load_kwargs(
+        monkeypatch, tmp_path, format="merged-16bit", load_in_4bit=True
+    )
+    assert recorded["load_in_4bit"] is True  # explicit choice honored
+    captured = capsys.readouterr()
+    assert "dequantized" in captured.err

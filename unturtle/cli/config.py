@@ -48,7 +48,7 @@ from pathlib import Path
 from typing import List, Literal, Optional
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
 def _grpo_effective_world_size() -> int:
@@ -77,7 +77,18 @@ def _grpo_effective_world_size() -> int:
 # ---------------------------------------------------------------------------
 
 
-class ModelConfig(BaseModel):
+class _SectionConfig(BaseModel):
+    """Base for config sections: assignments are validated immediately.
+
+    Without ``validate_assignment``, CLI overrides applied via ``setattr`` in
+    :meth:`Config.apply_overrides` would bypass pydantic validation entirely —
+    an invalid ``--task`` / ``--model-type`` would only fail late (or never).
+    """
+
+    model_config = ConfigDict(validate_assignment=True)
+
+
+class ModelConfig(_SectionConfig):
     model: Optional[str] = Field(
         default=None,
         description="HuggingFace model ID or local path.",
@@ -95,7 +106,7 @@ class ModelConfig(BaseModel):
     )
 
 
-class DataConfig(BaseModel):
+class DataConfig(_SectionConfig):
     dataset: Optional[str] = Field(default=None, description="HuggingFace dataset ID.")
     local_dataset: Optional[List[str]] = Field(
         default=None, description="Paths to local JSONL/JSON dataset files."
@@ -105,7 +116,7 @@ class DataConfig(BaseModel):
     )
 
 
-class TrainingConfig(BaseModel):
+class TrainingConfig(_SectionConfig):
     task: Literal["sft", "grpo"] = Field(
         default="sft",
         description="Training task: masked diffusion SFT or Diffu-GRPO / wd1 RL.",
@@ -142,7 +153,7 @@ class TrainingConfig(BaseModel):
     )
 
 
-class DiffusionConfig(BaseModel):
+class DiffusionConfig(_SectionConfig):
     """dLLM-specific training options — maps to DiffusionTrainingArguments."""
 
     alpha_scheduler: Literal["linear", "cosine"] = Field(
@@ -168,7 +179,7 @@ class DiffusionConfig(BaseModel):
     )
 
 
-class LoraConfig(BaseModel):
+class LoraConfig(_SectionConfig):
     lora_r: int = Field(default=64, description="LoRA rank.")
     lora_alpha: int = Field(default=16, description="LoRA alpha scaling factor.")
     lora_dropout: float = Field(default=0.0, description="LoRA dropout probability.")
@@ -181,7 +192,7 @@ class LoraConfig(BaseModel):
     )
 
 
-class LoggingConfig(BaseModel):
+class LoggingConfig(_SectionConfig):
     enable_wandb: bool = Field(
         default=False, description="Enable Weights & Biases logging."
     )
@@ -204,7 +215,7 @@ class LoggingConfig(BaseModel):
     )
 
 
-class GRPOConfig(BaseModel):
+class GRPOConfig(_SectionConfig):
     """DiffuGRPO / wd1 settings — used when ``training.task == \"grpo\"``."""
 
     diffusion_steps: int = Field(
@@ -311,7 +322,15 @@ class Config(BaseModel):
                 continue
             for section in sections:
                 if hasattr(section, key):
-                    setattr(section, key, value)
+                    try:
+                        # _SectionConfig has validate_assignment=True, so bad
+                        # values raise here instead of failing late/silently.
+                        setattr(section, key, value)
+                    except ValidationError as e:
+                        flag = "--" + key.replace("_", "-")
+                        raise ValueError(
+                            f"Invalid value for {flag}: {value!r}\n{e}"
+                        ) from e
                     break
 
     def training_args_kwargs(self) -> dict:

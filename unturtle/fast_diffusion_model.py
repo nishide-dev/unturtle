@@ -239,6 +239,11 @@ def _patch_dream_peft(
 
     Layer layout: ``model.base_model.model.model.layers``
     (Dream wraps DreamBaseModel as ``self.model``, same depth as LLaMA).
+
+    The injected ``DreamAttention_fast_forward`` covers the non-cache path only;
+    cache-enabled block decode (tuple KV caches, ``dual_cache`` /
+    ``replace_position``) delegates internally to the standard class forward, so
+    ``model.generate(..., use_cache=True)`` keeps working on a patched model.
     """
     n_qkv = n_o = n_mlp = 0
 
@@ -578,6 +583,10 @@ def _load_model_with_optional_4bit_fallback(
 ) -> Any:
     try:
         return loader.from_pretrained(model_name, **load_kwargs)
+    except torch.cuda.OutOfMemoryError:
+        # OOM is not a 4-bit-specific failure — a full-precision retry needs
+        # MORE memory and is doomed. Surface the real error to the user.
+        raise
     except Exception as exc:  # noqa: BLE001
         if "quantization_config" not in load_kwargs:
             raise
@@ -586,13 +595,116 @@ def _load_model_with_optional_4bit_fallback(
         fallback_kwargs.pop("quantization_config", None)
         fallback_kwargs.pop("device_map", None)
         _warn_once(
-            "FastDiffusionModel: 4-bit loading failed — retrying with full-precision loading."
-        )
-        _logger.debug(
-            "FastDiffusionModel: retrying without 4-bit quantization after error: %s",
-            exc,
+            "FastDiffusionModel: 4-bit loading failed "
+            f"({type(exc).__name__}: {exc}) — retrying with full-precision loading."
         )
         return loader.from_pretrained(model_name, **fallback_kwargs)
+
+
+def _import_bitsandbytes() -> Any:
+    """Import hook for bitsandbytes (separate function for testability)."""
+    import bitsandbytes as bnb
+
+    return bnb
+
+
+def _find_quantized_linear_modules(model: Any) -> list[tuple[str, Any]]:
+    """Return ``(name, module)`` for modules holding bnb-quantized weights.
+
+    Detection is by the ``weight.quant_state`` attribute (present on
+    ``bitsandbytes`` ``Params4bit``), not by isinstance, so it works without
+    importing bitsandbytes and with test stubs.
+    """
+    return [
+        (name, module)
+        for name, module in model.named_modules()
+        if getattr(getattr(module, "weight", None), "quant_state", None) is not None
+    ]
+
+
+def _dequantize_merged_model_(model: Any) -> Any:
+    """Dequantize bnb 4-bit Linear modules in *model* to 16-bit, in place.
+
+    ``merge_and_unload()`` on a 4-bit-loaded PEFT model returns a base model
+    whose Linear layers are still ``bnb.nn.Linear4bit`` — saving that as a
+    "merged 16-bit" artifact would silently ship nf4 weights plus a
+    ``quantization_config``. This mirrors what unsloth's own merged save does
+    per layer (``fast_dequantize(W, quant_state)`` in ``unsloth/save.py``),
+    using bitsandbytes' public ``functional.dequantize_4bit``.
+
+    Raises:
+        RuntimeError: when the model holds quantized weights but they cannot
+            be dequantized (bitsandbytes missing or dequantization failed) —
+            the caller must NOT save mislabeled 4-bit weights. Re-export from
+            a 16-bit load (e.g. ``load_in_4bit=False``) instead.
+    """
+    quantized = _find_quantized_linear_modules(model)
+    if not quantized:
+        return model
+
+    error_hint = (
+        "cannot save a truthful merged 16-bit artifact from 4-bit weights. "
+        "Re-load the checkpoint with load_in_4bit=False (CLI: "
+        "`unturtle export --no-load-in-4bit`) and export again."
+    )
+    try:
+        bnb = _import_bitsandbytes()
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            f"FastDiffusionModel: model has {len(quantized)} bnb-quantized "
+            f"module(s) but bitsandbytes is unavailable ({exc}); {error_hint}"
+        ) from exc
+
+    named_modules = dict(model.named_modules())
+    for name, module in quantized:
+        weight = module.weight
+        try:
+            dequant = bnb.functional.dequantize_4bit(weight.data, weight.quant_state)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                f"FastDiffusionModel: failed to dequantize module {name!r} "
+                f"({type(exc).__name__}: {exc}); {error_hint}"
+            ) from exc
+        target_dtype = getattr(weight.quant_state, "dtype", dequant.dtype)
+        new_linear = torch.nn.Linear(
+            module.in_features,
+            module.out_features,
+            bias=module.bias is not None,
+            device=dequant.device,
+            dtype=target_dtype,
+        )
+        new_linear.weight = torch.nn.Parameter(
+            dequant.to(target_dtype), requires_grad=False
+        )
+        if module.bias is not None:
+            new_linear.bias = torch.nn.Parameter(
+                module.bias.data.to(target_dtype), requires_grad=False
+            )
+        parent_name, _, child_name = name.rpartition(".")
+        parent = named_modules[parent_name] if parent_name else model
+        setattr(parent, child_name, new_linear)
+
+    # The artifact is now 16-bit — drop the stale quantization metadata so the
+    # saved config does not claim 4-bit loading.
+    config = getattr(model, "config", None)
+    if config is not None and hasattr(config, "quantization_config"):
+        try:
+            del config.quantization_config
+        except AttributeError:
+            config.quantization_config = None
+    for attr in ("is_loaded_in_4bit", "is_quantized"):
+        if getattr(model, attr, False):
+            setattr(model, attr, False)
+    hf_quantizer = getattr(model, "hf_quantizer", None)
+    if hf_quantizer is not None:
+        model.hf_quantizer = None
+
+    _logger.info(
+        "FastDiffusionModel: dequantized %d bnb 4-bit module(s) to 16-bit "
+        "for the merged save.",
+        len(quantized),
+    )
+    return model
 
 
 #: model_type → callable returning the wrapper class to swap in after a
@@ -806,13 +918,41 @@ def _load_via_fastmodel(
         _logger.debug("FastDiffusionModel: unsloth FastModel unavailable: %s", exc)
         return None
     try:
+        # Forward all user kwargs FastModel.from_pretrained can accept
+        # (revision, cache_dir, subfolder, attn_implementation, …) instead of a
+        # tiny allowlist. Keys FastModel's signature cannot take are dropped
+        # with a warning so nothing disappears silently.
+        import inspect
+
+        try:
+            sig = inspect.signature(fast_model_cls.from_pretrained)
+            accepted = set(sig.parameters)
+            accepts_var_kw = any(
+                p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            )
+        except (TypeError, ValueError):
+            accepted = set()
+            accepts_var_kw = True
+
         fm_kwargs: dict[str, Any] = {}
-        # FastModel uses `dtype=` not `torch_dtype=`
-        if "torch_dtype" in load_kwargs:
-            fm_kwargs["dtype"] = load_kwargs["torch_dtype"]
-        for key in ("token", "device_map", "trust_remote_code"):
-            if key in load_kwargs:
-                fm_kwargs[key] = load_kwargs[key]
+        dropped: list[str] = []
+        for key, value in load_kwargs.items():
+            if key == "torch_dtype":
+                # FastModel uses `dtype=` not `torch_dtype=`
+                fm_kwargs["dtype"] = value
+            elif key == "quantization_config":
+                # FastModel owns quantization on this path (intentional skip;
+                # the caller's intent travels via load_in_4bit below).
+                continue
+            elif accepts_var_kw or key in accepted:
+                fm_kwargs[key] = value
+            else:
+                dropped.append(key)
+        if dropped:
+            _warn_once(
+                "FastDiffusionModel: dropping kwargs not accepted by "
+                f"unsloth FastModel.from_pretrained: {sorted(dropped)}"
+            )
         # FastModel owns quantization — pass load_in_4bit explicitly from the caller.
         fm_kwargs["load_in_4bit"] = load_in_4bit
         model, tokenizer = fast_model_cls.from_pretrained(model_name, **fm_kwargs)
@@ -1410,6 +1550,10 @@ class FastDiffusionModel:
         merged = copy.deepcopy(model)
         # merge_and_unload returns the unwrapped base model with adapters merged.
         merged = merged.merge_and_unload()
+        # On a 4-bit-loaded model the merged Linear layers are still bnb
+        # Linear4bit — dequantize (or fail loudly) so the saved artifact is
+        # genuinely 16-bit, never mislabeled nf4 weights.
+        merged = _dequantize_merged_model_(merged)
         merged.save_pretrained(
             save_directory,
             safe_serialization=safe_serialization,
@@ -1447,6 +1591,9 @@ class FastDiffusionModel:
         _logger.info("FastDiffusionModel: merging LoRA adapters for Hub push …")
         merged = copy.deepcopy(model)
         merged = merged.merge_and_unload()
+        # Same honesty guarantee as save_pretrained_merged: never push nf4
+        # weights under a merged-16bit label.
+        merged = _dequantize_merged_model_(merged)
 
         push_kwargs: dict[str, Any] = dict(
             safe_serialization=safe_serialization, **kwargs

@@ -107,7 +107,11 @@ def train(
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=2)
 
-    cfg.apply_overrides(**config_overrides)
+    try:
+        cfg.apply_overrides(**config_overrides)
+    except ValueError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(code=2)
 
     # CLI/env tokens override config file values
     from typer.models import OptionInfo
@@ -201,7 +205,20 @@ def train(
             from datasets import load_dataset
 
             dataset = load_dataset(cfg.data.dataset, token=hf_token)
-            train_dataset = dataset.get("train", dataset)
+            # load_dataset without split= returns a DatasetDict; select the
+            # train split explicitly — passing the whole dict to a trainer
+            # fails with confusing errors far from the cause.
+            if isinstance(dataset, dict):
+                if "train" not in dataset:
+                    typer.echo(
+                        f"Error: dataset {cfg.data.dataset!r} has no 'train' "
+                        f"split (available: {sorted(dataset.keys())})",
+                        err=True,
+                    )
+                    raise typer.Exit(code=2)
+                train_dataset = dataset["train"]
+            else:
+                train_dataset = dataset
         else:
             import json
 
@@ -215,6 +232,8 @@ def train(
                         if line:
                             rows.append(json.loads(line))
             train_dataset = Dataset.from_list(rows)
+    except typer.Exit:
+        raise
     except Exception as e:
         typer.echo(f"Error: dataset load failed — {e}", err=True)
         raise typer.Exit(code=1)
@@ -243,10 +262,17 @@ def train(
             train_dataset = _dataset_for_grpo(
                 train_dataset, cfg.data.dataset_text_field
             )
-            tok_mask = tokenizer.mask_token_id
+            tok_mask = getattr(tokenizer, "mask_token_id", None)
+            if tok_mask is None:
+                # Real checkpoints may only carry the mask id on the model
+                # config (same fallback as build_masked_diffusion_collator).
+                tok_mask = getattr(
+                    getattr(model, "config", None), "mask_token_id", None
+                )
             if tok_mask is None and cfg.grpo.mask_id is None:
                 typer.echo(
-                    "Error: tokenizer has no mask_token_id — set grpo.mask_id in config",
+                    "Error: neither tokenizer nor model.config has a "
+                    "mask_token_id — set grpo.mask_id in config",
                     err=True,
                 )
                 raise typer.Exit(code=2)
