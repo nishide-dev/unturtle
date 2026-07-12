@@ -332,6 +332,9 @@ def TinyA2DAttention_fast_forward(
         flash_dense_kwargs={"causal": False},
         flash_varlen_kwargs={"dropout_p": 0.0, "causal": False},
         sdpa_kwargs={"is_causal": False},
+        # dLLM attention is bidirectional: run_attention must never inject
+        # causal masking (packed fallback mask, 2-D mask expansion, is_causal).
+        causal=False,
     )
     context = AttentionContext(
         bsz=bsz,

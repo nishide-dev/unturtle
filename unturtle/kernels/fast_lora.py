@@ -133,7 +133,9 @@ class LoRA_QKV_Bias(torch.autograd.Function):
         X, QA, QB, KA, KB, VA, VB = ctx.saved_tensors
         has_Qb, has_Kb, has_Vb = ctx.has_bias
 
-        batch, seq_len, hd = X.shape
+        # X may be 3-D [batch, seq_len, hd] or 2-D [total_tokens, hd]
+        # (forward accepts both); mirror the same reshape bookkeeping here.
+        orig_shape = X.shape
         dQ = dQ.reshape(-1, dQ.shape[-1])
         dK = dK.reshape(-1, dK.shape[-1])
         dV = dV.reshape(-1, dV.shape[-1])
@@ -185,7 +187,7 @@ class LoRA_QKV_Bias(torch.autograd.Function):
         # KW, KW_quant, KA, KB, KS, KBias,
         # VW, VW_quant, VA, VB, VS, VBias, inplace
         return (
-            dX.view(batch, seq_len, hd),
+            dX.view(orig_shape),
             None,
             None,
             d_QA.t(),

@@ -29,6 +29,7 @@ from unsloth.models._utils import HAS_FLASH_ATTENTION, xformers, xformers_attent
 
 from .packing import (
     build_sdpa_packed_attention_mask,
+    build_sdpa_packed_bidirectional_attention_mask,
     build_xformers_block_causal_mask,
 )
 
@@ -65,6 +66,14 @@ class AttentionConfig:
     flash_varlen_kwargs: Optional[dict[str, Any]] = None
     sdpa_kwargs: Optional[dict[str, Any]] = None
     xformers_kwargs: Optional[dict[str, Any]] = None
+    # Whether run_attention may inject *causal* masking on the SDPA path
+    # (packed block mask, 2-D mask expansion, and the is_causal fallback).
+    # Defaults to True to preserve the vendored unsloth (AR) semantics.
+    # Bidirectional dLLM callers MUST set causal=False — with it, run_attention
+    # never constructs a causal mask on their behalf.  Note this flag does NOT
+    # rewrite caller-supplied kwargs (flash_*_kwargs["causal"] /
+    # sdpa_kwargs["is_causal"]); keep those consistent with this field.
+    causal: bool = True
 
 
 @dataclass
@@ -112,6 +121,13 @@ def run_attention(
         FLASH_VARLEN,
         XFORMERS,
     ):
+        backend = SDPA
+
+    if backend == XFORMERS and context.seq_info is not None and not config.causal:
+        # The xformers packed path builds a *causal* block-diagonal bias
+        # (build_xformers_block_causal_mask).  Bidirectional configs must not
+        # receive causal masking, so fall back to the SDPA packed path which
+        # builds a bidirectional block mask below.
         backend = SDPA
 
     flash_dense_kwargs = config.flash_dense_kwargs or {}
@@ -220,12 +236,25 @@ def run_attention(
     local_mask = context.attention_mask
     is_causal_local = False
     if context.seq_info is not None and local_mask is None:
-        local_mask = build_sdpa_packed_attention_mask(
+        packed_mask_builder = (
+            build_sdpa_packed_attention_mask
+            if config.causal
+            else build_sdpa_packed_bidirectional_attention_mask
+        )
+        local_mask = packed_mask_builder(
             context.seq_info,
             dtype=Q.dtype,
             device=Q.device,
             sliding_window=sliding_window,
         )
+        # Debug guard (#49): packed lengths silently summing past the actual
+        # sequence length would otherwise surface as an opaque SDPA shape error.
+        if local_mask.shape[-1] != K.shape[-2]:
+            raise ValueError(
+                f"Packed seq_info lengths sum to {local_mask.shape[-1]} but the "
+                f"key sequence length is {K.shape[-2]}; packed metadata does "
+                "not match the batch."
+            )
     else:
         q_len_local = Q.shape[-2]
         k_len_local = K.shape[-2]
@@ -242,13 +271,23 @@ def run_attention(
                 q_pos = torch.arange(past_len, past_len + q_len_local, device=Q.device)
                 k_pos = torch.arange(k_len_local, device=Q.device)
 
-                causal_keep = k_pos[None, :] <= q_pos[:, None]
-                if sliding_window is not None:
-                    causal_keep &= k_pos[None, :] >= (
-                        q_pos[:, None] - (sliding_window - 1)
+                if config.causal:
+                    pos_keep = k_pos[None, :] <= q_pos[:, None]
+                    if sliding_window is not None:
+                        pos_keep &= k_pos[None, :] >= (
+                            q_pos[:, None] - (sliding_window - 1)
+                        )
+                elif sliding_window is not None:
+                    # Bidirectional: symmetric band, never a causal triangle.
+                    pos_keep = (q_pos[:, None] - k_pos[None, :]).abs() < sliding_window
+                else:
+                    pos_keep = torch.ones(
+                        (q_len_local, k_len_local),
+                        dtype=torch.bool,
+                        device=Q.device,
                     )
 
-                local_mask = causal_keep[None, None, :, :] & key_keep[:, None, None, :]
+                local_mask = pos_keep[None, None, :, :] & key_keep[:, None, None, :]
 
             elif local_mask.dim() == 3:
                 local_mask = local_mask[:, None, :, :]
@@ -265,7 +304,9 @@ def run_attention(
                 no_allowed = ~local_mask.any(dim=-1, keepdim=True)
                 local_mask = local_mask | no_allowed
 
-        is_causal_local = local_mask is None and q_len_local == k_len_local
+        is_causal_local = (
+            config.causal and local_mask is None and q_len_local == k_len_local
+        )
 
     kwargs = dict(sdpa_kwargs)
     kwargs.setdefault("attn_mask", local_mask)
@@ -317,6 +358,7 @@ __all__ = [
     "SDPA",
     "XFORMERS",
     "build_sdpa_packed_attention_mask",
+    "build_sdpa_packed_bidirectional_attention_mask",
     "build_xformers_block_causal_mask",
     "run_attention",
     "select_attention_backend",

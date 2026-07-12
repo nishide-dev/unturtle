@@ -434,3 +434,82 @@ class TestFusedMaskedDiffusionLoss:
         assert logits.grad is not None
         assert torch.isfinite(logits.grad).all(), "Non-finite gradients"
         assert logits.grad.abs().sum() > 0, "All-zero gradients"
+
+    def test_cpu_fallback_applies_scaling_and_softcapping(self):
+        """The non-CUDA path must honor logit_scaling / logit_softcapping.
+
+        Hand-computed reference mirroring the Triton kernel order
+        (unsloth kernels/cross_entropy_loss.py): scaling FIRST
+        (``s * x``), THEN softcapping (``t * tanh(x / t)``).
+        """
+        torch.manual_seed(7)
+        B, L, V = 2, 10, 64
+        scaling = 0.125
+        softcap = 30.0
+        logits = torch.randn(B, L, V) * 40.0  # large enough to engage the cap
+        labels = torch.randint(0, V, (B, L))
+        mask = torch.rand(B, L) > 0.4
+
+        got = self.fused(
+            logits,
+            labels,
+            mask,
+            logit_softcapping=softcap,
+            logit_scaling=scaling,
+        )
+
+        # Manual reference
+        transformed = scaling * logits
+        transformed = softcap * torch.tanh(transformed / softcap)
+        masked_labels = labels.clone()
+        masked_labels[~mask] = -100
+        per_token = F.cross_entropy(
+            transformed.view(B * L, V),
+            masked_labels.view(-1),
+            ignore_index=-100,
+            reduction="none",
+        )
+        n_maskable = (labels != -100).sum().clamp_min(1)
+        expected = per_token.sum() / n_maskable
+
+        assert torch.allclose(got, expected, atol=1e-5), (
+            f"softcap+scaling: got={got.item():.6f} expected={expected.item():.6f}"
+        )
+        # Sanity: transformed loss must differ from the untransformed loss.
+        plain = self.fused(logits, labels, mask)
+        assert not torch.allclose(got, plain)
+
+    def test_cpu_fallback_scaling_only_and_softcap_only(self):
+        torch.manual_seed(11)
+        B, L, V = 1, 8, 32
+        logits = torch.randn(B, L, V) * 25.0
+        labels = torch.randint(0, V, (B, L))
+        mask = torch.ones(B, L, dtype=torch.bool)
+
+        def _ref(transform):
+            per_token = F.cross_entropy(
+                transform(logits).view(B * L, V),
+                labels.view(-1),
+                ignore_index=-100,
+                reduction="none",
+            )
+            return per_token.sum() / (labels != -100).sum()
+
+        got_scale = self.fused(logits, labels, mask, logit_scaling=0.5)
+        assert torch.allclose(got_scale, _ref(lambda x: 0.5 * x), atol=1e-5)
+
+        got_cap = self.fused(logits, labels, mask, logit_softcapping=20.0)
+        assert torch.allclose(
+            got_cap, _ref(lambda x: 20.0 * torch.tanh(x / 20.0)), atol=1e-5
+        )
+
+    def test_cpu_fallback_sentinel_on_labels_device(self):
+        """The -100 sentinel must be created on the labels device (MPS/XPU safe)."""
+        B, L, V = 1, 4, 16
+        logits = torch.randn(B, L, V)
+        labels = torch.randint(0, V, (B, L))
+        mask = torch.rand(B, L) > 0.5
+
+        # On CPU this is trivially satisfied; the assertion guards the code path.
+        loss = self.fused(logits, labels, mask)
+        assert torch.isfinite(loss)

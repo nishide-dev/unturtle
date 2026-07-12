@@ -469,3 +469,96 @@ class TestCARTInBuildLossWeights:
         w = self._build_cart_weights(B, L, diffusion_mask, cart_p=0.8)
         # All positions are masked (clean_mask = all False), so all weights are 0
         assert torch.all(w == 0.0)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CART clean-context membership: padding + packed-sample boundaries (#48)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestCARTCleanContextMembership:
+    """Padding and packed neighbours must never count as clean context."""
+
+    def _weights(self, diffusion_mask, attention_mask=None, seq_lengths=None, L=None):
+        from types import SimpleNamespace
+
+        from unturtle.diffusion import DiffusionTrainer
+
+        L = L if L is not None else diffusion_mask.shape[1]
+        fake_self = SimpleNamespace(_loss_weight_type="cart", _cart_p=0.8)
+        logits = torch.zeros(diffusion_mask.shape[0], L, 4)
+        timesteps = torch.full((diffusion_mask.shape[0],), 0.5)
+        return DiffusionTrainer._build_loss_weights(
+            fake_self,
+            timesteps,
+            logits,
+            diffusion_mask,
+            attention_mask=attention_mask,
+            seq_lengths=seq_lengths,
+        )
+
+    def test_padding_does_not_count_as_clean_context(self):
+        """Identical sample padded to two lengths must get identical CART weights."""
+        s = 6  # real sample length
+        diff = torch.tensor([[False, True, False, True, True, False]])
+
+        for pad in (0, 4, 10):
+            L = s + pad
+            diffusion_mask = torch.zeros(1, L, dtype=torch.bool)
+            diffusion_mask[0, :s] = diff[0]
+            attention_mask = torch.zeros(1, L, dtype=torch.long)
+            attention_mask[0, :s] = 1
+
+            w = self._weights(diffusion_mask, attention_mask=attention_mask)
+            if pad == 0:
+                w_ref = w
+            else:
+                assert torch.allclose(w[0, :s], w_ref[0, :s], atol=1e-6), (
+                    f"CART weights changed when padding {s}->{L}"
+                )
+                # No loss weight outside the real sample.
+                assert torch.all(w[0, s:] == 0.0)
+
+    def test_packed_row_matches_unpacked_samples(self):
+        """A packed two-sample row must reproduce each sample's unpacked weights."""
+        torch.manual_seed(0)
+        s1, s2 = 5, 7
+        d1 = torch.rand(s1) > 0.5
+        d2 = torch.rand(s2) > 0.5
+        # Ensure a masked position adjacent to the s1/s2 boundary to make
+        # cross-sample leakage observable.
+        d1[-1] = True
+        d2[0] = False
+
+        L = s1 + s2
+        packed_diff = torch.cat([d1, d2]).unsqueeze(0)
+        packed_attn = torch.ones(1, L, dtype=torch.long)
+        seq_lengths = [torch.tensor([s1, s2], dtype=torch.int32)]
+
+        w_packed = self._weights(
+            packed_diff, attention_mask=packed_attn, seq_lengths=seq_lengths
+        )
+
+        # Unpacked references (each padded to L so the weight matrix matches).
+        for offset, slen, d in ((0, s1, d1), (s1, s2, d2)):
+            diffusion_mask = torch.zeros(1, L, dtype=torch.bool)
+            diffusion_mask[0, :slen] = d
+            attention_mask = torch.zeros(1, L, dtype=torch.long)
+            attention_mask[0, :slen] = 1
+            w_single = self._weights(diffusion_mask, attention_mask=attention_mask)
+
+            assert torch.allclose(
+                w_packed[0, offset : offset + slen], w_single[0, :slen], atol=1e-6
+            ), f"packed weights diverge from unpacked for segment at {offset}"
+
+    def test_cross_sample_leakage_regression(self):
+        """A masked token at a packed boundary must ignore the neighbour sample."""
+        # Sample A: all clean (2 tokens). Sample B: all masked (2 tokens).
+        diffusion_mask = torch.tensor([[False, False, True, True]])
+        seq_lengths = [torch.tensor([2, 2], dtype=torch.int32)]
+        w = self._weights(diffusion_mask, seq_lengths=seq_lengths)
+
+        # Sample B has zero clean context within its own segment -> zero weight.
+        assert torch.all(w[0, 2:] == 0.0), (
+            "masked tokens must not receive weight from the neighbouring packed sample"
+        )

@@ -152,9 +152,11 @@ class BlockDiffusionTrainer(DiffusionTrainer):
         diffusion_mask: torch.Tensor = inputs.pop("diffusion_mask")  # [B, L]
         timesteps: torch.Tensor = inputs.pop("timesteps")  # [B]
 
-        # --- 2. Extract and discard the original attention_mask ---
-        # The block attention mask replaces it entirely.
-        inputs.pop("attention_mask", None)
+        # --- 2. Extract the original attention_mask ---
+        # The block attention mask replaces it for the forward pass, but CART
+        # loss weighting still needs the real-token mask so padding never
+        # counts as clean context.
+        padding_mask = inputs.pop("attention_mask", None)
 
         # --- 3. Reconstruct x_0 from labels (replace -100 with x_t tokens) ---
         noised_ids: torch.Tensor = inputs.pop("input_ids")  # [B, L]
@@ -208,7 +210,9 @@ class BlockDiffusionTrainer(DiffusionTrainer):
             logits = torch.cat([logits[:, :1], logits[:, :-1]], dim=1).contiguous()
 
         # --- 10. Build per-token loss weights (inherited machinery) ---
-        loss_weights = self._build_loss_weights(timesteps, logits, diffusion_mask)
+        loss_weights = self._build_loss_weights(
+            timesteps, logits, diffusion_mask, attention_mask=padding_mask
+        )
 
         # --- 11. Compute masked diffusion loss ---
         loss = fast_masked_diffusion_loss(
