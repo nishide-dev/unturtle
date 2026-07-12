@@ -123,7 +123,8 @@ class DiffuGRPOConfig(_GRPOConfigBase):
     **d1-style advantages:** TRL sets ``scale_rewards`` to ``\"group\"`` by default
     (per-group std scaling). The d1 / dllm references use mean-centered rewards only.
     Pass ``scale_rewards=False`` or ``scale_rewards=\"none\"`` for that behavior.
-    See ``docs/diffu-grpo-d1-notes.md``.
+    See the d1 reference implementation
+    (``dev/repos/d1/diffu-grpo/diffu_grpo_trainer.py``).
 
     Args:
         block_length:      Block size for block-wise iterative denoising.
@@ -221,7 +222,7 @@ class DiffuGRPOTrainer(GRPOTrainer):
     All other GRPO bookkeeping (reward scoring, advantage normalisation,
     buffered rollout reuse) is inherited unchanged from TRL. Use
     ``scale_rewards=False`` or ``\"none\"`` for d1-style mean-only advantages
-    (see ``docs/diffu-grpo-d1-notes.md``).
+    (see ``dev/repos/d1/diffu-grpo/diffu_grpo_trainer.py``).
 
     Args:
         model:                    Policy model or model-id string.
@@ -295,7 +296,7 @@ class DiffuGRPOTrainer(GRPOTrainer):
         if getattr(self.args, "diffu_policy_objective", "grpo") == "wd1++":
             warnings.warn(
                 "diffu_policy_objective='wd1++' stores full denoise trajectories per rollout "
-                "and runs extra forward passes; see docs/wd1plusplus-design.md.",
+                "and runs extra forward passes (wd1 paper Eq. 10).",
                 UserWarning,
                 stacklevel=2,
             )
@@ -385,7 +386,7 @@ class DiffuGRPOTrainer(GRPOTrainer):
 
         The d1 reference ``add_gumbel_noise`` uses a different reparameterization of
         stochastic argmax; paths agree when ``temperature == 0`` (deterministic argmax).
-        See ``docs/diffu-grpo-d1-notes.md``.
+        See the d1 reference (``dev/repos/d1/diffu-grpo/diffu_grpo_trainer.py``).
 
         Per arXiv:2409.02908, float64 noise improves perplexity but reduces
         generation quality for MDMs. We keep it in the model's native dtype.
@@ -663,7 +664,7 @@ class DiffuGRPOTrainer(GRPOTrainer):
     ) -> torch.Tensor:
         """Sum of log π(target) over completion tokens that are still ``mask_id`` in ``x_l``.
 
-        Matches the DCE-style conditioning on ``x_l`` (wd1++ / ``docs/wd1plusplus-design.md``):
+        Matches the DCE-style conditioning on ``x_l`` (wd1++, wd1 paper Eq. 10):
         one forward on prompt-jittered noisy input, cross-entropy targets from ``x0_pred``
         at positions where ``x_l`` is masked in the completion region.
         """
@@ -1107,6 +1108,77 @@ class DiffuGRPOTrainer(GRPOTrainer):
             advantages = advantages / (std_rewards + 1e-4)
         return advantages, std_rewards
 
+    def _score_rewards_per_func(
+        self,
+        inputs: list[dict[str, Any]],
+        prompts: list,
+        completions: list,
+    ) -> torch.Tensor:
+        """Score ``completions`` with every reward function.
+
+        Mirrors TRL 0.24 ``GRPOTrainer._calculate_rewards``: reward *models*
+        (``torch.nn.Module`` — the check TRL uses instead of
+        :class:`~transformers.PreTrainedModel` for compatibility with compiled
+        models) are scored by tokenizing ``prompt + completion`` with the paired
+        entry of ``self.reward_processing_classes`` (built by TRL's ``__init__``,
+        padding side right, no special tokens) and reading the
+        sequence-classification head's ``logits[:, 0]``. Reward *callables* are
+        invoked with ``(prompts=..., completions=..., **reward_kwargs)`` exactly
+        as before.
+
+        Conversational inputs are not supported with model rewards: TRL's
+        conversational branch re-renders ``prompt + completion`` message lists
+        through the *reward* tokenizer's chat template
+        (``apply_chat_template``), and this trainer's diffusion decode path has
+        not been validated against that re-rendering — raise a clear error
+        rather than silently mis-tokenize.
+
+        Returns:
+            Float tensor ``[len(prompts), len(self.reward_funcs)]`` on the
+            accelerator device (not gathered across processes).
+        """
+        device = self.accelerator.device
+        rewards_per_func = torch.zeros(
+            len(prompts), len(self.reward_funcs), device=device
+        )
+        for i, (reward_func, reward_processing_class) in enumerate(
+            zip(self.reward_funcs, self.reward_processing_classes, strict=True)
+        ):
+            if isinstance(reward_func, torch.nn.Module):
+                # Reward model (TRL-style sequence classification scoring).
+                if is_conversational(inputs[0]):
+                    raise NotImplementedError(
+                        "DiffuGRPOTrainer does not support reward models with "
+                        "conversational (message-list) prompts. Use a plain-text "
+                        "dataset or a callable reward function instead."
+                    )
+                texts = [p + c for p, c in zip(prompts, completions, strict=True)]
+                reward_inputs = reward_processing_class(
+                    text=texts,
+                    return_tensors="pt",
+                    padding=True,
+                    padding_side="right",
+                    add_special_tokens=False,
+                )
+                from transformers import Trainer as _Trainer
+
+                reward_inputs = _Trainer._prepare_inputs(self, reward_inputs)
+                with torch.inference_mode():
+                    rewards_per_func[:, i] = reward_func(**reward_inputs).logits[
+                        :, 0
+                    ]  # Shape (B*G,)
+            else:
+                keys = [k for k in inputs[0] if k not in ("prompt", "completion")]
+                reward_kwargs = {k: [ex[k] for ex in inputs] for k in keys}
+                output = reward_func(
+                    prompts=prompts, completions=completions, **reward_kwargs
+                )
+                output = [r if r is not None else float("nan") for r in output]
+                rewards_per_func[:, i] = torch.tensor(
+                    output, dtype=torch.float32, device=device
+                )
+        return rewards_per_func
+
     def _generate_and_score_completions(
         self,
         inputs: dict[str, Any],
@@ -1282,19 +1354,7 @@ class DiffuGRPOTrainer(GRPOTrainer):
         else:
             completions = completions_text
 
-        rewards_per_func = torch.zeros(
-            len(prompts), len(self.reward_funcs), device=device
-        )
-        for i, reward_func in enumerate(self.reward_funcs):
-            keys = [k for k in inputs[0] if k not in ("prompt", "completion")]
-            reward_kwargs = {k: [ex[k] for ex in inputs] for k in keys}
-            output = reward_func(
-                prompts=prompts, completions=completions, **reward_kwargs
-            )
-            output = [r if r is not None else float("nan") for r in output]
-            rewards_per_func[:, i] = torch.tensor(
-                output, dtype=torch.float32, device=device
-            )
+        rewards_per_func = self._score_rewards_per_func(inputs, prompts, completions)
 
         if torch.isnan(rewards_per_func).all(dim=1).any():
             warnings.warn(
