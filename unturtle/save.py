@@ -21,7 +21,10 @@ models with "unturtle" instead of "unsloth".
 from __future__ import annotations
 
 import inspect
+import logging
 import types
+
+_logger = logging.getLogger(__name__)
 
 
 def patch_saving_functions(model, vision: bool = False):
@@ -66,14 +69,21 @@ def patch_saving_functions(model, vision: bool = False):
         else:
             break
 
-    # Delegate heavier save methods to unsloth.save so they remain functional
+    # Delegate heavier save methods to unsloth.save so they remain functional.
+    # Only unavailability-shaped failures (unsloth missing / API drift) are
+    # tolerated — real bugs inside patch_saving_functions must propagate.
     try:
         from unsloth.save import patch_saving_functions as _unsloth_patch
 
         _unsloth_patch(model, vision=vision)
-    except (ImportError, Exception):
-        # If unsloth.save is not available, skip the extra methods silently.
-        pass
+    except (ImportError, AttributeError) as exc:
+        _logger.warning(
+            "unturtle.save: skipping unsloth.save.patch_saving_functions — "
+            "merged/GGUF/TorchAO save methods will be unavailable on this model "
+            "(%s: %s)",
+            type(exc).__name__,
+            exc,
+        )
 
     return model
 

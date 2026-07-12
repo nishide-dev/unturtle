@@ -32,6 +32,9 @@ cd "$(dirname "$0")"
 # version differs from the venv's interpreter ("No virtual environment found
 # for Python X.Y.Z"). This script manages its own venv, so drop the pin and
 # target .venv explicitly.
+if [[ -n "${UV_PYTHON:-}" ]]; then
+    echo "note: ignoring user-level UV_PYTHON=${UV_PYTHON} — this script manages its own venv (.venv, python \${PYTHON_VERSION:-3.12})"
+fi
 unset UV_PYTHON UV_PROJECT_ENVIRONMENT 2>/dev/null || true
 export VIRTUAL_ENV="$PWD/.venv"
 

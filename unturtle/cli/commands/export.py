@@ -114,7 +114,15 @@ def export(
         False, "--private", help="Make the HuggingFace repo private."
     ),
     max_seq_length: int = typer.Option(2048, "--max-seq-length"),
-    load_in_4bit: bool = typer.Option(True, "--load-in-4bit/--no-load-in-4bit"),
+    load_in_4bit: Optional[bool] = typer.Option(
+        None,
+        "--load-in-4bit/--no-load-in-4bit",
+        help=(
+            "Load the checkpoint in 4-bit before exporting. Default: false for "
+            "merged-16bit (a 16-bit artifact must come from 16-bit weights), "
+            "true for lora/gguf."
+        ),
+    ),
 ):
     """Export a checkpoint to various formats (merged-16bit, lora, gguf)."""
     if format not in EXPORT_FORMATS:
@@ -136,6 +144,19 @@ def export(
     if push_to_hub and not repo_id:
         typer.echo("Error: --repo-id is required when using --push-to-hub", err=True)
         raise typer.Exit(code=2)
+
+    # merged-16bit must be exported from a 16-bit load: merging into 4-bit bnb
+    # Linear4bit weights would either fail loudly at save time (dequant guard)
+    # or lose precision. Other formats keep the memory-friendly 4-bit default.
+    if load_in_4bit is None:
+        load_in_4bit = format != "merged-16bit"
+    elif load_in_4bit and format == "merged-16bit":
+        typer.echo(
+            "Warning: --load-in-4bit with --format merged-16bit — merged weights "
+            "will be dequantized from nf4 before saving (lossy vs a 16-bit load). "
+            "Prefer --no-load-in-4bit for this format.",
+            err=True,
+        )
 
     try:
         from unturtle import FastDiffusionModel

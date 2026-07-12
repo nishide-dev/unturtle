@@ -133,9 +133,18 @@ def test_normalize_until_variants() -> None:
     assert _normalize_until(["a", "b"]) == ["a", "b"]
 
 
-def test_generate_until_respects_max_gen_toks_override(
+def test_generate_until_pins_decoding_config_over_task_max_gen_toks(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """Task-supplied max_gen_toks must NOT override the pinned DecodingConfig.
+
+    The runner records DecodingConfig.max_new_tokens with the score; the decode
+    must match the record (reproducibility contract). A differing task value is
+    ignored with a warning.
+    """
+    import logging
+
     _install_fake_lm_eval(monkeypatch)
     from unturtle.eval.harness.model_adapter import build_harness_lm
 
@@ -148,8 +157,38 @@ def test_generate_until_respects_max_gen_toks_override(
         temperature=0.0,
         use_chat_template=False,
     )
-    lm.generate_until([_FakeInstance("Q", {"until": [], "max_gen_toks": 5})])
-    assert model.calls[-1]["max_length"] == 9
+    with caplog.at_level(logging.WARNING, logger="unturtle.eval.harness.model_adapter"):
+        lm.generate_until([_FakeInstance("Q", {"until": [], "max_gen_toks": 5})])
+    # prompt_len=4 + pinned max_new_tokens=8 — NOT 4 + 5.
+    assert model.calls[-1]["max_length"] == 12
+    assert any(
+        "max_gen_toks" in rec.message and "ignored" in rec.message
+        for rec in caplog.records
+    ), "expected a warning that task max_gen_toks was ignored"
+
+
+def test_generate_until_no_warning_when_max_gen_toks_matches(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    _install_fake_lm_eval(monkeypatch)
+    from unturtle.eval.harness.model_adapter import build_harness_lm
+
+    model = _StubModel()
+    lm = build_harness_lm(
+        model=model,
+        tokenizer=_StubTokenizer(),
+        num_steps=4,
+        max_new_tokens=8,
+        temperature=0.0,
+        use_chat_template=False,
+    )
+    with caplog.at_level(logging.WARNING, logger="unturtle.eval.harness.model_adapter"):
+        lm.generate_until([_FakeInstance("Q", {"until": [], "max_gen_toks": 8})])
+    assert model.calls[-1]["max_length"] == 12
+    assert not caplog.records
 
 
 def test_loglikelihood_raises_not_implemented(

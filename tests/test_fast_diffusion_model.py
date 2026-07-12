@@ -715,6 +715,45 @@ class TestLoRAQKVBias:
         assert QB.grad is not None
         assert QBias.grad is not None
 
+    def test_2d_input_forward_and_backward(self):
+        """2-D X [total_tokens, D] (padding-free) must round-trip fwd+bwd.
+
+        The backward reshape bookkeeping previously assumed 3-D X
+        (``batch, seq_len, hd = X.shape``) even though forward accepts 2-D.
+        Gradients for the flattened input must match the 3-D equivalent.
+        """
+        from unturtle.kernels.fast_lora import LoRA_QKV_Bias
+
+        torch.manual_seed(3)
+        B, L, D, R = 2, 4, 16, 2
+        base = torch.randn(B, L, D)
+        QW = torch.randn(D, D)
+        QA = torch.randn(R, D)
+        QB = torch.randn(D, R)
+        QBias = torch.randn(D)
+        scale = 1.0
+
+        def _run(X):
+            args = []
+            for _ in range(3):
+                args += [QW, None, QA, QB, scale, QBias]
+            Q, K, V = LoRA_QKV_Bias.apply(X, *args, False)
+            return Q, K, V
+
+        X3 = base.clone().requires_grad_(True)
+        Q3, K3, V3 = _run(X3)
+        (Q3.square().sum() + K3.sum() + V3.sum()).backward()
+
+        X2 = base.clone().reshape(B * L, D).requires_grad_(True)
+        Q2, K2, V2 = _run(X2)
+        assert Q2.shape == (B * L, D)
+        (Q2.square().sum() + K2.sum() + V2.sum()).backward()
+
+        assert X2.grad is not None
+        assert X2.grad.shape == (B * L, D)
+        assert torch.allclose(X2.grad, X3.grad.reshape(B * L, D), atol=1e-5)
+        assert torch.allclose(Q2, Q3.reshape(B * L, D), atol=1e-5)
+
 
 class TestDreamPatching:
     @pytest.mark.skipif(
@@ -1659,3 +1698,262 @@ class TestPostLoadClassSwap:
         fdm._apply_post_load_class_swap(m)
         # Unregistered — instance attribute must be preserved
         assert m.__dict__.get("generate") is sentinel
+
+
+# ---------------------------------------------------------------------------
+# FastModel kwarg forwarding — _load_via_fastmodel
+# ---------------------------------------------------------------------------
+
+
+class TestFastModelKwargForwarding:
+    def test_forwards_revision_cache_dir_and_extras(self, monkeypatch):
+        """User kwargs (revision, cache_dir, subfolder, attn_implementation, …)
+        must reach FastModel.from_pretrained instead of being silently dropped."""
+        calls = {}
+
+        class _FakeFastModel:
+            @staticmethod
+            def from_pretrained(model_name, **kwargs):
+                calls["kwargs"] = kwargs
+                return "M", "T"
+
+        from unturtle import fast_diffusion_model as fdm
+
+        monkeypatch.setattr(fdm, "_import_fastmodel", lambda: _FakeFastModel)
+        out = fdm._load_via_fastmodel(
+            "some/hub-model",
+            {
+                "torch_dtype": "bf16",
+                "revision": "abc123",
+                "cache_dir": "/tmp/hf",
+                "subfolder": "sub",
+                "attn_implementation": "sdpa",
+                "token": "tok",
+            },
+            load_in_4bit=False,
+        )
+        assert out == ("M", "T")
+        kw = calls["kwargs"]
+        assert kw["dtype"] == "bf16"  # torch_dtype → dtype rename
+        assert "torch_dtype" not in kw
+        assert kw["revision"] == "abc123"
+        assert kw["cache_dir"] == "/tmp/hf"
+        assert kw["subfolder"] == "sub"
+        assert kw["attn_implementation"] == "sdpa"
+        assert kw["token"] == "tok"
+        assert kw["load_in_4bit"] is False
+
+    def test_quantization_config_not_forwarded(self, monkeypatch):
+        """FastModel owns quantization on this path — quantization_config is an
+        intentional skip, threaded through as load_in_4bit instead."""
+        calls = {}
+
+        class _FakeFastModel:
+            @staticmethod
+            def from_pretrained(model_name, **kwargs):
+                calls["kwargs"] = kwargs
+                return "M", "T"
+
+        from unturtle import fast_diffusion_model as fdm
+
+        monkeypatch.setattr(fdm, "_import_fastmodel", lambda: _FakeFastModel)
+        fdm._load_via_fastmodel(
+            "x", {"quantization_config": object(), "revision": "r"}, load_in_4bit=True
+        )
+        assert "quantization_config" not in calls["kwargs"]
+        assert calls["kwargs"]["load_in_4bit"] is True
+        assert calls["kwargs"]["revision"] == "r"
+
+    def test_unaccepted_kwargs_dropped_with_warning(self, monkeypatch):
+        """Keys a non-**kwargs FastModel signature cannot take are dropped loudly."""
+        calls = {}
+        warnings_seen: list[str] = []
+
+        class _FakeStrictFastModel:
+            @staticmethod
+            def from_pretrained(
+                model_name, dtype=None, revision=None, load_in_4bit=True
+            ):
+                calls["kwargs"] = {
+                    "dtype": dtype,
+                    "revision": revision,
+                    "load_in_4bit": load_in_4bit,
+                }
+                return "M", "T"
+
+        from unturtle import fast_diffusion_model as fdm
+
+        monkeypatch.setattr(fdm, "_import_fastmodel", lambda: _FakeStrictFastModel)
+        monkeypatch.setattr(fdm, "_warn_once", warnings_seen.append)
+        out = fdm._load_via_fastmodel(
+            "x",
+            {"torch_dtype": "bf16", "revision": "r", "not_a_real_kwarg": 1},
+            load_in_4bit=False,
+        )
+        assert out == ("M", "T")
+        assert calls["kwargs"]["revision"] == "r"
+        assert any("not_a_real_kwarg" in w for w in warnings_seen)
+
+
+# ---------------------------------------------------------------------------
+# 4-bit load fallback — _load_model_with_optional_4bit_fallback
+# ---------------------------------------------------------------------------
+
+
+class TestFourBitFallback:
+    def test_oom_is_reraised_not_retried(self, monkeypatch):
+        """OOM must NOT trigger the full-precision retry (which needs MORE memory)."""
+        from unturtle import fast_diffusion_model as fdm
+
+        attempts = []
+
+        class _OOMLoader:
+            @staticmethod
+            def from_pretrained(model_name, **kwargs):
+                attempts.append(kwargs)
+                raise torch.cuda.OutOfMemoryError("CUDA out of memory")
+
+        with pytest.raises(torch.cuda.OutOfMemoryError):
+            fdm._load_model_with_optional_4bit_fallback(
+                _OOMLoader, "x", {"quantization_config": object()}
+            )
+        assert len(attempts) == 1  # no retry
+
+    def test_genuine_4bit_failure_falls_back_with_exception_in_warning(
+        self, monkeypatch
+    ):
+        from unturtle import fast_diffusion_model as fdm
+
+        warnings_seen: list[str] = []
+        monkeypatch.setattr(fdm, "_warn_once", warnings_seen.append)
+        attempts = []
+
+        class _FlakyLoader:
+            @staticmethod
+            def from_pretrained(model_name, **kwargs):
+                attempts.append(dict(kwargs))
+                if "quantization_config" in kwargs:
+                    raise ValueError("bnb kaboom")
+                return "FULL_PRECISION_MODEL"
+
+        out = fdm._load_model_with_optional_4bit_fallback(
+            _FlakyLoader, "x", {"quantization_config": object(), "device_map": "auto"}
+        )
+        assert out == "FULL_PRECISION_MODEL"
+        assert len(attempts) == 2
+        assert "quantization_config" not in attempts[1]
+        # The warning must carry the original exception type + message
+        assert any("ValueError" in w and "bnb kaboom" in w for w in warnings_seen)
+
+
+# ---------------------------------------------------------------------------
+# Merged-16bit honesty — _dequantize_merged_model_ / save_pretrained_merged
+# ---------------------------------------------------------------------------
+
+
+class _FakeQuantState:
+    dtype = torch.float16
+
+
+def _make_fake_quantized_linear(in_features: int, out_features: int) -> torch.nn.Linear:
+    """nn.Linear whose weight mimics a bnb Params4bit (has .quant_state)."""
+    lin = torch.nn.Linear(in_features, out_features, bias=True)
+    packed = torch.zeros((out_features * in_features) // 2, 1, dtype=torch.uint8)
+    w = torch.nn.Parameter(packed, requires_grad=False)
+    w.quant_state = _FakeQuantState()
+    lin.weight = w
+    lin.in_features = in_features
+    lin.out_features = out_features
+    return lin
+
+
+class _FakeModelConfig:
+    def __init__(self):
+        # Instance attribute, like transformers' PretrainedConfig — `del` must work.
+        self.quantization_config = {"quant_method": "bitsandbytes"}
+
+
+class _FakeQuantizedModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.proj = _make_fake_quantized_linear(4, 8)
+        self.config = _FakeModelConfig()
+
+
+class TestMergedSaveDequantizes:
+    def test_dequantize_replaces_quantized_linear(self, monkeypatch):
+        from unturtle import fast_diffusion_model as fdm
+
+        class _FakeBnb:
+            class functional:
+                @staticmethod
+                def dequantize_4bit(data, quant_state):
+                    return torch.zeros(8, 4, dtype=torch.float16)
+
+        monkeypatch.setattr(fdm, "_import_bitsandbytes", lambda: _FakeBnb)
+        model = _FakeQuantizedModel()
+        out = fdm._dequantize_merged_model_(model)
+
+        assert isinstance(out.proj, torch.nn.Linear)
+        assert out.proj.weight.dtype == torch.float16
+        assert out.proj.weight.shape == (8, 4)
+        assert getattr(out.proj.weight, "quant_state", None) is None
+        # Stale 4-bit metadata must not survive into the saved config
+        assert not hasattr(out.config, "quantization_config")
+
+    def test_bitsandbytes_unavailable_raises_clear_error(self, monkeypatch):
+        from unturtle import fast_diffusion_model as fdm
+
+        def _boom():
+            raise ImportError("no bitsandbytes")
+
+        monkeypatch.setattr(fdm, "_import_bitsandbytes", _boom)
+        with pytest.raises(RuntimeError, match="load_in_4bit=False"):
+            fdm._dequantize_merged_model_(_FakeQuantizedModel())
+
+    def test_dequantize_failure_raises_clear_error(self, monkeypatch):
+        from unturtle import fast_diffusion_model as fdm
+
+        class _FakeBnb:
+            class functional:
+                @staticmethod
+                def dequantize_4bit(data, quant_state):
+                    raise ValueError("bad quant_state")
+
+        monkeypatch.setattr(fdm, "_import_bitsandbytes", lambda: _FakeBnb)
+        with pytest.raises(RuntimeError, match="load_in_4bit=False"):
+            fdm._dequantize_merged_model_(_FakeQuantizedModel())
+
+    def test_non_quantized_model_untouched(self):
+        from unturtle import fast_diffusion_model as fdm
+
+        model = torch.nn.Linear(4, 8)
+        assert fdm._dequantize_merged_model_(model) is model
+
+    def test_save_pretrained_merged_refuses_mislabeled_4bit(self, monkeypatch):
+        """End-to-end: merged save on a 4-bit model must error, never save nf4."""
+        from unturtle import fast_diffusion_model as fdm
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        def _boom():
+            raise ImportError("no bitsandbytes")
+
+        monkeypatch.setattr(fdm, "_import_bitsandbytes", _boom)
+
+        saved: list[bool] = []
+
+        class _FakePeft(torch.nn.Module):
+            # merge_and_unload builds the quantized model at call time (after
+            # save_pretrained_merged's deepcopy — torch's Parameter deepcopy
+            # would strip the fake quant_state marker).
+            def merge_and_unload(self):
+                merged = _FakeQuantizedModel()
+                merged.save_pretrained = lambda *a, **k: saved.append(True)
+                return merged
+
+        model = _FakePeft()
+        with pytest.raises(RuntimeError, match="16-bit"):
+            FastDiffusionModel.save_pretrained_merged(
+                model, "/nonexistent/should-not-write"
+            )
+        assert saved == []

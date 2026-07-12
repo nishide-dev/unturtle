@@ -45,16 +45,28 @@ def _to_float(raw: str) -> float | None:
         return None
 
 
+#: Bare number: integer or decimal, optional leading minus, thousands commas.
+_NUMBER_RE = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
+
+
 def extract_numeric_answer(text: str) -> float | None:
     """Extract a numeric answer from model output.
 
     Priority:
     1. Last \\boxed{...} occurrence (supports nested braces), if its content is numeric.
-    2. If \\boxed{...} is present but its content is not numeric: last bare number
-       in the text strictly before the \\boxed{ marker.
-    3. If no \\boxed{...} is present: last bare number anywhere in the text.
+    2. If \\boxed{...} is present but its content is not directly numeric
+       (e.g. ``\\boxed{$72}``, ``\\boxed{72 dollars}``, ``\\boxed{1,234}``):
+       the last bare number *inside* the boxed content.
+    3. If the boxed content contains no number at all: last bare number in the
+       text strictly before the \\boxed{ marker.
+    4. If no \\boxed{...} is present: last bare number anywhere in the text.
 
     Returns None if no number can be extracted.
+
+    CAVEAT: LaTeX expressions inside the box are not evaluated — e.g.
+    ``\\boxed{\\frac{1}{2}}`` yields 2.0 (the last bare number), not 0.5.
+    Acceptable for the integer-answer GSM8K smoke tier; do not reuse this
+    parser for math-style tasks without a proper LaTeX-aware extractor.
     """
     boxed_idx = text.rfind(r"\boxed{")
     if boxed_idx != -1:
@@ -63,13 +75,19 @@ def extract_numeric_answer(text: str) -> float | None:
             result = _to_float(boxed)
             if result is not None:
                 return result
-        # Non-numeric boxed content: search only the text before the \boxed{ marker
+            # Non-numeric boxed content ("$72", "72 dollars", "1,234"): the
+            # box still marks the intended answer — extract the last number
+            # inside it before falling back to the surrounding text.
+            inner = _NUMBER_RE.findall(boxed)
+            if inner:
+                return _to_float(inner[-1])
+        # No number inside the box: search only the text before the \boxed{ marker
         search_text = text[:boxed_idx]
     else:
         search_text = text
 
-    # Fallback: last number (integer or decimal, optional leading minus)
-    matches = re.findall(r"-?\d[\d,]*(?:\.\d+)?", search_text)
+    # Fallback: last bare number in the search region
+    matches = _NUMBER_RE.findall(search_text)
     if matches:
         return _to_float(matches[-1])
     return None
