@@ -1024,3 +1024,139 @@ class TestComputeGroupAdvantages:
         tr = _make_advantage_trainer("bogus")
         with pytest.raises(ValueError, match="scale_rewards"):
             DiffuGRPOTrainer._compute_group_advantages(tr, self.rewards)
+
+
+# ---------------------------------------------------------------------------
+# Reward scoring (_score_rewards_per_func) — callables vs. reward models
+# ---------------------------------------------------------------------------
+
+
+def _make_tiny_reward_model():
+    """A real ``PreTrainedModel`` sequence-classification-style stub.
+
+    ``forward`` returns ``logits`` of shape ``[B, 1]`` equal to the number of
+    non-pad tokens per row, so expected scores are trivially checkable.
+    """
+    from transformers import PretrainedConfig, PreTrainedModel
+
+    class _Cfg(PretrainedConfig):
+        model_type = "tiny-reward-stub"
+
+    class _TinyRewardModel(PreTrainedModel):
+        config_class = _Cfg
+
+        def __init__(self, config):
+            super().__init__(config)
+            self.bias = nn.Parameter(torch.zeros(1))
+
+        def forward(self, input_ids=None, attention_mask=None, **kwargs):
+            score = attention_mask.sum(dim=1, keepdim=True).float() + self.bias
+            return SimpleNamespace(logits=score)
+
+    return _TinyRewardModel(_Cfg(_name_or_path="stub/tiny-reward"))
+
+
+class _CharTokenizer:
+    """Whitespace-free char-level tokenizer stub (pad_token_id=0)."""
+
+    pad_token_id = 0
+
+    def __call__(self, text, return_tensors, padding, padding_side, add_special_tokens):
+        assert return_tensors == "pt" and padding and padding_side == "right"
+        assert add_special_tokens is False
+        ids = [[(ord(ch) % 100) + 1 for ch in t] for t in text]
+        max_len = max(len(seq) for seq in ids)
+        input_ids = torch.zeros(len(ids), max_len, dtype=torch.long)
+        attention_mask = torch.zeros(len(ids), max_len, dtype=torch.long)
+        for row, seq in enumerate(ids):
+            input_ids[row, : len(seq)] = torch.tensor(seq, dtype=torch.long)
+            attention_mask[row, : len(seq)] = 1
+        return {"input_ids": input_ids, "attention_mask": attention_mask}
+
+
+def _make_reward_scoring_trainer(reward_funcs, reward_processing_classes):
+    from unturtle.diffusion.grpo_trainer import DiffuGRPOTrainer
+
+    tr = DiffuGRPOTrainer.__new__(DiffuGRPOTrainer)
+    tr.accelerator = SimpleNamespace(device=torch.device("cpu"))
+    tr.reward_funcs = reward_funcs
+    tr.reward_processing_classes = reward_processing_classes
+    # Attributes read by transformers.Trainer._prepare_inputs on the reward-model path.
+    tr.args = SimpleNamespace(device=torch.device("cpu"), past_index=-1)
+    tr.is_deepspeed_enabled = False
+    return tr
+
+
+class TestScoreRewardsPerFunc:
+    prompts = ["ab", "c"]
+    completions = ["xyz", "q"]
+    inputs = [
+        {"prompt": "ab", "answer": "42"},
+        {"prompt": "c", "answer": "7"},
+    ]
+
+    def test_reward_model_scored_trl_style(self):
+        """A PreTrainedModel reward is tokenized as prompt+completion and scored
+        via ``logits[:, 0]`` (TRL 0.24 ``_calculate_rewards`` semantics)."""
+        from unturtle.diffusion.grpo_trainer import DiffuGRPOTrainer
+
+        model = _make_tiny_reward_model()
+        tr = _make_reward_scoring_trainer([model], [_CharTokenizer()])
+        out = DiffuGRPOTrainer._score_rewards_per_func(
+            tr, self.inputs, self.prompts, self.completions
+        )
+        assert out.shape == (2, 1)
+        # score == len(prompt + completion) per row: "abxyz" -> 5, "cq" -> 2
+        assert torch.equal(out[:, 0], torch.tensor([5.0, 2.0]))
+
+    def test_callable_rewards_unchanged(self):
+        """Callable rewards keep the exact legacy contract: kwargs forwarded,
+        ``None`` mapped to NaN."""
+        from unturtle.diffusion.grpo_trainer import DiffuGRPOTrainer
+
+        seen = {}
+
+        def reward(prompts, completions, **kwargs):
+            seen["prompts"] = prompts
+            seen["completions"] = completions
+            seen["kwargs"] = kwargs
+            return [0.5, None]
+
+        tr = _make_reward_scoring_trainer([reward], [None])
+        out = DiffuGRPOTrainer._score_rewards_per_func(
+            tr, self.inputs, self.prompts, self.completions
+        )
+        assert seen["prompts"] == self.prompts
+        assert seen["completions"] == self.completions
+        assert seen["kwargs"] == {"answer": ["42", "7"]}
+        assert out[0, 0].item() == pytest.approx(0.5)
+        assert torch.isnan(out[1, 0])
+
+    def test_mixed_callable_and_model_rewards(self):
+        from unturtle.diffusion.grpo_trainer import DiffuGRPOTrainer
+
+        def reward(prompts, completions, **kwargs):
+            return [1.0, 2.0]
+
+        model = _make_tiny_reward_model()
+        tr = _make_reward_scoring_trainer([reward, model], [None, _CharTokenizer()])
+        out = DiffuGRPOTrainer._score_rewards_per_func(
+            tr, self.inputs, self.prompts, self.completions
+        )
+        assert torch.equal(out[:, 0], torch.tensor([1.0, 2.0]))
+        assert torch.equal(out[:, 1], torch.tensor([5.0, 2.0]))
+
+    def test_conversational_inputs_with_model_reward_raise(self):
+        """Conversational prompts require chat-template re-rendering through the
+        reward tokenizer (TRL's conversational branch), which is unsupported here."""
+        from unturtle.diffusion.grpo_trainer import DiffuGRPOTrainer
+
+        model = _make_tiny_reward_model()
+        tr = _make_reward_scoring_trainer([model], [_CharTokenizer()])
+        conv_inputs = [{"prompt": [{"role": "user", "content": "hi"}]}]
+        conv_prompts = [[{"role": "user", "content": "hi"}]]
+        conv_completions = [[{"role": "assistant", "content": "yo"}]]
+        with pytest.raises(NotImplementedError, match="conversational"):
+            DiffuGRPOTrainer._score_rewards_per_func(
+                tr, conv_inputs, conv_prompts, conv_completions
+            )
