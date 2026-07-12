@@ -353,3 +353,9 @@ def TinyA2DAttention_fast_forward(
     # Dispatch through apply_o — uses Triton fused kernel when patched
     attn_output = self.apply_o(self, attn_output)
     return attn_output, None
+
+
+# Explicit marker consumed by DiffusionTrainer's packed-metadata guard: this is
+# the only fast forward that actually reads block_attention_mask /
+# packed_seq_lengths (via kwargs), so signature inspection cannot detect it.
+TinyA2DAttention_fast_forward._consumes_packed_metadata = True  # type: ignore[attr-defined]

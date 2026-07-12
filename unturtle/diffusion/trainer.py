@@ -41,6 +41,8 @@ Reference implementations:
 
 from __future__ import annotations
 
+import inspect
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -54,6 +56,56 @@ from .collator import MaskedDiffusionDataCollator
 from .packed_collator import PackedMaskedDiffusionDataCollator
 from .reweighting import context_adaptive_reweight
 from .schedulers import BaseAlphaScheduler, LinearAlphaScheduler, make_alpha_scheduler
+
+logger = logging.getLogger(__name__)
+
+# Batch keys emitted by PackedMaskedDiffusionDataCollator that only a
+# packed-aware attention forward consumes.
+_PACKED_METADATA_KEYS = ("block_attention_mask", "packed_seq_lengths")
+
+
+def _model_consumes_packed_metadata(model: torch.nn.Module) -> bool:
+    """Best-effort check that ``model``'s forward path consumes packed metadata.
+
+    ``block_attention_mask`` / ``packed_seq_lengths`` ride through
+    ``**kwargs``-tolerant transformers forwards without error, so an unpatched
+    model silently ignores them — attention is then NOT blocked at packed
+    sample boundaries and the loss still decreases (cross-sample
+    contamination).  Two signals, in order of reliability:
+
+    1. An *instance-level* ``forward`` override carrying the explicit
+       ``_consumes_packed_metadata`` marker.  ``FastDiffusionModel`` patching
+       installs fast forwards via ``types.MethodType``; only the packed-aware
+       ones (``TinyA2DAttention_fast_forward``) set the marker — other
+       unturtle fast forwards (Dream / ModernBERT / LLaDA) never read the
+       packed keys, so merely being patched from unturtle code is NOT a
+       signal.
+    2. A module class whose ``forward`` signature *explicitly* declares one of
+       the packed metadata arguments (a backbone with native packed support).
+       No current unturtle backbone does; a plain ``**kwargs`` sink is
+       deliberately NOT accepted — silently swallowing these kwargs is exactly
+       the failure mode this guard exists to catch.
+
+    This is a documented heuristic: a model consuming packed metadata through
+    an opaque ``**kwargs`` sink would be reported as non-consuming (the guard
+    only warns, it never raises).
+    """
+    for module in model.modules():
+        # Signal 1: MethodType-patched instance forward carrying the explicit
+        # packed-aware marker (class-level forwards do not appear in the
+        # instance __dict__).
+        fwd = module.__dict__.get("forward")
+        func = getattr(fwd, "__func__", fwd)
+        if func is not None and getattr(func, "_consumes_packed_metadata", False):
+            return True
+        # Signal 2: explicit packed-metadata parameter in the class forward.
+        try:
+            signature = inspect.signature(type(module).forward)
+        except (TypeError, ValueError):
+            continue
+        if any(key in signature.parameters for key in _PACKED_METADATA_KEYS):
+            return True
+    return False
 
 
 @dataclass
@@ -276,6 +328,10 @@ class DiffusionTrainer(UnturtleTrainer):
         # reference trainer behavior.  See transformers Trainer.training_step L1925.
         self.model_accepts_loss_kwargs = False
 
+        # One-shot guard flag: on the first batch carrying packed metadata,
+        # verify the model actually consumes it (see compute_loss).
+        self._packed_metadata_checked = False
+
         if isinstance(
             self.data_collator, PackedMaskedDiffusionDataCollator
         ) and self._loss_weight_type not in ("uniform", "cart"):
@@ -305,6 +361,32 @@ class DiffusionTrainer(UnturtleTrainer):
           ``diffusion_mask`` – bool tensor, True at masked positions
           ``timesteps``      – sampled ``t``, shape ``(B,)``
         """
+        # Packed-batch guard (#57): warn once when packed metadata rides
+        # through **kwargs into a model that never consumes it (cross-sample
+        # attention; the loss still decreases, hiding the bug).  Warning only —
+        # backbones that consume packed metadata through an opaque **kwargs
+        # sink must not be broken by a false positive.
+        if not getattr(self, "_packed_metadata_checked", False) and any(
+            key in inputs for key in _PACKED_METADATA_KEYS
+        ):
+            self._packed_metadata_checked = True
+            if not _model_consumes_packed_metadata(model):
+                logger.warning(
+                    "DiffusionTrainer: the batch carries packed-attention metadata "
+                    "(%s) but the model does not appear to consume it — no "
+                    "unturtle fast-attention forward is installed on any module "
+                    "and no module forward declares these arguments.  The "
+                    "metadata will ride through **kwargs unused, so attention is "
+                    "NOT blocked at packed-sample boundaries (cross-sample "
+                    "contamination; the loss still decreases, hiding the bug).  "
+                    "Load the model via FastDiffusionModel.from_pretrained / "
+                    "get_peft_model on CUDA so the packed fast forward is "
+                    "installed, or use the unpacked MaskedDiffusionDataCollator.  "
+                    "If your backbone consumes packed metadata natively through a "
+                    "**kwargs sink, this warning is a false positive.",
+                    " / ".join(key for key in _PACKED_METADATA_KEYS if key in inputs),
+                )
+
         labels: torch.Tensor = inputs.pop("labels")  # [B, L]
         diffusion_mask: torch.Tensor = inputs.pop("diffusion_mask")
         timesteps: torch.Tensor = inputs.pop("timesteps")
