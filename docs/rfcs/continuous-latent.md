@@ -15,7 +15,7 @@ It is grounded in the five papers #66 cites, all read rather than summarized:
 |---|---|---|---|
 | [LDLM](https://arxiv.org/abs/2605.07933) | trained **jointly** with the diffusion model | `x_0` | needs MSE decoder loss, diffusion-to-encoder warmup, adaptive timestep sampling, decoder-input noise |
 | [TextLDM](https://arxiv.org/abs/2605.07748) | **separate** Transformer VAE + REPA alignment to a frozen LM | flow matching | reconstruction fidelity alone is *insufficient*; alignment is the critical piece |
-| [AURORA-LM](https://arxiv.org/abs/2608.02602) | prefix-aligned, **deliberately uncompressed** | ablates `x_0` vs velocity | block-causal DiT over full-width latents |
+| [AURORA-LM](https://arxiv.org/abs/2608.02602) | prefix-aligned, **deliberately uncompressed**; **frozen** before denoiser training | ablates `x_0` vs velocity | block-causal DiT over full-width latents |
 | [DiLaDiff](https://arxiv.org/abs/2605.23605) | auto-encoder **fine-tuned from an existing masked dLLM** | latent prior + consistency distillation | latent *guides* discrete decoding rather than replacing it |
 | [FlowLM](https://arxiv.org/abs/2605.20199) | **token-embedding space + rounding**, inherited from DiffuSeq — no *learned* codec | **`x_0`** | straightens trajectories of a pretrained model; validates clean-data prediction over velocity |
 
@@ -50,6 +50,11 @@ class LatentCodec(Protocol):
     def trainable(self) -> bool: ...
     def auxiliary_losses(self, batch, latents) -> dict[str, Tensor]: ...
 ```
+
+`trainable` has three distinct values across these five, which is why it cannot
+be inferred: LDLM trains its codec with the diffusion model; TextLDM and
+AURORA-LM both **freeze** theirs first ("the autoencoder is frozen before
+training"); FlowLM has no learned encoder at all.
 
 `auxiliary_losses` returns a **dict**, not a scalar, so the trainer can log and
 weight terms it does not need to understand — TextLDM's REPA and LDLM's MSE
@@ -155,7 +160,13 @@ Per #66, deliberately tiny and after this RFC settles, not before:
 1. small learned codec (embedding + linear, `trainable=True`)
 2. tiny DiT-style continuous denoiser
 3. one objective, `x_0` prediction (the majority choice above)
-4. Euler solver registered as a generation family
+4. Euler solver registered as a generation family — but note this is *not*
+   universal even among these five. It matches LDLM (Euler-Maruyama) and
+   TextLDM (50-step Euler); DiLaDiff's third component is consistency
+   distillation, and FlowLM — the recommended first experiment — samples with
+   an **average**-velocity update, `z_next = (1 - dt/t)·z_t + (dt/t)·z_0,pred`,
+   not a standard Euler step. The solver interface must not assume Euler is
+   the general case with the others as variants.
 5. decode back to logits
 6. `PreTrainedModel`-compatible save/reload
 
@@ -169,8 +180,14 @@ different reason than "no codec".
 It fine-tunes an existing diffusion LM toward straighter trajectories, working
 in the token-embedding space with a final rounding step rather than a learned
 codec.  So it does exercise the continuous *process*, *objective* and *solver*,
-and it instantiates `LatentCodec` at its **degenerate end**: `trainable=False`,
-`auxiliary_losses()` empty, `encode` = embedding lookup, `decode` = rounding.
+and it instantiates `LatentCodec` near its **simple end**: `encode` = embedding
+lookup, `decode` = rounding, no learned encoder to optimize.
+
+But not fully degenerate, and the exception proves the point. FlowLM's total
+loss is `||z_0 - z_0,pred||^2 + CE(decoder_head(z_y0), w_y) + ...` — that CE is
+a **codec-owned auxiliary loss** by this RFC's own definition. So even the
+cheapest method in the set needs `auxiliary_losses()`. That is the strongest
+single argument that `encode()`/`decode()` alone is insufficient.
 
 That is arguably a better first test of the boundary than "no codec" would be.
 A protocol that cannot express the trivial case is broken, and this forces the
