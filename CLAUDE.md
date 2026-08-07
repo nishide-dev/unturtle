@@ -38,9 +38,9 @@ unturtle       dLLM method layer: conversion, objective trainers, inference acce
 - For algorithm changes, check the reference implementations in `dev/repos/` before deciding
   behavior is wrong.
 
-## Model taxonomy — three orthogonal axes
+## Model taxonomy — orthogonal axes
 
-A concrete dLLM is a point in three independent axes. Place new code on the right axis:
+A concrete dLLM is a point in several independent axes. Place new code on the right axis:
 
 - **Backbone architecture** (`unturtle.models.backbones.{llada,dream,modernbert,diffusion_gemma,mdlm_dit}`):
   native diffusion backbones Unturtle implements. LLaDA/Dream are full from-scratch
@@ -54,6 +54,10 @@ A concrete dLLM is a point in three independent axes. Place new code on the righ
   implemented recipe is **Tiny-A2D** (`unturtle.models.conversion.a2d.tiny_a2d`, classes
   `TinyA2D*`, model_types `tiny-a2d-{llama,qwen2,qwen3}`). These are thin adapters over
   `transformers` Qwen/Llama backbones.
+- **Forward process** (`unturtle.processes`): how a clean batch becomes a noised
+  training state. `MaskedDiffusionProcess` is the masked-discrete implementation;
+  `ForwardProcess` does not imply one tensor contract for future DFM/continuous
+  methods. Applied device-side by the trainer/evaluator, not by the collator.
 - **Training objective** (`unturtle.diffusion`): MDLM, BD3LM.
 - **Shared infra** (`unturtle.models.generation`): cache, block-decode, and the
   masked-diffusion generation mixin used by all families (neither backbone nor method).
@@ -68,10 +72,12 @@ See `docs/dllm-gap-map.md` for the implemented-vs-missing method map and the roa
 .
 ├── unturtle/
 │   ├── diffusion/          # trainer, collator, scheduler, GRPO
-│   ├── kernels/            # Triton kernels / fast LoRA
+│   ├── processes/          # forward (noising) processes — training-state construction
+│   ├── kernels/            # Triton kernels / fast LoRA / sparse masked LM-head loss
 │   ├── models/
 │   │   ├── backbones/      # native diffusion backbones: llada / dream / modernbert / diffusion_gemma / mdlm_dit
 │   │   ├── conversion/     # methods: a2d/ (family) → tiny_a2d/ (recipe)
+│   │   ├── integrations/   # per-model-family loading / PEFT / capability registry
 │   │   └── generation/     # shared infra: cache / block-decode / generation mixins
 │   ├── eval/               # smoke evaluators + lm-evaluation-harness adapter
 │   ├── utils/              # shared helpers
@@ -337,6 +343,27 @@ Dream q/k/v uses bias, so standard bias-free QKV patching rules do not apply.
 
 ## High-signal gotchas
 
+- Adding a model family means a `BackboneIntegration` registration in
+  `unturtle/models/integrations/registry.py`, not a new `elif model_type` branch.
+  Registrations are declared centrally there rather than by backbones self-registering:
+  `models/backbones/__init__` is eager, so self-registration would create a
+  `fast_diffusion_model → backbones → registry → fast_diffusion_model` cycle.
+- Integration resolvers are zero-arg callables so the registry imports no backbone.
+  Keep it that way; eager class references reintroduce the import cost and lose the
+  per-family `except ImportError` degradation.
+- A family's PEFT `model_type`s are NOT its load `model_type`s: a PEFT-wrapped Tiny-A2D
+  model reports plain `llama`/`qwen2`/`qwen3`, and ModernBERT is patchable without being
+  natively loadable.
+- On a `PeftModel`, `.model` is the *LM-head model*, not the backbone. Use `get_decoder()`
+  to reach hidden states, or the output head runs anyway and "hidden states" are logits.
+- The sparse masked LM-head path (`unturtle.kernels.sparse_masked_loss`) saves memory only
+  below roughly a 40% mask ratio; MDLM-style `t ~ U(0,1)` averages ~50%, where it costs
+  more than dense. Never upcast `[M, V]` logits — the dense Triton kernel upcasts per tile
+  and never materializes fp32 logits.
+- `MaskedDiffusionDataCollator` defaults to `noise=True` (legacy in-collator corruption).
+  `DiffusionTrainer` / `BlockDiffusionTrainer` / `MaskedDiffusionEvaluator` inject it with
+  `noise=False` and apply the process device-side; the packed collator still noises. A
+  batch carrying only one of `diffusion_mask`/`timesteps` is rejected, not guessed at.
 - Pass `processing_class=tokenizer` explicitly to `DiffusionTrainer` in tests/custom setups.
 - Do not confuse `packed_seq_lengths` with `cu_seqlens`; packed fast paths read `packed_seq_lengths`.
 - Flash varlen must guard on `Q.device.type == "cuda"`; package availability alone is not enough.
