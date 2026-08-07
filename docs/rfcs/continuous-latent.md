@@ -17,7 +17,7 @@ It is grounded in the five papers #66 cites, all read rather than summarized:
 | [TextLDM](https://arxiv.org/abs/2605.07748) | **separate** Transformer VAE + REPA alignment to a frozen LM | flow matching | reconstruction fidelity alone is *insufficient*; alignment is the critical piece |
 | [AURORA-LM](https://arxiv.org/abs/2608.02602) | prefix-aligned, **deliberately uncompressed** | ablates `x_0` vs velocity | block-causal DiT over full-width latents |
 | [DiLaDiff](https://arxiv.org/abs/2605.23605) | auto-encoder **fine-tuned from an existing masked dLLM** | latent prior + consistency distillation | latent *guides* discrete decoding rather than replacing it |
-| [FlowLM](https://arxiv.org/abs/2605.20199) | none — operates on an existing diffusion LM | **`x_0`** | straightens trajectories of a pretrained model; validates clean-data prediction over velocity |
+| [FlowLM](https://arxiv.org/abs/2605.20199) | **token-embedding space + rounding**, inherited from DiffuSeq — no *learned* codec | **`x_0`** | straightens trajectories of a pretrained model; validates clean-data prediction over velocity |
 
 ## The constraint that shapes everything
 
@@ -29,7 +29,11 @@ These five disagree about the codec in a way that is not a detail:
   loss against a frozen LM.
 - DiLaDiff's is **derived from an existing masked dLLM** — the asset Unturtle
   already has.
-- FlowLM has **no codec at all**.
+- FlowLM's is the **token embedding matrix itself** plus a rounding step
+  (inherited from DiffuSeq: `z_0 = [EMB(w_x); EMB(w_y)]`, with "the final
+  rounding step" recovering tokens).  There is a continuous space, but no
+  *learned* codec — which is the cheap end of the same axis, not a separate
+  case.
 
 So a `LatentCodec` that is only `encode()`/`decode()` is wrong. It would force
 LDLM's recipe and TextLDM's REPA term into the trainer as special cases —
@@ -54,8 +58,9 @@ back. `trainable` is what lets one trainer serve a frozen VAE and a jointly
 optimized encoder without branching on model type.
 
 Deliberately **not** in the base protocol: any VAE or KL assumption. Only
-TextLDM is a VAE; FlowLM has no codec, and AURORA-LM's central claim is that
-the decoder-facing latent should *not* be compressed.
+TextLDM is a VAE; FlowLM's is an embedding lookup plus rounding, and
+AURORA-LM's central claim is that the decoder-facing latent should *not* be
+compressed.
 
 ## Target parameterization is an axis, not a default
 
@@ -158,10 +163,20 @@ Its purpose is to test these interfaces, not to claim quality.
 
 ## Recommended first experiment
 
-**FlowLM**, and the case is stronger than #66 states. It needs **no codec at
-all** — it fine-tunes an existing diffusion LM toward straighter trajectories.
-That means it exercises the continuous *process*, *objective* and *solver*
-while sidestepping the one part of the boundary these papers disagree about.
+**FlowLM**, and the case is stronger than #66 states — though for a slightly
+different reason than "no codec".
+
+It fine-tunes an existing diffusion LM toward straighter trajectories, working
+in the token-embedding space with a final rounding step rather than a learned
+codec.  So it does exercise the continuous *process*, *objective* and *solver*,
+and it instantiates `LatentCodec` at its **degenerate end**: `trainable=False`,
+`auxiliary_losses()` empty, `encode` = embedding lookup, `decode` = rounding.
+
+That is arguably a better first test of the boundary than "no codec" would be.
+A protocol that cannot express the trivial case is broken, and this forces the
+question of whether `LatentCodec` is even the right name for something that is
+sometimes just the embedding matrix.
+
 It is also the cheapest: it reports reaching saturation in half the epochs of
 training from scratch.
 
@@ -175,6 +190,7 @@ path stays live.
 | question | what closes it |
 |---|---|
 | Does `LatentBatch` need a mask distinct from `attention_mask`? | AURORA-LM's prefix-aligned layout in detail (§3.3) |
+| Is `LatentCodec` the right name when FlowLM's instance is just the embedding matrix + rounding? | the FlowLM prototype; a plain `Codec` may be more honest |
 | Packing semantics for fixed-length latent blocks | a concrete block-causal implementation; may be "none" |
 | Should the codec's auxiliary losses be weighted by the trainer or the codec? | LDLM's warmup schedule interacts with this; needs the prototype |
 | Is a Triton objective kernel worth it? | measure first — likely memory-bound |
