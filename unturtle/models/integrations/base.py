@@ -74,6 +74,12 @@ class BackboneIntegration:
                            ``transformer.blocks``, not ``model.layers``) and
                            reports different kernels, so this stays per-family
                            rather than being flattened into one message.
+        _sparse_output_resolver:
+                           ``(model) -> SparseOutputAccess | None``.  Supplies
+                           the hidden-state / output-projection access #61
+                           needs to skip the dense LM head.  Returns ``None``
+                           when a particular instance cannot support it, so
+                           the dense fallback stays automatic.
         capabilities:      Descriptive internal facts (e.g.
                            ``"masked_generation"``).  Not a public ontology;
                            runtime-dependent conditions belong in a predicate,
@@ -87,6 +93,7 @@ class BackboneIntegration:
     peft_model_types: tuple[str, ...] = ()
     _peft_patcher: Callable[[], Any] | None = None
     peft_report: Callable[[Any, tuple[int, int, int]], str] | None = None
+    _sparse_output_resolver: Callable[[Any], Any] | None = None
     capabilities: frozenset[str] = field(default_factory=frozenset)
 
     @property
