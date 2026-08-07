@@ -142,11 +142,24 @@ class MaskedDiffusionProcess:
                     f"segment_ids must have shape {(B, L)} to match input_ids, "
                     f"got {tuple(segment_ids.shape)}"
                 )
-            n_segments = int(segment_ids.max()) + 1 if segment_ids.numel() else 0
+            # Padding carries a negative id: no original sample owns it.  Gather
+            # cannot take that, so those positions borrow segment 0's draw and
+            # are then overwritten below — a raw gather raises `index -1 is out
+            # of bounds` on CPU and, worse, an async device-side assert on CUDA
+            # that poisons the whole context.
+            owned = segment_ids >= 0
+            n_segments = int(segment_ids.max()) + 1 if bool(owned.any()) else 1
             per_segment = self.time_epsilon + (1.0 - self.time_epsilon) * torch.rand(
                 (B, max(n_segments, 1)), device=device, generator=generator
             )
-            t = torch.gather(per_segment, 1, segment_ids.to(torch.long))  # [B, L]
+            t = torch.gather(
+                per_segment, 1, segment_ids.clamp_min(0).to(torch.long)
+            )  # [B, L]
+            # Unowned positions have no meaningful timestep.  They are never
+            # maskable, so this never affects the loss, but leaving segment 0's
+            # value there would silently hand padding a real-looking `t` to any
+            # consumer reading `timesteps` directly.
+            t = torch.where(owned, t, torch.zeros_like(t))
         else:
             t = self.time_epsilon + (1.0 - self.time_epsilon) * torch.rand(
                 B, device=device, generator=generator

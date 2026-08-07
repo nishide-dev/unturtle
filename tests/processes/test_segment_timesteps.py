@@ -210,13 +210,22 @@ class TestPackedCollatorIntegration:
         assert (segments[5:] == -1).all(), "padding must own no sample"
 
     def test_clean_packed_batch_flows_through_the_process(self):
+        """Raw collator output, padding sentinel and all.
+
+        An earlier version of this test applied `.clamp_min(0)` — the exact
+        fix the production path was missing — so it passed while every real
+        packed batch raised `index -1 is out of bounds`.
+        """
         batch = self._collator(noise=False)(self._features())
+        assert (batch["segment_ids"] == -1).any(), (
+            "fixture has no padding, so it cannot exercise the sentinel"
+        )
         out = _process()(
             {
                 "input_ids": batch["input_ids"],
                 "attention_mask": batch["attention_mask"],
                 "labels": batch["labels"],
-                "segment_ids": batch["segment_ids"].clamp_min(0),
+                "segment_ids": batch["segment_ids"],
             }
         )
 
@@ -225,6 +234,11 @@ class TestPackedCollatorIntegration:
         # Each original sample shares one t.
         assert t[0, 0] == t[0, 1] == t[0, 2]
         assert t[0, 3] == t[0, 4]
+        # Padding owns no sample, so it gets no meaningful timestep.
+        unowned = batch["segment_ids"] < 0
+        assert (t[unowned] == 0).all()
+        # And nothing unowned is ever masked.
+        assert not out.objective_inputs["diffusion_mask"][unowned].any()
 
 
 class TestPackedWeightingGuards:
@@ -271,3 +285,91 @@ class TestPackedWeightingGuards:
     def test_clean_packed_is_now_allowed(self, weighting):
         """The process supplies a per-segment [B, L] t, so it is well-defined."""
         assert self._evaluator(self._packed(noise=False), weighting) is not None
+
+
+class TestCleanPackedActuallyRuns:
+    """Constructing the evaluator is not evidence the path works.
+
+    The guards were relaxed for clean-packed + timestep/scheduler weighting,
+    but nothing ran behind them — and behind them the gather was raising
+    `index -1 is out of bounds` on every real packed batch.
+    """
+
+    def _tokenizer(self):
+        from tokenizers import Tokenizer, models, pre_tokenizers
+        from transformers import PreTrainedTokenizerFast
+
+        raw = Tokenizer(models.BPE(unk_token="[UNK]"))
+        raw.pre_tokenizer = pre_tokenizers.Whitespace()
+        tokenizer = PreTrainedTokenizerFast(
+            tokenizer_object=raw,
+            unk_token="[UNK]",
+            mask_token="[MASK]",
+            pad_token="[PAD]",
+            eos_token="[EOS]",
+        )
+        tokenizer.add_special_tokens(
+            {
+                "unk_token": "[UNK]",
+                "mask_token": "[MASK]",
+                "pad_token": "[PAD]",
+                "eos_token": "[EOS]",
+            }
+        )
+        tokenizer.name_or_path = "local"
+        return tokenizer
+
+    def _model(self, vocab_size=128):
+        from transformers import BertConfig, BertForMaskedLM
+
+        return BertForMaskedLM(
+            BertConfig(
+                vocab_size=vocab_size,
+                hidden_size=16,
+                num_hidden_layers=1,
+                num_attention_heads=2,
+                intermediate_size=32,
+                max_position_embeddings=64,
+            )
+        )
+
+    @pytest.mark.parametrize("weighting", ["uniform", "timestep", "scheduler", "cart"])
+    def test_compute_loss_on_a_clean_packed_batch(self, weighting, tmp_path):
+        from unturtle.diffusion import DiffusionTrainer, DiffusionTrainingArguments
+        from unturtle.diffusion.packed_collator import (
+            PackedMaskedDiffusionDataCollator,
+        )
+
+        tokenizer = self._tokenizer()
+        model = self._model()
+        collator = PackedMaskedDiffusionDataCollator(
+            tokenizer=tokenizer,
+            max_seq_length=16,
+            mask_token_id=tokenizer.mask_token_id,
+            completion_only=False,
+            noise=False,
+        )
+        args = DiffusionTrainingArguments(
+            output_dir=str(tmp_path),
+            per_device_train_batch_size=1,
+            max_steps=1,
+            use_cpu=True,
+            bf16=False,
+            fp16=False,
+            remove_unused_columns=False,
+            report_to=[],
+            loss_weight_type=weighting,
+        )
+        trainer = DiffusionTrainer(
+            model=model,
+            args=args,
+            train_dataset=[{"input_ids": [5, 6, 7]}],
+            processing_class=tokenizer,
+            data_collator=collator,
+        )
+
+        batch = collator([{"input_ids": [5, 6, 7]}, {"input_ids": [8, 9]}])
+        loss = trainer.compute_loss(model, dict(batch))
+
+        assert torch.isfinite(loss), f"{weighting} produced {loss}"
+        assert loss.item() >= 0.0
