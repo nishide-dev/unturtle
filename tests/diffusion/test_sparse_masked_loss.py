@@ -247,6 +247,127 @@ class TestLossEquivalence:
         assert torch.allclose(sparse, dense, atol=1e-6)
 
 
+class TestRightShift:
+    """Dream Shift Operation on the sparse path (#61).
+
+    The dense path rotates `[B, L, V]` logits; the sparse path rotates the
+    `[B, L, H]` hidden states instead.  The projection is position-wise, so the
+    two are algebraically identical — but only if the rotation happens *before*
+    the gather.  Shifting after would misalign every gathered row by one
+    position and still produce a plausible loss.
+    """
+
+    @staticmethod
+    def _dense_shifted(model, input_ids, labels, diffusion_mask, **kwargs):
+        from unturtle.kernels.masked_diffusion_loss import fast_masked_diffusion_loss
+
+        logits = model(input_ids=input_ids).logits
+        logits = torch.cat([logits[:, :1], logits[:, :-1]], dim=1).contiguous()
+        return fast_masked_diffusion_loss(
+            logits=logits,
+            labels=labels,
+            diffusion_mask=diffusion_mask,
+            **kwargs,
+        )
+
+    @pytest.mark.parametrize("loss_norm_type", ["token", "sequence", "batch"])
+    def test_matches_the_dense_shifted_loss(self, loss_norm_type):
+        from unturtle.kernels.sparse_masked_loss import sparse_masked_diffusion_loss
+
+        model = _tiny_a2d_model()
+        model.eval()
+        input_ids, labels, diffusion_mask = _batch()
+
+        with torch.no_grad():
+            dense = self._dense_shifted(
+                model,
+                input_ids,
+                labels,
+                diffusion_mask,
+                loss_norm_type=loss_norm_type,
+            )
+            sparse = sparse_masked_diffusion_loss(
+                model=model,
+                input_ids=input_ids,
+                labels=labels,
+                diffusion_mask=diffusion_mask,
+                loss_norm_type=loss_norm_type,
+                right_shift=True,
+            )
+
+        assert torch.allclose(sparse, dense, atol=1e-6), (
+            f"{loss_norm_type}: dense={dense.item()} sparse={sparse.item()}"
+        )
+
+    def test_shifting_actually_changes_the_loss(self):
+        """Guards the parity test above from being satisfied trivially.
+
+        If the fixture's hidden states were shift-invariant, `right_shift=True`
+        and `right_shift=False` would agree and the parity assertion would hold
+        for an implementation that ignored the flag entirely.
+        """
+        from unturtle.kernels.sparse_masked_loss import sparse_masked_diffusion_loss
+
+        model = _tiny_a2d_model()
+        model.eval()
+        input_ids, labels, diffusion_mask = _batch()
+
+        with torch.no_grad():
+            unshifted = sparse_masked_diffusion_loss(
+                model=model,
+                input_ids=input_ids,
+                labels=labels,
+                diffusion_mask=diffusion_mask,
+            )
+            shifted = sparse_masked_diffusion_loss(
+                model=model,
+                input_ids=input_ids,
+                labels=labels,
+                diffusion_mask=diffusion_mask,
+                right_shift=True,
+            )
+
+        assert not torch.allclose(unshifted, shifted, atol=1e-6), (
+            "right_shift had no effect on this fixture, so the parity test "
+            "cannot distinguish a correct shift from a missing one"
+        )
+
+    def test_gradients_match_the_dense_shifted_path(self):
+        from unturtle.kernels.sparse_masked_loss import sparse_masked_diffusion_loss
+
+        input_ids, labels, diffusion_mask = _batch()
+
+        torch.manual_seed(7)
+        dense_model = _tiny_a2d_model()
+        torch.manual_seed(7)
+        sparse_model = _tiny_a2d_model()
+
+        self._dense_shifted(dense_model, input_ids, labels, diffusion_mask).backward()
+        sparse_masked_diffusion_loss(
+            model=sparse_model,
+            input_ids=input_ids,
+            labels=labels,
+            diffusion_mask=diffusion_mask,
+            right_shift=True,
+        ).backward()
+
+        reference = dict(dense_model.named_parameters())
+        compared = 0
+        for name, param in sparse_model.named_parameters():
+            expected = reference[name].grad
+            actual = param.grad
+            if expected is None and actual is None:
+                continue
+            assert actual is not None, f"{name}: sparse grad is None"
+            assert expected is not None, f"{name}: dense grad is None"
+            assert torch.allclose(actual, expected, atol=1e-6), (
+                f"{name}: max |diff| = {(actual - expected).abs().max().item()}"
+            )
+            compared += 1
+
+        assert compared > 0, "no gradients were compared"
+
+
 class TestGradientEquivalence:
     def test_gradients_match_the_dense_path(self):
         from unturtle.kernels.masked_diffusion_loss import fast_masked_diffusion_loss

@@ -486,12 +486,11 @@ class TestCARTCleanContextMembership:
 
         L = L if L is not None else diffusion_mask.shape[1]
         fake_self = SimpleNamespace(_loss_weight_type="cart", _cart_p=0.8)
-        logits = torch.zeros(diffusion_mask.shape[0], L, 4)
         timesteps = torch.full((diffusion_mask.shape[0],), 0.5)
         return DiffusionTrainer._build_loss_weights(
             fake_self,
             timesteps,
-            logits,
+            diffusion_mask.device,
             diffusion_mask,
             attention_mask=attention_mask,
             seq_lengths=seq_lengths,
