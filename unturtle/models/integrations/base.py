@@ -58,6 +58,22 @@ class BackboneIntegration:
                            ``__class__`` assignment *after* an upstream load.
                            Used when upstream owns the implementation and
                            Unturtle only adds a shim.
+        peft_model_types:  ``config.model_type`` strings this family answers to
+                           when PEFT-wrapped.  Deliberately separate from
+                           ``model_types``: a PEFT-wrapped converted model
+                           reports its *base* architecture (Tiny-A2D shows up
+                           as plain ``llama``/``qwen2``/``qwen3``), and a
+                           family can be patchable without being natively
+                           loadable (ModernBERT).  Empty means not patchable.
+        _peft_patcher:     Returns ``(model, lora_dropout, bias) -> counts``.
+                           A resolver, like the class hooks, so importing the
+                           registry pulls in no kernel modules.
+        peft_report:       Renders the post-patch log line from the model and
+                           the patcher's counts.  Each family derives its
+                           layer count differently (LLaDA counts
+                           ``transformer.blocks``, not ``model.layers``) and
+                           reports different kernels, so this stays per-family
+                           rather than being flattened into one message.
         capabilities:      Descriptive internal facts (e.g.
                            ``"masked_generation"``).  Not a public ontology;
                            runtime-dependent conditions belong in a predicate,
@@ -68,6 +84,9 @@ class BackboneIntegration:
     model_types: tuple[str, ...]
     _native_resolver: Callable[[], Any] | None = None
     _wrapper_resolver: Callable[[], Any] | None = None
+    peft_model_types: tuple[str, ...] = ()
+    _peft_patcher: Callable[[], Any] | None = None
+    peft_report: Callable[[Any, tuple[int, int, int]], str] | None = None
     capabilities: frozenset[str] = field(default_factory=frozenset)
 
     @property
@@ -93,6 +112,16 @@ class BackboneIntegration:
             return None
         try:
             return self._wrapper_resolver()
+        except ImportError:
+            return None
+
+    @property
+    def peft_patcher(self) -> Any | None:
+        """Resolve the PEFT patch function, or ``None`` if unavailable."""
+        if self._peft_patcher is None:
+            return None
+        try:
+            return self._peft_patcher()
         except ImportError:
             return None
 

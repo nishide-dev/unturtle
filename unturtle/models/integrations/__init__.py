@@ -22,21 +22,27 @@ rather than another branch.  Not re-exported from top-level ``unturtle``.
 from .base import BackboneIntegration
 from .registry import (
     find_integration,
+    find_peft_integration,
     iter_integrations,
     native_model_classes,
     post_load_class_swaps,
     register_integration,
     resolve_native_class,
+    resolve_peft_patcher,
     resolve_post_load_wrapper,
+    supported_peft_model_types,
 )
 
 __all__ = [
     "BackboneIntegration",
     "find_integration",
+    "find_peft_integration",
     "iter_integrations",
     "native_model_classes",
     "post_load_class_swaps",
     "register_integration",
     "resolve_native_class",
+    "resolve_peft_patcher",
     "resolve_post_load_wrapper",
+    "supported_peft_model_types",
 ]

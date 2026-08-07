@@ -89,7 +89,12 @@ from unturtle.models.conversion.a2d.tiny_a2d._fast_forward import (
 # holds zero-arg resolvers, so nothing under models/backbones/ is imported
 # until a lookup actually needs a class.  Nothing under unturtle/models/
 # imports this module, so the dependency stays one-directional.
-from unturtle.models.integrations import native_model_classes, post_load_class_swaps
+from unturtle.models.integrations import (
+    find_peft_integration,
+    native_model_classes,
+    post_load_class_swaps,
+    supported_peft_model_types,
+)
 from unturtle.save import patch_saving_functions, prepare_model_for_kbit_training
 
 _logger = logging.getLogger(__name__)
@@ -114,27 +119,10 @@ def _warn_once(msg: str) -> None:
         _logger.warning(msg)
 
 
-# Model types that follow the standard LLaMA/Qwen2 layer hierarchy:
-# model.model.model.layers (through PeftModel → base_model → model)
-_TINY_A2D_MODEL_TYPES = frozenset(
-    [
-        "tiny-a2d-llama",
-        "tiny-a2d-qwen2",
-        "tiny-a2d-qwen3",
-        "llama",
-        "qwen2",
-        "qwen3",
-    ]
-)
-
-# Dream model_type (note: Dream uses "Dream" with capital D)
-_DREAM_MODEL_TYPES = frozenset(["dream", "Dream"])
-
-# LLaDA model_type
-_LLADA_MODEL_TYPES = frozenset(["llada"])
-
-# ModernBERT model_type(s) — diffusion wrapper around native bidirectional encoder
-_MODERNBERT_A2D_MODEL_TYPES = frozenset(["modernbert-diffusion"])
+# The per-family PEFT model_type vocabulary now lives in the
+# BackboneIntegration registry (#68) as each integration's
+# ``peft_model_types``.  Keeping frozensets here as well would be a second
+# copy of the same facts, free to drift from the one dispatch reads.
 
 
 # ---------------------------------------------------------------------------
@@ -1356,58 +1344,19 @@ class FastDiffusionModel:
         """
         model_type = model.config.model_type
 
-        if model_type in _TINY_A2D_MODEL_TYPES:
-            n_qkv, n_o, n_mlp = _patch_a2d_peft(model, lora_dropout, bias)
-            n_layers = len(model.base_model.model.model.layers)
-            _warn_once(
-                f"FastDiffusionModel patched {n_layers} layers with "
-                f"{n_qkv} QKV layers, {n_o} O layers and {n_mlp} MLP layers "
-                f"(bidirectional, causal=False)."
-            )
-        elif model_type in _DREAM_MODEL_TYPES:
-            n_qkv, n_o, n_mlp = _patch_dream_peft(model, lora_dropout, bias)
-            n_layers = len(model.base_model.model.model.layers)
-            _warn_once(
-                f"FastDiffusionModel (Dream) patched {n_layers} layers with "
-                f"{n_qkv} QKV layers (bias kernel), {n_o} O layers and {n_mlp} MLP layers."
-            )
-        elif model_type in _LLADA_MODEL_TYPES:
-            n_qkv, n_o, n_mlp = _patch_llada_peft(model, lora_dropout, bias)
-            inner = model.base_model.model
-            _llada_transformer = (
-                inner.model.transformer
-                if hasattr(inner, "model") and hasattr(inner.model, "transformer")
-                else getattr(inner, "transformer", None)
-            )
-            n_blocks = (
-                len(_llada_transformer.blocks) if _llada_transformer is not None else 0
-            )
-            _warn_once(
-                f"FastDiffusionModel (LLaDA) patched {n_blocks} blocks with "
-                f"{n_qkv} QKV blocks and {n_o} O (attn_out) blocks."
-            )
-        elif model_type in _MODERNBERT_A2D_MODEL_TYPES:
-            _n_qkv, n_o, _n_mlp = _patch_modernbert_peft(model, lora_dropout, bias)
-            n_layers = len(model.base_model.model.model.layers)
-            _warn_once(
-                f"FastDiffusionModel (ModernBERT) patched {n_layers} layers with "
-                f"{n_o} Wo (output proj) layers. "
-                "Wqkv/MLP Triton kernels not yet supported for ModernBERT — "
-                "see issue #59 Phase 2."
-            )
-        else:
+        integration = find_peft_integration(model_type)
+        if integration is None:
             raise NotImplementedError(
                 f"FastDiffusionModel does not yet support model_type={model_type!r}. "
-                "Supported types: "
-                + ", ".join(
-                    sorted(
-                        _TINY_A2D_MODEL_TYPES
-                        | _DREAM_MODEL_TYPES
-                        | _LLADA_MODEL_TYPES
-                        | _MODERNBERT_A2D_MODEL_TYPES
-                    )
-                )
+                "Supported types: " + ", ".join(supported_peft_model_types())
             )
+
+        # Resolved through the registry rather than a module-level reference so
+        # that tests monkeypatching `_patch_*_peft` by name still take effect.
+        patcher = integration.peft_patcher
+        counts = patcher(model, lora_dropout, bias)
+        if integration.peft_report is not None:
+            _warn_once(integration.peft_report(model, counts))
 
         # Propagate max_seq_length through the wrapped model hierarchy
         if hasattr(model, "max_seq_length"):
