@@ -206,21 +206,77 @@ class TestBatching:
 
 
 class TestPadding:
-    def test_padding_is_excluded_on_both_axes(self):
-        """A padded position must neither attend nor be attended to.
+    def test_padding_is_never_a_key(self):
+        """No position may attend *to* padding.
 
         Leaving padding attendable is the classic silent bug: attention still
         runs, the loss still decreases, and real tokens quietly mix in
         embeddings of nothing.
+
+        The diagonal is the one exception, and it is deliberate — a padded
+        query attends to itself so its row is not fully masked.  See
+        `test_padding_rows_do_not_produce_nan`.
         """
         attention_mask = torch.tensor([[1, 1, 1, 0, 0]])
         allowed = _allowed(
             _mask([2], seq_len=5, attention_mask=attention_mask),
         )[0, 0]
 
-        assert not bool(allowed[:, 3:].any()), "nothing may attend to padding"
-        assert not bool(allowed[3:, :].any()), "padding may not attend to anything"
+        assert not bool(allowed[:3, 3:].any()), (
+            "real queries must not attend to padded keys"
+        )
+        off_diagonal = allowed[3:, 3:] & ~torch.eye(2, dtype=torch.bool)
+        assert not bool(off_diagonal.any()), (
+            "a padded query may attend only to itself, not to other padding"
+        )
         assert bool(allowed[2, 0]), "real target must still see real prompt"
+
+    def test_padding_rows_do_not_produce_nan(self):
+        """A padded query must not leave a fully-masked row.
+
+        Padding is blocked on both axes, so the naive construction leaves a
+        padded query's entire row at -inf — and `softmax` of an all--inf row
+        is NaN, which then propagates through the whole batch.  SDPA's MATH
+        backend happens to guard against this internally, so the forward pass
+        looks clean and the hazard hides until some consumer computes
+        attention itself.  Verified: with an all--inf row, a manual
+        `softmax(scores + mask)` does produce NaN.
+
+        Padded queries therefore keep a self-attention entry.  Their output is
+        discarded downstream, but it is finite.
+        """
+        attention_mask = torch.tensor([[1, 1, 1, 0, 0]])
+        mask = _mask([2], seq_len=5, attention_mask=attention_mask)
+
+        rows_all_blocked = torch.isinf(mask[0, 0]).all(dim=-1)
+        assert not bool(rows_all_blocked.any()), (
+            f"rows {rows_all_blocked.nonzero().flatten().tolist()} are fully "
+            "masked; softmax over them is NaN"
+        )
+
+        scores = torch.randn(1, 2, 5, 5) + mask
+        assert not bool(torch.isnan(torch.softmax(scores, dim=-1)).any()), (
+            "manual softmax over the mask produced NaN"
+        )
+
+    def test_padding_still_cannot_be_attended_to_by_real_tokens(self):
+        """The self-attention escape must not re-open padding as a key.
+
+        Keeping padded rows finite is only safe if real queries still ignore
+        padded keys — otherwise real tokens would mix in embeddings of
+        nothing, which the loss would never reveal.
+        """
+        attention_mask = torch.tensor([[1, 1, 1, 0, 0]])
+        allowed = _allowed(_mask([2], seq_len=5, attention_mask=attention_mask))[0, 0]
+
+        assert not bool(allowed[:3, 3:].any()), (
+            "real queries must not attend to padded keys"
+        )
+        for pad in (3, 4):
+            attended = allowed[pad].nonzero().flatten().tolist()
+            assert attended == [pad], (
+                f"padded query {pad} should attend only to itself, got {attended}"
+            )
 
     def test_padding_does_not_shift_the_prompt_boundary(self):
         """`Lp` counts real prompt tokens, and padding sits at the end."""

@@ -569,6 +569,18 @@ def build_hybrid_prefix_attention_mask(
         )
         allowed = allowed & real.view(batch, 1, seq_len) & real.view(batch, seq_len, 1)
 
+        # A padded query is blocked on both axes, which would leave its whole
+        # row masked -- and softmax over an all-blocked row is NaN, which then
+        # spreads across the batch.  SDPA's MATH backend happens to guard
+        # against this internally, so a forward pass looks clean and the
+        # hazard stays hidden until some consumer computes attention itself
+        # (verified: a manual `softmax(scores + mask)` does produce NaN).
+        # Let padded queries attend to themselves instead: the row stays
+        # finite, real keys stay closed to them, and their output is
+        # discarded downstream anyway.
+        self_attention = torch.eye(seq_len, dtype=torch.bool, device=device)
+        allowed = allowed | (~real.view(batch, seq_len, 1) & self_attention)
+
     mask = torch.zeros((batch, seq_len, seq_len), dtype=dtype, device=device)
     mask.masked_fill_(~allowed, float("-inf"))
     return mask.unsqueeze(1)
