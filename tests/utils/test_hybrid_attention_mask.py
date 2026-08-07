@@ -1,0 +1,334 @@
+"""
+Hybrid causal-bidirectional attention mask (#63, PreDiff-LM).
+
+Implements equation (3) of arXiv:2607.25157 §3.2, over a prompt prefix of
+length ``Lp`` followed by a target region::
+
+            | 1[j <= i]   i, j in prompt
+    M_ij =  | 1           i in target, j in prompt
+            | 1           i, j in target
+            | 0           i in prompt, j in target
+
+Two entries are easy to get wrong from the paper's prose alone, so they are
+pinned individually below:
+
+- **target -> prompt is unconditional**, not `1[j <= i]`.  A target token sees
+  the whole prompt, including prompt positions after it.  "Preserves causal
+  attention within the observed prompt" reads like the causal constraint
+  extends across the boundary; it does not.
+- **prompt -> target is blocked**, which is the actual mechanism.  The paper's
+  stated reason is to prevent the corrupted target from perturbing prompt
+  representations — keeping prompt-side computation in the regime the AR
+  weights were pretrained in.  Uniform bidirectional attention already gives
+  targets full context, so this asymmetry is what distinguishes the recipe.
+"""
+
+import pytest
+import torch
+
+
+def _mask(prompt_lengths, seq_len, **kwargs):
+    from unturtle.utils.packing import build_hybrid_prefix_attention_mask
+
+    return build_hybrid_prefix_attention_mask(
+        prompt_lengths=torch.tensor(prompt_lengths),
+        seq_len=seq_len,
+        dtype=torch.float32,
+        device=torch.device("cpu"),
+        **kwargs,
+    )
+
+
+def _allowed(mask):
+    """Additive mask -> bool `can attend` matrix."""
+    return mask == 0
+
+
+class TestEquationThree:
+    def test_prompt_region_is_causal(self):
+        allowed = _allowed(_mask([3], seq_len=5))[0, 0]
+
+        for i in range(3):
+            for j in range(3):
+                assert bool(allowed[i, j]) == (j <= i), (
+                    f"prompt[{i}] -> prompt[{j}] should be {j <= i}"
+                )
+
+    def test_target_region_is_bidirectional(self):
+        allowed = _allowed(_mask([2], seq_len=5))[0, 0]
+
+        for i in range(2, 5):
+            for j in range(2, 5):
+                assert bool(allowed[i, j]), f"target[{i}] -> target[{j}] must be open"
+
+    def test_target_sees_the_entire_prompt(self):
+        allowed = _allowed(_mask([3], seq_len=6))[0, 0]
+
+        for i in range(3, 6):
+            for j in range(3):
+                assert bool(allowed[i, j]), f"target[{i}] must see prompt[{j}]"
+
+    def test_a_target_row_is_open_across_its_full_width(self):
+        """Cases 2 and 3 together: a target query attends everywhere.
+
+        Note what this *cannot* establish. Equation (3) case 2 is `1`, not
+        `1[j <= i]`, but under a prompt prefix those are indistinguishable —
+        every target index already exceeds every prompt index, so the extra
+        term is vacuously true.
+
+        Verified rather than assumed, and the precise form matters. Narrowing
+        *only the target->prompt half*::
+
+            torch.where(query_is_prompt, ..., torch.where(key_is_prompt, key <= query, ones))
+
+        is byte-identical across all 44 (L <= 8, Lp) configurations — a
+        semantically null change, not a coverage gap. Replacing the whole
+        second arm with `key <= query` is a different mutant and IS caught, by
+        five tests, because it also closes target->target. Do not read this
+        note as "the target branch is untested".
+
+        It stops being null only if interleaved prompt/target is ever
+        supported, which the paper does not define.
+        """
+        allowed = _allowed(_mask([3], seq_len=7))[0, 0]
+
+        for i in range(3, 7):
+            assert bool(allowed[i, :].all()), (
+                f"target row {i} must be open across the whole sequence"
+            )
+
+    def test_prompt_cannot_see_the_target(self):
+        """The asymmetry that defines the recipe.
+
+        Under uniform bidirectional attention this quadrant is open; blocking
+        it is what keeps the corrupted target from changing the prompt's
+        representations.
+        """
+        allowed = _allowed(_mask([3], seq_len=6))[0, 0]
+
+        for i in range(3):
+            for j in range(3, 6):
+                assert not bool(allowed[i, j]), (
+                    f"prompt[{i}] must NOT see target[{j}]: the corrupted "
+                    "target would perturb pretrained prompt computation"
+                )
+
+    def test_matches_equation_three_exactly(self):
+        """Whole-matrix check, so no quadrant can drift unnoticed."""
+        Lp, L = 3, 7
+        allowed = _allowed(_mask([Lp], seq_len=L))[0, 0]
+
+        for i in range(L):
+            for j in range(L):
+                # One branch per line of equation (3), deliberately not
+                # collapsed: cases 2 and 3 share a value but are distinct
+                # claims (target->prompt, target->target), and merging them
+                # would hide which one a failure came from.
+                if i < Lp and j < Lp:  # noqa: SIM114
+                    expected = j <= i
+                elif i >= Lp and j < Lp:  # noqa: SIM114
+                    expected = True
+                elif i >= Lp and j >= Lp:
+                    expected = True
+                else:
+                    expected = False
+                assert bool(allowed[i, j]) == expected, (
+                    f"M[{i},{j}]: expected {expected} (Lp={Lp})"
+                )
+
+
+class TestDegenerateCases:
+    def test_zero_prompt_is_fully_bidirectional(self):
+        """Lp=0 must reduce to uniform bidirectional attention."""
+        allowed = _allowed(_mask([0], seq_len=4))[0, 0]
+
+        assert bool(allowed.all()), "Lp=0 should leave every position open"
+
+    def test_full_prompt_is_fully_causal(self):
+        """Lp=L must reduce to the ordinary causal mask."""
+        L = 4
+        allowed = _allowed(_mask([L], seq_len=L))[0, 0]
+        expected = torch.tril(torch.ones(L, L, dtype=torch.bool))
+
+        assert torch.equal(allowed, expected), "Lp=L should be exactly lower-triangular"
+
+    def test_degenerate_cases_equal_the_existing_builders_exactly(self):
+        """Independent cross-check against code that predates this mask.
+
+        At `Lp=0` the hybrid mask is a pure bidirectional mask, and at `Lp=L`
+        a pure causal one.  The packed builders produce those two masks by a
+        completely different construction (block-diagonal fill loops rather
+        than index broadcasting), so agreement is evidence the new
+        implementation is right rather than merely self-consistent with its
+        own tests.
+
+        Compared on *which positions are open*, not on raw values: the packed
+        builders still fill with `-inf` while this one uses `finfo.min`, and
+        the topology is what is being cross-checked.
+        """
+        from unturtle.utils.packing import (
+            build_sdpa_packed_attention_mask,
+            build_sdpa_packed_bidirectional_attention_mask,
+        )
+
+        L = 6
+        dtype, device = torch.float32, torch.device("cpu")
+        seq_info = (torch.tensor([L]), None, L)
+
+        assert torch.equal(
+            _allowed(_mask([0], seq_len=L))[0, 0],
+            build_sdpa_packed_bidirectional_attention_mask(
+                seq_info, dtype=dtype, device=device
+            )[0, 0]
+            == 0,
+        ), "Lp=0 must open the same positions as the bidirectional packed mask"
+
+        assert torch.equal(
+            _allowed(_mask([L], seq_len=L))[0, 0],
+            build_sdpa_packed_attention_mask(seq_info, dtype=dtype, device=device)[0, 0]
+            == 0,
+        ), "Lp=L must open the same positions as the causal packed mask"
+
+    def test_prompt_longer_than_sequence_is_rejected(self):
+        with pytest.raises(ValueError, match="prompt_lengths"):
+            _mask([5], seq_len=4)
+
+    def test_negative_prompt_length_is_rejected(self):
+        with pytest.raises(ValueError, match="prompt_lengths"):
+            _mask([-1], seq_len=4)
+
+
+class TestBatching:
+    def test_each_row_uses_its_own_prompt_length(self):
+        allowed = _allowed(_mask([1, 3], seq_len=4))
+
+        # Row 0: Lp=1 -> position 0 sees only itself.
+        assert not bool(allowed[0, 0, 0, 1]), "row 0 prompt must not see target"
+        # Row 1: Lp=3 -> position 1 sees position 0 (causal), not position 3.
+        assert bool(allowed[1, 0, 1, 0]), "row 1 prompt is causal within itself"
+        assert not bool(allowed[1, 0, 1, 3]), "row 1 prompt must not see target"
+
+    def test_shape_is_broadcastable_over_heads(self):
+        mask = _mask([2, 2], seq_len=5)
+
+        assert mask.shape == (2, 1, 5, 5), (
+            f"expected [B, 1, L, L] for head broadcasting, got {tuple(mask.shape)}"
+        )
+
+
+class TestPadding:
+    def test_padding_is_never_a_key(self):
+        """No position may attend *to* padding.
+
+        Leaving padding attendable is the classic silent bug: attention still
+        runs, the loss still decreases, and real tokens quietly mix in
+        embeddings of nothing.
+
+        The diagonal is the one exception, and it is deliberate — a padded
+        query attends to itself so its row is not fully masked.  See
+        `test_padding_rows_do_not_produce_nan`.
+        """
+        attention_mask = torch.tensor([[1, 1, 1, 0, 0]])
+        allowed = _allowed(
+            _mask([2], seq_len=5, attention_mask=attention_mask),
+        )[0, 0]
+
+        assert not bool(allowed[:3, 3:].any()), (
+            "real queries must not attend to padded keys"
+        )
+        off_diagonal = allowed[3:, 3:] & ~torch.eye(2, dtype=torch.bool)
+        assert not bool(off_diagonal.any()), (
+            "a padded query may attend only to itself, not to other padding"
+        )
+        assert bool(allowed[2, 0]), "real target must still see real prompt"
+
+    def test_padding_rows_do_not_produce_nan(self):
+        """A padded query must not leave a fully-masked row.
+
+        Padding is blocked on both axes, so the naive construction leaves a
+        padded query's entire row at -inf — and `softmax` of an all--inf row
+        is NaN, which then propagates through the whole batch.  SDPA's MATH
+        backend happens to guard against this internally, so the forward pass
+        looks clean and the hazard hides until some consumer computes
+        attention itself.  Verified: with an all--inf row, a manual
+        `softmax(scores + mask)` does produce NaN.
+
+        Padded queries therefore keep a self-attention entry.  Their output is
+        discarded downstream, but it is finite.
+        """
+        attention_mask = torch.tensor([[1, 1, 1, 0, 0]])
+        mask = _mask([2], seq_len=5, attention_mask=attention_mask)
+
+        blocked = mask[0, 0] == torch.finfo(mask.dtype).min
+        rows_all_blocked = blocked.all(dim=-1)
+        assert not bool(rows_all_blocked.any()), (
+            f"rows {rows_all_blocked.nonzero().flatten().tolist()} are fully "
+            "masked; softmax over them is NaN"
+        )
+
+        scores = torch.randn(1, 2, 5, 5) + mask
+        assert not bool(torch.isnan(torch.softmax(scores, dim=-1)).any()), (
+            "manual softmax over the mask produced NaN"
+        )
+
+    def test_padding_still_cannot_be_attended_to_by_real_tokens(self):
+        """The self-attention escape must not re-open padding as a key.
+
+        Keeping padded rows finite is only safe if real queries still ignore
+        padded keys — otherwise real tokens would mix in embeddings of
+        nothing, which the loss would never reveal.
+        """
+        attention_mask = torch.tensor([[1, 1, 1, 0, 0]])
+        allowed = _allowed(_mask([2], seq_len=5, attention_mask=attention_mask))[0, 0]
+
+        assert not bool(allowed[:3, 3:].any()), (
+            "real queries must not attend to padded keys"
+        )
+        for pad in (3, 4):
+            attended = allowed[pad].nonzero().flatten().tolist()
+            assert attended == [pad], (
+                f"padded query {pad} should attend only to itself, got {attended}"
+            )
+
+    def test_padding_does_not_shift_the_prompt_boundary(self):
+        """`Lp` counts real prompt tokens, and padding sits at the end."""
+        attention_mask = torch.tensor([[1, 1, 1, 1, 0]])
+        allowed = _allowed(
+            _mask([2], seq_len=5, attention_mask=attention_mask),
+        )[0, 0]
+
+        assert not bool(allowed[1, 2]), "prompt[1] must not see target[2]"
+        assert bool(allowed[2, 1]), "target[2] must see prompt[1]"
+
+
+class TestAdditiveMaskConvention:
+    def test_blocked_entries_use_finfo_min_not_negative_infinity(self):
+        """Additive mask, and blocked uses `finfo.min` per repo convention.
+
+        `modeling_mdlm_dit.py` and `modeling_llada.py` both document why:
+        SDPA can emit NaNs on fully-masked query rows with `-inf`, and adding
+        two `-inf` biases together is undefined.  Every other masking site in
+        the repo follows this; a lone `-inf` outlier would be a trap for
+        whoever composes this mask with another.
+        """
+        mask = _mask([2], seq_len=4)
+
+        assert mask.dtype == torch.float32
+        blocked = mask[0, 0, 0, 2]
+        assert blocked == torch.finfo(torch.float32).min, (
+            f"blocked entry was {blocked}, want finfo.min"
+        )
+        assert not bool(torch.isinf(mask).any()), "mask must contain no infinities"
+        assert mask[0, 0, 0, 0] == 0.0, "allowed entry must be additive zero"
+
+    def test_dtype_is_respected(self):
+        from unturtle.utils.packing import build_hybrid_prefix_attention_mask
+
+        mask = build_hybrid_prefix_attention_mask(
+            prompt_lengths=torch.tensor([2]),
+            seq_len=4,
+            dtype=torch.bfloat16,
+            device=torch.device("cpu"),
+        )
+
+        assert mask.dtype == torch.bfloat16

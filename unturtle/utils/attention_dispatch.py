@@ -28,6 +28,7 @@ from torch.nn.functional import scaled_dot_product_attention
 from unsloth.models._utils import HAS_FLASH_ATTENTION, xformers, xformers_attention
 
 from .packing import (
+    build_hybrid_prefix_attention_mask,
     build_sdpa_packed_attention_mask,
     build_sdpa_packed_bidirectional_attention_mask,
     build_xformers_block_bidirectional_mask,
@@ -385,6 +386,7 @@ __all__ = [
     "XFORMERS",
     "build_sdpa_packed_attention_mask",
     "build_sdpa_packed_bidirectional_attention_mask",
+    "build_hybrid_prefix_attention_mask",
     "build_xformers_block_bidirectional_mask",
     "build_xformers_block_causal_mask",
     "run_attention",
