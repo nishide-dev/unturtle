@@ -88,11 +88,98 @@ def _diffusion_gemma_wrapper() -> Any:
     return UnturtleDiffusionGemmaForBlockDiffusion
 
 
+# --- PEFT patchers ---------------------------------------------------------
+#
+# The patch functions still live in ``fast_diffusion_model`` because they are
+# loader concerns that reach into kernel modules.  Resolving them lazily is
+# what keeps the dependency one-directional: this module never imports the
+# loader at import time, only when a lookup actually needs the function.
+
+
+def _loader_attr(name: str) -> Any:
+    """Read a patcher off the loader module *at call time*.
+
+    ``getattr`` rather than ``from ... import``: several tests monkeypatch
+    ``fast_diffusion_model._patch_*_peft`` by attribute name, and a
+    value-binding import would capture the original and silently ignore them.
+    """
+    import unturtle.fast_diffusion_model as loader
+
+    return getattr(loader, name)
+
+
+def _a2d_patcher() -> Any:
+    return _loader_attr("_patch_a2d_peft")
+
+
+def _dream_patcher() -> Any:
+    return _loader_attr("_patch_dream_peft")
+
+
+def _llada_patcher() -> Any:
+    return _loader_attr("_patch_llada_peft")
+
+
+def _modernbert_patcher() -> Any:
+    return _loader_attr("_patch_modernbert_peft")
+
+
+def _n_layers(model: Any) -> int:
+    return len(model.base_model.model.model.layers)
+
+
+def _a2d_report(model: Any, counts: tuple[int, int, int]) -> str:
+    n_qkv, n_o, n_mlp = counts
+    return (
+        f"FastDiffusionModel patched {_n_layers(model)} layers with "
+        f"{n_qkv} QKV layers, {n_o} O layers and {n_mlp} MLP layers "
+        f"(bidirectional, causal=False)."
+    )
+
+
+def _dream_report(model: Any, counts: tuple[int, int, int]) -> str:
+    n_qkv, n_o, n_mlp = counts
+    return (
+        f"FastDiffusionModel (Dream) patched {_n_layers(model)} layers with "
+        f"{n_qkv} QKV layers (bias kernel), {n_o} O layers and {n_mlp} MLP layers."
+    )
+
+
+def _llada_report(model: Any, counts: tuple[int, int, int]) -> str:
+    n_qkv, n_o, _n_mlp = counts
+    # LLaDA nests differently from the Llama-shaped families: blocks live under
+    # transformer, at a depth that varies with how the model was wrapped.
+    inner = model.base_model.model
+    transformer = (
+        inner.model.transformer
+        if hasattr(inner, "model") and hasattr(inner.model, "transformer")
+        else getattr(inner, "transformer", None)
+    )
+    n_blocks = len(transformer.blocks) if transformer is not None else 0
+    return (
+        f"FastDiffusionModel (LLaDA) patched {n_blocks} blocks with "
+        f"{n_qkv} QKV blocks and {n_o} O (attn_out) blocks."
+    )
+
+
+def _modernbert_report(model: Any, counts: tuple[int, int, int]) -> str:
+    _n_qkv, n_o, _n_mlp = counts
+    return (
+        f"FastDiffusionModel (ModernBERT) patched {_n_layers(model)} layers with "
+        f"{n_o} Wo (output proj) layers. "
+        "Wqkv/MLP Triton kernels not yet supported for ModernBERT — "
+        "see issue #59 Phase 2."
+    )
+
+
 _INTEGRATIONS: list[BackboneIntegration] = [
     BackboneIntegration(
         name="llada",
         model_types=("llada",),
         _native_resolver=_llada,
+        peft_model_types=("llada",),
+        _peft_patcher=_llada_patcher,
+        peft_report=_llada_report,
         capabilities=frozenset({"masked_generation", "block_decode"}),
     ),
     BackboneIntegration(
@@ -106,25 +193,48 @@ _INTEGRATIONS: list[BackboneIntegration] = [
         # DreamConfig.model_type is "Dream" (capital D); Hub configs use both.
         model_types=("dream", "Dream"),
         _native_resolver=_dream,
+        peft_model_types=("dream", "Dream"),
+        _peft_patcher=_dream_patcher,
+        peft_report=_dream_report,
         capabilities=frozenset({"masked_generation", "block_decode"}),
     ),
     BackboneIntegration(
         name="tiny-a2d-llama",
         model_types=("tiny-a2d-llama",),
         _native_resolver=_tiny_a2d_llama,
+        # A PEFT-wrapped converted model reports its base architecture, so the
+        # plain names must dispatch here too.
+        peft_model_types=("tiny-a2d-llama", "llama"),
+        _peft_patcher=_a2d_patcher,
+        peft_report=_a2d_report,
         capabilities=frozenset({"masked_generation", "block_decode"}),
     ),
     BackboneIntegration(
         name="tiny-a2d-qwen2",
         model_types=("tiny-a2d-qwen2",),
         _native_resolver=_tiny_a2d_qwen2,
+        peft_model_types=("tiny-a2d-qwen2", "qwen2"),
+        _peft_patcher=_a2d_patcher,
+        peft_report=_a2d_report,
         capabilities=frozenset({"masked_generation", "block_decode"}),
     ),
     BackboneIntegration(
         name="tiny-a2d-qwen3",
         model_types=("tiny-a2d-qwen3",),
         _native_resolver=_tiny_a2d_qwen3,
+        peft_model_types=("tiny-a2d-qwen3", "qwen3"),
+        _peft_patcher=_a2d_patcher,
+        peft_report=_a2d_report,
         capabilities=frozenset({"masked_generation", "block_decode"}),
+    ),
+    BackboneIntegration(
+        name="modernbert-diffusion",
+        # No native class: loads through FastModel, but is PEFT-patchable.
+        model_types=(),
+        peft_model_types=("modernbert-diffusion",),
+        _peft_patcher=_modernbert_patcher,
+        peft_report=_modernbert_report,
+        capabilities=frozenset({"masked_generation"}),
     ),
     BackboneIntegration(
         name="diffusion-gemma",
@@ -156,6 +266,14 @@ def register_integration(integration: BackboneIntegration) -> None:
         if clashes:
             raise ValueError(
                 f"model_type(s) {sorted(clashes)} already registered by "
+                f"{existing.name!r}; cannot also register {integration.name!r}"
+            )
+        peft_clashes = set(existing.peft_model_types) & set(
+            integration.peft_model_types
+        )
+        if peft_clashes:
+            raise ValueError(
+                f"peft model_type(s) {sorted(peft_clashes)} already registered by "
                 f"{existing.name!r}; cannot also register {integration.name!r}"
             )
     _INTEGRATIONS.append(integration)
@@ -195,6 +313,32 @@ def resolve_post_load_wrapper(model_type: str | None) -> Any | None:
     """The wrapper class to ``__class__``-swap after an upstream load."""
     integration = find_integration(model_type)
     return integration.post_load_wrapper_cls if integration is not None else None
+
+
+def find_peft_integration(model_type: str | None) -> BackboneIntegration | None:
+    """The integration that PEFT-patches ``model_type``, or ``None``.
+
+    Separate from :func:`find_integration` because the PEFT vocabulary is not
+    the load vocabulary: a PEFT-wrapped Tiny-A2D model reports plain ``llama``,
+    and ModernBERT is patchable without being natively loadable.
+    """
+    if model_type is None:
+        return None
+    for integration in _INTEGRATIONS:
+        if model_type in integration.peft_model_types:
+            return integration
+    return None
+
+
+def resolve_peft_patcher(model_type: str | None) -> Any | None:
+    """The PEFT patch function for ``model_type``, or ``None``."""
+    integration = find_peft_integration(model_type)
+    return integration.peft_patcher if integration is not None else None
+
+
+def supported_peft_model_types() -> list[str]:
+    """Every PEFT-patchable ``model_type``, sorted — for error messages."""
+    return sorted({mt for i in _INTEGRATIONS for mt in i.peft_model_types})
 
 
 def native_model_classes() -> dict[str, Any]:
