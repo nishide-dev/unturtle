@@ -53,9 +53,17 @@ _DIVERGENCES = ("kl", "jsd")
 def _finite_weighted(log_p: torch.Tensor, delta: torch.Tensor) -> torch.Tensor:
     """``p * delta`` with non-finite ``log_p`` contributing exactly zero.
 
-    ``torch.where`` alone is not enough: it evaluates both branches, so a
-    ``-inf`` entry still produces a NaN that the gradient carries even when
-    the forward value is discarded.  The logprob is sanitized first.
+    The reference writes this as a bare ``torch.where``, which is sufficient
+    for the forward value and for the *student* gradient: ``exp(-inf)`` is
+    exactly ``0.0``, so no NaN enters the weight, and a detached teacher has
+    no gradient path through it at all.
+
+    The extra ``safe`` step matters in exactly one case, verified rather than
+    assumed: when the teacher tensor itself carries gradient — a soft or
+    learned teacher, or simply a caller who forgot to detach — the bare form
+    backpropagates ``NaN`` into it while this one does not.  Since the
+    signature deliberately does not detach for the caller, that state is
+    reachable.
     """
     finite = torch.isfinite(log_p)
     safe = torch.where(finite, log_p, torch.zeros_like(log_p))
@@ -132,11 +140,19 @@ def teacher_student_divergence(
         return forward_kl
 
     # The reverse direction weights by the *student*, so a non-finite teacher
-    # logprob appears in the delta rather than the weight and cannot be
-    # dropped the same way.  Student logprobs come from a log_softmax and are
-    # finite; a -inf teacher entry here is a genuine infinity in the objective
-    # (the student puts mass where the teacher assigns none), so it is not
-    # silently zeroed.
+    # logprob lands in the delta rather than the weight and cannot be dropped
+    # the same way: KL(student||teacher) is genuinely infinite when the
+    # student puts mass where the teacher assigns none.  Left unguarded to
+    # match the reference, whose comment calls this "the mode-seeking property
+    # of reverse KL, NOT NaN".
+    #
+    # This is reachable through the reference's own pipeline, not just
+    # hand-built teachers: `rl_sdar.py` applies teacher-side top-k / top-p /
+    # min-p trimming immediately before the divergence, and each writes -inf
+    # into the teacher logits pre-log_softmax.  So `reverse_kl_weight > 0`
+    # plus teacher trimming plus no `top_k` returns inf, while the same config
+    # WITH `top_k` often stays finite because truncation lands inside the
+    # support.  Config-dependent, and it surfaces as a diverging run.
     reverse_kl = (student_logprobs.exp() * (student_logprobs - teacher_logprobs)).sum(
         dim=-1
     )

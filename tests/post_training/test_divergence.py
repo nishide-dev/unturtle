@@ -82,6 +82,41 @@ class TestTopK:
             f"dense={dense.flatten()[:3]} top_k=V={full_k.flatten()[:3]}"
         )
 
+    def test_top_k_is_an_unnormalized_partial_sum(self):
+        """Pins the semantics at a `k` where truncation is actually real.
+
+        `test_k_equal_to_vocab_reproduces_the_dense_value` was written to
+        catch a renormalizing implementation, and cannot: at `k = V`,
+        `log_softmax` over an already-normalized distribution is a no-op.
+        Mutation-verified — inserting a renormalization after the `topk`
+        passes every other test here while changing the k=8 loss by 2.3x.
+
+        So the partial-sum property is pinned directly, at `k < V`.
+        """
+        from unturtle.post_training.divergence import teacher_student_divergence
+
+        teacher, student = _logprobs(vocab=32)
+        k = 8
+
+        top_teacher, indices = teacher.topk(k=k, dim=-1)
+        expected = (
+            top_teacher.exp() * (top_teacher - student.gather(-1, indices))
+        ).sum(dim=-1)
+
+        got = teacher_student_divergence(teacher, student, top_k=k)
+
+        assert torch.allclose(got, expected, atol=1e-6), (
+            f"got={got.flatten()[:3]} expected={expected.flatten()[:3]}"
+        )
+
+        # The defining property: the retained teacher mass is < 1, i.e. the
+        # truncated distribution was NOT renormalized.
+        retained = top_teacher.exp().sum(dim=-1)
+        assert bool((retained < 0.999).any()), (
+            "every position retained ~all teacher mass, so this fixture "
+            "cannot distinguish a renormalized implementation"
+        )
+
     def test_k_larger_than_vocab_is_clamped(self):
         from unturtle.post_training.divergence import teacher_student_divergence
 
@@ -171,6 +206,93 @@ class TestNonFiniteTeacherLogprobs:
         )
 
 
+class TestGradientSafetyOfTheFiniteGuard:
+    def test_teacher_gradients_stay_finite_with_minus_inf_entries(self):
+        """Why the guard sanitizes before `exp` rather than only masking after.
+
+        A bare `torch.where(finite, log_p.exp() * delta, 0)` suffices for the
+        forward value and for the *student* gradient: `exp(-inf)` is exactly
+        `0.0`, and a detached teacher has no gradient path through the weight.
+        It is not enough when the teacher itself carries gradient (a soft or
+        learned teacher, or a caller who forgot to detach).
+
+        The bare form is constructed inline and asserted to fail, so this
+        justification stays falsifiable — if PyTorch ever stops producing NaN
+        there, the guard's extra step should be deleted, and this test says so.
+        """
+        from unturtle.post_training.divergence import teacher_student_divergence
+
+        vocab = 6
+        raw = torch.full((1, 1, vocab), float("-inf"))
+        raw[0, 0, 0] = 0.0
+        student = F.log_softmax(torch.randn(1, 1, vocab), dim=-1)
+
+        naive_teacher = raw.clone().requires_grad_(True)
+        finite = torch.isfinite(naive_teacher)
+        torch.where(
+            finite,
+            naive_teacher.exp() * (naive_teacher - student),
+            torch.zeros_like(naive_teacher),
+        ).sum().backward()
+        assert bool(torch.isnan(naive_teacher.grad).any()), (
+            "the bare form no longer produces NaN teacher gradients, so the "
+            "guard's extra step is unjustified — simplify it"
+        )
+
+        guarded_teacher = raw.clone().requires_grad_(True)
+        teacher_student_divergence(guarded_teacher, student).sum().backward()
+        assert torch.isfinite(guarded_teacher.grad).all(), (
+            f"guarded teacher gradient was {guarded_teacher.grad}"
+        )
+
+
+class TestReverseKLIsUnguardedLikeTheReference:
+    def test_trimmed_teacher_makes_dense_reverse_kl_infinite(self):
+        """Documents a reachable hazard, matching upstream rather than diverging.
+
+        `KL(student||teacher)` is genuinely infinite where the student puts
+        mass and the teacher assigns none, and the reference computes it with
+        no finiteness mask — its comment calls that "the mode-seeking property
+        of reverse KL, NOT NaN".  Guarding it here would quietly make this a
+        different objective.
+
+        The trigger is not exotic: `rl_sdar.py` applies teacher-side top-k /
+        top-p / min-p trimming just before the divergence, each writing -inf
+        into the logits pre-`log_softmax`.  This fixture reproduces that.
+        """
+        from unturtle.post_training.divergence import teacher_student_divergence
+
+        torch.manual_seed(1)
+        vocab = 64
+        logits = torch.randn(1, 2, vocab)
+        cutoff = logits.topk(k=10, dim=-1).values[..., -1:]
+        teacher = F.log_softmax(
+            logits.masked_fill(logits < cutoff, float("-inf")), dim=-1
+        )
+        student = F.log_softmax(torch.randn(1, 2, vocab), dim=-1)
+
+        assert torch.isfinite(teacher_student_divergence(teacher, student)).all(), (
+            "forward KL must stay finite; only the reverse direction diverges"
+        )
+
+        blended = teacher_student_divergence(teacher, student, reverse_kl_weight=0.3)
+        assert bool(torch.isinf(blended).any()), (
+            "a trimmed teacher plus reverse_kl_weight should be infinite; if "
+            "this now passes, a guard was added and the objective no longer "
+            "matches the reference"
+        )
+
+    def test_a_full_support_teacher_keeps_reverse_kl_finite(self):
+        """The ordinary case: nothing about reverse KL is broken per se."""
+        from unturtle.post_training.divergence import teacher_student_divergence
+
+        teacher, student = _logprobs()
+
+        got = teacher_student_divergence(teacher, student, reverse_kl_weight=0.5)
+
+        assert torch.isfinite(got).all()
+
+
 class TestReverseKLAndJSD:
     def test_reverse_kl_weight_blends_the_two_directions(self):
         from unturtle.post_training.divergence import teacher_student_divergence
@@ -231,6 +353,51 @@ class TestReverseKLAndJSD:
         )
 
         assert torch.allclose(dense, full_k, atol=1e-6)
+
+    def test_jsd_alpha_weights_the_teacher_side(self):
+        """Pins alpha away from 0.5, where two distinct mutants are invisible.
+
+        Every other JSD test here uses alpha=0.5 (or identical distributions),
+        and at 0.5 swapping the mixture weights — or the outer weights — is an
+        identity transformation.  Mutation-verified: both swaps pass the rest
+        of this file.  Correct value 0.143326 vs 0.240114 / 0.240627 swapped.
+        """
+        from unturtle.post_training.divergence import teacher_student_divergence
+
+        teacher, student = _logprobs()
+        alpha = 0.7
+
+        teacher_probs, student_probs = teacher.exp(), student.exp()
+        log_mixture = (alpha * teacher_probs + (1.0 - alpha) * student_probs).log()
+        expected = alpha * (teacher_probs * (teacher - log_mixture)).sum(dim=-1) + (
+            1.0 - alpha
+        ) * (student_probs * (student - log_mixture)).sum(dim=-1)
+
+        got = teacher_student_divergence(
+            teacher, student, divergence="jsd", jsd_alpha=alpha
+        )
+
+        assert torch.allclose(got, expected, atol=1e-6), (
+            f"got={got.flatten()[:3]} expected={expected.flatten()[:3]}"
+        )
+
+    def test_jsd_is_asymmetric_away_from_alpha_one_half(self):
+        """The symmetry test above only establishes the degenerate case."""
+        from unturtle.post_training.divergence import teacher_student_divergence
+
+        teacher, student = _logprobs()
+
+        forward = teacher_student_divergence(
+            teacher, student, divergence="jsd", jsd_alpha=0.7
+        )
+        swapped = teacher_student_divergence(
+            student, teacher, divergence="jsd", jsd_alpha=0.7
+        )
+
+        assert not torch.allclose(forward, swapped, atol=1e-4), (
+            "JSD at alpha != 0.5 must not be symmetric; if it is, alpha is "
+            "not reaching the mixture"
+        )
 
     def test_unknown_divergence_is_rejected(self):
         from unturtle.post_training.divergence import teacher_student_divergence
