@@ -155,6 +155,134 @@ class TestFastMaskedDiffusionLoss:
             f"cuda timestep: ref={ref.item():.6f} got={got.item():.6f}"
         )
 
+    def test_per_position_timesteps_weight_each_position(self):
+        """`(B, L)` timesteps weight positions individually, not per row.
+
+        Packed rows hold several original samples, each owning its own `t`
+        (#62).  A `(B, L)` tensor is the only way to express that, and it must
+        be applied elementwise — collapsing it to a per-row value is exactly
+        the approximation #62 removed.
+        """
+        torch.manual_seed(11)
+        B, L, V = 3, 12, 200
+        logits = torch.randn(B, L, V)
+        labels = torch.randint(0, V, (B, L))
+        mask = torch.rand(B, L) > 0.5
+        t = torch.rand(B, L) * 0.9 + 0.1  # [B, L], every position differs
+
+        ref = _reference_masked_ce(logits, labels, mask, loss_weights=1.0 / t)
+        got = self.masked_diffusion_loss_from_timesteps(logits, labels, mask, t)
+
+        assert torch.allclose(ref, got, atol=1e-4), (
+            f"per-position: ref={ref.item():.6f} got={got.item():.6f}"
+        )
+
+    def test_per_position_timesteps_are_not_reduced_to_a_row_summary(self):
+        """Guards the point of `(B, L)`: it must not be a relabelled `(B,)`.
+
+        Compares against a *fixed* reference rather than against another call
+        with row-mean `t`.  Comparing the two calls is what the obvious version
+        of this test does, and it is vacuous: an implementation that collapses
+        `(B, L)` to its row mean collapses *both* calls the same way, so they
+        agree and a "these must differ" assertion still passes.  Mutation-tested
+        — that mutant survives the two-call form and is caught by this one.
+        """
+        torch.manual_seed(12)
+        B, L, V = 2, 10, 100
+        logits = torch.randn(B, L, V)
+        labels = torch.randint(0, V, (B, L))
+        mask = torch.ones(B, L, dtype=torch.bool)
+        t = torch.rand(B, L) * 0.9 + 0.1
+
+        got = self.masked_diffusion_loss_from_timesteps(logits, labels, mask, t)
+
+        elementwise = _reference_masked_ce(logits, labels, mask, loss_weights=1.0 / t)
+        row_mean = _reference_masked_ce(
+            logits,
+            labels,
+            mask,
+            loss_weights=(1.0 / t).mean(dim=1, keepdim=True).expand(B, L),
+        )
+
+        # The two references must be distinguishable, or the assertion below is
+        # satisfied by any implementation at all.
+        assert not torch.allclose(elementwise, row_mean, atol=1e-3), (
+            "test inputs cannot distinguish the two weightings; pick a `t` with "
+            f"more spread (elementwise={elementwise.item():.6f} "
+            f"row_mean={row_mean.item():.6f})"
+        )
+        assert torch.allclose(got, elementwise, atol=1e-4), (
+            f"got={got.item():.6f} matches neither elementwise="
+            f"{elementwise.item():.6f} nor row_mean={row_mean.item():.6f}"
+        )
+
+    def test_broadcast_timesteps_match_expanded_form(self):
+        """`(B,)` must behave exactly like its `(B, L)` expansion."""
+        torch.manual_seed(13)
+        B, L, V = 3, 12, 200
+        logits = torch.randn(B, L, V)
+        labels = torch.randint(0, V, (B, L))
+        mask = torch.rand(B, L) > 0.5
+        t = torch.rand(B) * 0.9 + 0.1
+
+        per_row = self.masked_diffusion_loss_from_timesteps(logits, labels, mask, t)
+        expanded = self.masked_diffusion_loss_from_timesteps(
+            logits, labels, mask, t[:, None].expand(B, L).contiguous()
+        )
+
+        assert torch.allclose(per_row, expanded, atol=1e-6), (
+            f"(B,)={per_row.item():.6f} != (B,L)-expanded={expanded.item():.6f}"
+        )
+
+    def test_square_batch_cannot_detect_a_transposed_timestep_tensor(self):
+        """Documents a real limitation rather than pretending it is covered.
+
+        When `B == L`, `(B, L)` and its transpose are the same shape, so the
+        shape check cannot tell them apart: a transposed `timesteps` is accepted
+        and silently produces a different loss.  Orientation is the caller's
+        responsibility.  Pinned here so that if a future validation *does* catch
+        it, this test fails and the docstring gets updated with it.
+        """
+        torch.manual_seed(3)
+        B = L = 4
+        V = 50
+        logits = torch.randn(B, L, V)
+        labels = torch.randint(0, V, (B, L))
+        mask = torch.ones(B, L, dtype=torch.bool)
+        t = torch.rand(B, L) * 0.9 + 0.1
+
+        upright = self.masked_diffusion_loss_from_timesteps(logits, labels, mask, t)
+        transposed = self.masked_diffusion_loss_from_timesteps(
+            logits, labels, mask, t.T.contiguous()
+        )
+
+        assert not torch.allclose(upright, transposed, atol=1e-4), (
+            "the fixture's `t` is transpose-symmetric, so it cannot show that "
+            "orientation matters"
+        )
+
+    @pytest.mark.parametrize("bad_shape", [(4,), (3, 13), (12,), (3, 12, 1)])
+    def test_rejects_timesteps_that_match_neither_shape(self, bad_shape):
+        """A wrong shape is rejected by *this* wrapper, as a `ValueError`.
+
+        The `ValueError` type is the point, not merely that something raises:
+        the downstream kernel has its own `assert` on the weight shape, so
+        deleting this guard still raises here — as `AssertionError`. Requiring
+        `ValueError` pins rejection to the wrapper. That matters because
+        `assert` vanishes under `python -O` while this check does not, so under
+        `-O` the wrapper's guard is the only one left. (pytest never runs under
+        `-O`, so no test can observe that directly.)
+        """
+        torch.manual_seed(14)
+        B, L, V = 3, 12, 200
+        logits = torch.randn(B, L, V)
+        labels = torch.randint(0, V, (B, L))
+        mask = torch.rand(B, L) > 0.5
+        t = torch.rand(*bad_shape) * 0.9 + 0.1
+
+        with pytest.raises(ValueError, match="timesteps must have shape"):
+            self.masked_diffusion_loss_from_timesteps(logits, labels, mask, t)
+
     def test_large_vocab_cpu(self):
         """Vocab > 65536 triggers the chunked forward path."""
         torch.manual_seed(99)

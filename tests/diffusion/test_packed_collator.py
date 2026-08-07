@@ -84,7 +84,6 @@ class TestPackedShape:
             "cu_seqlens",
             "seq_lengths",
             "timesteps",
-            "sample_timesteps",
         ):
             assert key in batch, f"Missing key: {key}"
 
@@ -154,23 +153,20 @@ class TestPackedShape:
         assert ts.shape[0] == batch["input_ids"].shape[0], "timesteps B != input_ids B"
         assert ts.dtype == torch.float32
 
-    def test_sample_timesteps_per_sample_granularity(self, collator):
-        """sample_timesteps must contain one t value per packed sample, not per row."""
-        samples = _make_samples(4, 8)  # 4 * 8 = 32 = max_seq_length (one per row)
+    def test_per_sample_timesteps_come_from_the_clean_path(self, collator):
+        """`sample_timesteps` is gone; per-sample `t` lives on the process.
+
+        It was emitted alongside the row mean but never read.  Since #62 PR3
+        the way to get per-sample timesteps is `noise=False`, which hands the
+        process `segment_ids` so it samples one `t` per packed sample.
+        """
+        samples = _make_samples(4, 8)
         batch = collator(samples)
-        for b, st in enumerate(batch["sample_timesteps"]):
-            n_seqs = len(batch["seq_lengths"][b])
-            assert len(st) == n_seqs, (
-                f"sample_timesteps[{b}] has {len(st)} entries but {n_seqs} packed samples"
-            )
+        assert "sample_timesteps" not in batch
+        assert "segment_ids" in batch, (
+            "the clean path needs topology to sample per segment"
+        )
 
-
-# ---------------------------------------------------------------------------
-# packed_seq_lengths key
-# ---------------------------------------------------------------------------
-
-
-class TestPackedSeqLengths:
     def test_key_present(self, collator):
         """packed_seq_lengths must be present in the batch output."""
         batch = collator(_make_samples(4, 8))
