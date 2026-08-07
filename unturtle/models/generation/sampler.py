@@ -421,18 +421,38 @@ def resolve_algorithm(algorithm: str, model: Any, *, bd3lm_requested: bool) -> s
 
         # Derived from the registry rather than naming the masked hooks: a
         # model failing only a newly registered family's probe should not be
-        # told to implement `_sample`.
-        candidates = ", ".join(
-            f"{a.name} ({a.family})"
-            for a in sorted(_ALGORITHMS, key=lambda a: a.auto_priority)
-            if a.auto_eligible
-        )
-        raise ValueError(
-            f"{type(model).__name__} supports none of the registered decoding "
-            f"algorithms: {candidates}. Each has its own capability requirement; "
-            "request one explicitly to see what it needs, or check that the "
-            "model is a supported dLLM backbone."
-        )
+        # told to implement `_sample`.  Opt-in algorithms are included — a
+        # bd3lm-capable model reaching here needs to be told bd3lm exists and
+        # how to ask for it, not that nothing works.
+        lines = []
+        available: list[str] = []
+        for entry in sorted(_ALGORITHMS, key=lambda a: a.auto_priority):
+            if entry.supports(model):
+                # Reachable, but only on request: `auto` skipped it because it
+                # is not auto-eligible.  Saying "does not support" here would
+                # be flatly wrong, and would hide the one usable option.
+                available.append(entry.name)
+                lines.append(
+                    f"  - {entry.name} ({entry.family}): supported, but never "
+                    f"selected automatically — pass algorithm={entry.name!r}."
+                )
+            else:
+                lines.append(
+                    f"  - {entry.name} ({entry.family}): "
+                    f"{entry.describe_unsupported(model)}"
+                )
+
+        if available:
+            headline = (
+                f"{type(model).__name__} supports "
+                f"{', '.join(available)}, but `auto` selects none of them."
+            )
+        else:
+            headline = (
+                f"{type(model).__name__} supports none of the registered "
+                "decoding algorithms."
+            )
+        raise ValueError(headline + "\n" + "\n".join(lines))
 
     entry = find_algorithm(algorithm)
     if entry is None:

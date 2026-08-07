@@ -61,6 +61,36 @@ class TestNoAlgorithmMessageComesFromTheRegistry:
         finally:
             sampler._unregister_algorithm(newcomer)
 
+    def test_opt_in_algorithms_are_listed_with_how_to_reach_them(self):
+        """A bd3lm-capable model must not be told nothing works.
+
+        `bd3lm` is `auto_eligible=False`, so filtering the candidate list by
+        eligibility would omit the one algorithm this model can actually run —
+        defeating the message's entire purpose.
+        """
+        from unturtle.models.generation.sampler import resolve_algorithm
+
+        class _BD3LMOnly:
+            def _sample_block_diffusion(
+                self, input_ids, generation_config, attention_mask=None
+            ):
+                return None
+
+        model = _BD3LMOnly()
+        with pytest.raises(ValueError) as excinfo:
+            resolve_algorithm("auto", model, bd3lm_requested=False)
+
+        message = str(excinfo.value)
+        assert "bd3lm" in message, f"the one viable algorithm is missing: {message!r}"
+        assert "supported" in message, (
+            f"bd3lm reported as unsupported on a bd3lm-capable model: {message!r}"
+        )
+        assert "does not implement BD3LM" not in message, (
+            f"message contradicts the model's actual capability: {message!r}"
+        )
+        # And it genuinely is reachable, so the advice is actionable.
+        assert resolve_algorithm("auto", model, bd3lm_requested=True) == "bd3lm"
+
     def test_message_does_not_hardcode_masked_hook_names(self):
         """A continuous model should not be told to implement `_sample`."""
         from unturtle.models.generation.sampler import resolve_algorithm
@@ -104,25 +134,39 @@ class TestFlagsAreNotUniversal:
             sampler.register_algorithm,
         ):
             tree = ast.parse(textwrap.dedent(inspect.getsource(function)))
-            # Strings only, so a docstring *explaining* the flags does not
-            # count as the core reading them.
-            names = (
-                {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
-                | {
-                    node.attr
-                    for node in ast.walk(tree)
-                    if isinstance(node, ast.Attribute)
-                }
-                | {
-                    kw.arg
-                    for node in ast.walk(tree)
-                    if isinstance(node, ast.Call)
-                    for kw in node.keywords
-                    if kw.arg
-                }
-            )
+            definition = tree.body[0]
+
+            # Exempt only the docstring node — a docstring *explaining* the
+            # flags is not the core reading them, but `getattr(m, "use_cache")`
+            # and `cfg["use_block_diffusion"]` very much are, and a blanket
+            # string exemption would wave both through.
+            docstring_node = None
+            body = getattr(definition, "body", [])
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                docstring_node = body[0].value
+
+            referenced: set[str] = set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Name):
+                    referenced.add(node.id)
+                elif isinstance(node, ast.Attribute):
+                    referenced.add(node.attr)
+                elif isinstance(node, ast.keyword) and node.arg:
+                    referenced.add(node.arg)
+                elif (
+                    isinstance(node, ast.Constant)
+                    and isinstance(node.value, str)
+                    and node is not docstring_node
+                ):
+                    referenced.add(node.value)
+
             for flag in ("use_cache", "use_block_diffusion"):
-                assert flag not in names, f"{function.__name__} reads {flag}"
+                assert flag not in referenced, f"{function.__name__} reads {flag}"
 
 
 class TestEveryFamilyIsDispatchable:
@@ -145,7 +189,9 @@ class TestEveryFamilyIsDispatchable:
         newcomer = GenerationAlgorithm(
             name="toy-ode",
             family="continuous_flow",
-            supports=lambda model: hasattr(model, "_integrate_ode"),
+            # Claims to support *everything*, so the `auto` assertion below
+            # exercises priority rather than being decided by the probe.
+            supports=lambda model: True,
             runner=lambda model, request: model._integrate_ode(request),
         )
         register_algorithm(newcomer)
@@ -159,7 +205,9 @@ class TestEveryFamilyIsDispatchable:
                 dispatch_generation(model, GenerationRequest(), algorithm="toy-ode")
                 == "ode-result"
             )
-            # And it still loses `auto` to the masked algorithms.
+            # And it still loses `auto` to the masked algorithms on priority,
+            # despite supporting this model too.
+            assert newcomer.supports(_Masked())
             assert resolve_algorithm("auto", _Masked(), bd3lm_requested=False) == "mdlm"
         finally:
             sampler._unregister_algorithm(newcomer)
