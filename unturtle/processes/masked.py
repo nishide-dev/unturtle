@@ -45,6 +45,11 @@ from .base import AlphaSchedule, ProcessOutput
 # Fields the process owns and therefore rebuilds rather than passes through.
 _SUPERVISION_KEYS = ("labels", "diffusion_mask", "timesteps")
 
+# Packing topology the process consumes but the model forward does not: which
+# original sample owns each position.  Kept out of `model_inputs` so a packed
+# batch does not hand the model an argument it has no parameter for.
+_TOPOLOGY_KEYS = ("segment_ids",)
+
 
 @dataclass
 class MaskedDiffusionProcess:
@@ -123,28 +128,48 @@ class MaskedDiffusionProcess:
         else:
             maskable = torch.ones_like(input_ids, dtype=torch.bool)
 
-        # --- sample one diffusion timestep per sequence, t in [eps, 1) ---
-        t = self.time_epsilon + (1.0 - self.time_epsilon) * torch.rand(
-            B, device=device, generator=generator
-        )
+        # --- sample diffusion timesteps, t in [eps, 1) ---
+        # Packed rows hold several original samples, each of which owns its own
+        # timestep.  With `segment_ids` we sample per segment and broadcast, so
+        # `timesteps` is [B, L]; without it, one per row as before ([B]).
+        # A packed row previously collapsed its samples to a mean t, which is
+        # the wrong t for every sample in the row and is why `timestep` and
+        # `scheduler` weighting had to reject packed batches outright.
+        segment_ids = batch.get("segment_ids")
+        if segment_ids is not None:
+            if segment_ids.shape != (B, L):
+                raise ValueError(
+                    f"segment_ids must have shape {(B, L)} to match input_ids, "
+                    f"got {tuple(segment_ids.shape)}"
+                )
+            n_segments = int(segment_ids.max()) + 1 if segment_ids.numel() else 0
+            per_segment = self.time_epsilon + (1.0 - self.time_epsilon) * torch.rand(
+                (B, max(n_segments, 1)), device=device, generator=generator
+            )
+            t = torch.gather(per_segment, 1, segment_ids.to(torch.long))  # [B, L]
+        else:
+            t = self.time_epsilon + (1.0 - self.time_epsilon) * torch.rand(
+                B, device=device, generator=generator
+            )
 
         # --- per-token masking probability p_mask = 1 - alpha(t) ---
         # Normalized without assuming the schedule already returns the right
         # dtype/device.  Deliberately unclamped, matching the legacy collator.
         alpha_t = torch.as_tensor(self.scheduler.alpha(t), device=device, dtype=t.dtype)
         if alpha_t.dim() == 0:
-            alpha_t = alpha_t.expand(B)
-        elif alpha_t.shape != (B,):
+            alpha_t = alpha_t.expand(t.shape)
+        elif alpha_t.shape != t.shape:
             # A [1] result would broadcast one row's rate over the whole batch.
             raise ValueError(
-                f"scheduler.alpha(t) must return a scalar or a [{B}] tensor, "
-                f"got shape {tuple(alpha_t.shape)}"
+                f"scheduler.alpha(t) must return a scalar or a "
+                f"{tuple(t.shape)} tensor, got shape {tuple(alpha_t.shape)}"
             )
         p_mask = 1.0 - alpha_t
 
         # --- Bernoulli corruption over eligible positions ---
         rand = torch.rand((B, L), device=device, generator=generator)
-        diffusion_mask = (rand < p_mask[:, None]) & maskable
+        threshold = p_mask if p_mask.dim() == 2 else p_mask[:, None]
+        diffusion_mask = (rand < threshold) & maskable
 
         # --- apply noising ---
         noised_input_ids = input_ids.clone()
@@ -160,7 +185,11 @@ class MaskedDiffusionProcess:
             if attention_mask is not None:
                 labels[~attention_mask.bool()] = -100
 
-        model_inputs = {k: v for k, v in batch.items() if k not in _SUPERVISION_KEYS}
+        model_inputs = {
+            k: v
+            for k, v in batch.items()
+            if k not in _SUPERVISION_KEYS and k not in _TOPOLOGY_KEYS
+        }
         model_inputs["input_ids"] = noised_input_ids
 
         return ProcessOutput(
