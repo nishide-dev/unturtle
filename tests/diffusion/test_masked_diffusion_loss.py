@@ -177,13 +177,15 @@ class TestFastMaskedDiffusionLoss:
             f"per-position: ref={ref.item():.6f} got={got.item():.6f}"
         )
 
-    def test_per_position_timesteps_differ_from_row_mean(self):
+    def test_per_position_timesteps_are_not_reduced_to_a_row_summary(self):
         """Guards the point of `(B, L)`: it must not be a relabelled `(B,)`.
 
-        A weighted mean is not the mean of the weights, so feeding each row's
-        mean `t` has to give a different loss.  Without this, an implementation
-        that silently reduced `(B, L)` to its row mean would still pass the
-        elementwise-reference test on some inputs.
+        Compares against a *fixed* reference rather than against another call
+        with row-mean `t`.  Comparing the two calls is what the obvious version
+        of this test does, and it is vacuous: an implementation that collapses
+        `(B, L)` to its row mean collapses *both* calls the same way, so they
+        agree and a "these must differ" assertion still passes.  Mutation-tested
+        — that mutant survives the two-call form and is caught by this one.
         """
         torch.manual_seed(12)
         B, L, V = 2, 10, 100
@@ -192,16 +194,26 @@ class TestFastMaskedDiffusionLoss:
         mask = torch.ones(B, L, dtype=torch.bool)
         t = torch.rand(B, L) * 0.9 + 0.1
 
-        per_position = self.masked_diffusion_loss_from_timesteps(
-            logits, labels, mask, t
-        )
-        row_mean = self.masked_diffusion_loss_from_timesteps(
-            logits, labels, mask, t.mean(dim=1)
+        got = self.masked_diffusion_loss_from_timesteps(logits, labels, mask, t)
+
+        elementwise = _reference_masked_ce(logits, labels, mask, loss_weights=1.0 / t)
+        row_mean = _reference_masked_ce(
+            logits,
+            labels,
+            mask,
+            loss_weights=(1.0 / t).mean(dim=1, keepdim=True).expand(B, L),
         )
 
-        assert not torch.allclose(per_position, row_mean, atol=1e-4), (
-            "per-position weighting collapsed to the row mean: "
-            f"{per_position.item():.6f} vs {row_mean.item():.6f}"
+        # The two references must be distinguishable, or the assertion below is
+        # satisfied by any implementation at all.
+        assert not torch.allclose(elementwise, row_mean, atol=1e-3), (
+            "test inputs cannot distinguish the two weightings; pick a `t` with "
+            f"more spread (elementwise={elementwise.item():.6f} "
+            f"row_mean={row_mean.item():.6f})"
+        )
+        assert torch.allclose(got, elementwise, atol=1e-4), (
+            f"got={got.item():.6f} matches neither elementwise="
+            f"{elementwise.item():.6f} nor row_mean={row_mean.item():.6f}"
         )
 
     def test_broadcast_timesteps_match_expanded_form(self):
