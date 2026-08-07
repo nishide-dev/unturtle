@@ -94,9 +94,13 @@ class MaskedDiffusionEvaluator(BaseEvaluator):
             completion_only=completion_only,
             noise=False,
         )
-        if isinstance(
-            self.data_collator, PackedMaskedDiffusionDataCollator
-        ) and self.loss_weight_type not in ("uniform", "cart"):
+        # See DiffusionTrainer: only the *noising* packed collator's row-mean
+        # timestep is incompatible with t-based weighting (#62 PR3).
+        if (
+            isinstance(self.data_collator, PackedMaskedDiffusionDataCollator)
+            and getattr(self.data_collator, "noise", True)
+            and self.loss_weight_type not in ("uniform", "cart")
+        ):
             # Mirrors DiffusionTrainer's guard: 'cart' is allowed because it
             # weights by seq_lengths rather than by the packed row's mean
             # timestep, which is the approximation that makes 'timestep' and
@@ -104,9 +108,12 @@ class MaskedDiffusionEvaluator(BaseEvaluator):
             # here would crash build_diffusion_evaluator for a CART-trained
             # model that trained without complaint.
             raise ValueError(
-                f"PackedMaskedDiffusionDataCollator is not supported for diffusion "
-                f"evaluation with loss_weight_type={self.loss_weight_type!r}. Use "
-                "uniform/cart weighting or an unpacked MaskedDiffusionDataCollator."
+                f"A *noising* PackedMaskedDiffusionDataCollator is not supported "
+                f"for diffusion evaluation with "
+                f"loss_weight_type={self.loss_weight_type!r}: it collapses each "
+                "packed row's per-sample timesteps to a mean. Pass noise=False so "
+                "the forward process samples per segment, use uniform/cart "
+                "weighting, or use an unpacked collator."
             )
 
     def _apply_forward_process(self, batch: dict[str, Any]) -> dict[str, Any]:
