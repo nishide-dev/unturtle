@@ -20,9 +20,11 @@ from typing import Any
 import torch
 
 from unturtle.diffusion.collator import MaskedDiffusionDataCollator
+from unturtle.diffusion.mask_token import classify_batch, resolve_mask_token_id
 from unturtle.diffusion.packed_collator import PackedMaskedDiffusionDataCollator
 from unturtle.diffusion.schedulers import LinearAlphaScheduler, make_alpha_scheduler
 from unturtle.kernels.masked_diffusion_loss import fast_masked_diffusion_loss
+from unturtle.processes import MaskedDiffusionProcess
 
 from .base import BaseEvaluator
 
@@ -56,41 +58,87 @@ class MaskedDiffusionEvaluator(BaseEvaluator):
         completion_only: bool = True,
         metric_key_prefix: str = "eval",
         device: torch.device | str | None = None,
+        cart_p: float = 0.8,
     ) -> None:
         super().__init__(model=model, tokenizer=tokenizer, device=device)
         if isinstance(alpha_scheduler, str):
             alpha_scheduler = make_alpha_scheduler(alpha_scheduler)
         self.alpha_scheduler = alpha_scheduler or LinearAlphaScheduler()
         self.loss_weight_type = loss_weight_type
+        self.cart_p = cart_p
         self.time_epsilon = time_epsilon
         self.completion_only = completion_only
         self.metric_key_prefix = metric_key_prefix
-        mask_token_id = getattr(tokenizer, "mask_token_id", None)
-        if mask_token_id is None:
-            mask_token_id = getattr(
-                getattr(model, "config", None), "mask_token_id", None
+        mask_token_id = resolve_mask_token_id(tokenizer, model)
+        self.mask_token_id = mask_token_id
+
+        # Corruption is applied device-side (#62), mirroring DiffusionTrainer.
+        # Kept as None when no mask id resolves so an explicitly-supplied
+        # noising collator still evaluates.
+        self.forward_process: MaskedDiffusionProcess | None = (
+            MaskedDiffusionProcess(
+                scheduler=self.alpha_scheduler,
+                mask_token_id=mask_token_id,
+                time_epsilon=time_epsilon,
+                completion_only=completion_only,
             )
+            if mask_token_id is not None
+            else None
+        )
+
         self.data_collator = data_collator or MaskedDiffusionDataCollator(
             tokenizer=tokenizer,
             scheduler=self.alpha_scheduler,
             mask_token_id=mask_token_id,
             time_epsilon=time_epsilon,
             completion_only=completion_only,
+            noise=False,
         )
-        if (
-            isinstance(self.data_collator, PackedMaskedDiffusionDataCollator)
-            and self.loss_weight_type != "uniform"
-        ):
+        if isinstance(
+            self.data_collator, PackedMaskedDiffusionDataCollator
+        ) and self.loss_weight_type not in ("uniform", "cart"):
+            # Mirrors DiffusionTrainer's guard: 'cart' is allowed because it
+            # weights by seq_lengths rather than by the packed row's mean
+            # timestep, which is the approximation that makes 'timestep' and
+            # 'scheduler' wrong on packed batches.  Diverging from the trainer
+            # here would crash build_diffusion_evaluator for a CART-trained
+            # model that trained without complaint.
             raise ValueError(
-                "PackedMaskedDiffusionDataCollator is not supported for diffusion evaluation with "
-                "loss_weight_type='timestep' or 'scheduler'. Use uniform weighting or an "
-                "unpacked MaskedDiffusionDataCollator."
+                f"PackedMaskedDiffusionDataCollator is not supported for diffusion "
+                f"evaluation with loss_weight_type={self.loss_weight_type!r}. Use "
+                "uniform/cart weighting or an unpacked MaskedDiffusionDataCollator."
             )
+
+    def _apply_forward_process(self, batch: dict[str, Any]) -> dict[str, Any]:
+        """Corrupt a clean batch device-side, or pass a pre-noised one through.
+
+        Mirrors ``DiffusionTrainer._apply_forward_process``.  Presence of
+        ``diffusion_mask`` means an explicitly-supplied noising collator (or
+        the packed collator) already did the corruption — re-noising would
+        mask the mask tokens themselves and skew every reported metric.
+        """
+        if classify_batch(batch, "MaskedDiffusionEvaluator"):
+            return batch
+
+        if self.forward_process is None:
+            raise ValueError(
+                "MaskedDiffusionEvaluator received a clean batch (no "
+                "'diffusion_mask') but has no forward process: mask_token_id "
+                "could not be resolved from the tokenizer or model config.  "
+                "Pass a tokenizer with a mask token, set "
+                "model.config.mask_token_id, or supply a noising data_collator."
+            )
+
+        output = self.forward_process(batch)
+        return {**output.model_inputs, **output.objective_inputs}
 
     def _build_loss_weights(
         self,
         timesteps: torch.Tensor,
         logits: torch.Tensor,
+        diffusion_mask: torch.Tensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        seq_lengths: Any | None = None,
     ) -> torch.Tensor | None:
         if self.loss_weight_type == "uniform":
             return None
@@ -107,9 +155,30 @@ class MaskedDiffusionEvaluator(BaseEvaluator):
                 weights = torch.tensor(weights, device=device)
             return weights.to(device)
 
+        if self.loss_weight_type == "cart":
+            # `cart` is a valid DiffusionTrainingArguments value and
+            # `DiffusionTrainer.build_diffusion_evaluator` forwards it here, so
+            # evaluating a CART-trained model must not crash.  Shares the
+            # trainer's implementation so the two cannot drift — notably so
+            # packed-sample boundaries are honored and eval loss stays
+            # comparable with train loss.
+            if diffusion_mask is None:
+                raise ValueError(
+                    "loss_weight_type='cart' needs the diffusion mask; this "
+                    "evaluator was called without one."
+                )
+            from unturtle.diffusion.reweighting import cart_loss_weights
+
+            return cart_loss_weights(
+                diffusion_mask,
+                cart_p=self.cart_p,
+                attention_mask=attention_mask,
+                seq_lengths=seq_lengths,
+            )
+
         raise ValueError(
             f"Unknown loss_weight_type '{self.loss_weight_type}'. "
-            "Choose from: 'uniform', 'timestep', 'scheduler'."
+            "Choose from: 'uniform', 'timestep', 'scheduler', 'cart'."
         )
 
     def evaluate(
@@ -136,13 +205,29 @@ class MaskedDiffusionEvaluator(BaseEvaluator):
                     break
 
                 batch = self._move_to_device(batch)
+                batch = self._apply_forward_process(batch)
                 labels: torch.Tensor = batch.pop("labels")
                 diffusion_mask: torch.Tensor = batch.pop("diffusion_mask")
                 timesteps: torch.Tensor = batch.pop("timesteps")
 
+                # Read-only; the model forward consumes them too.  Mirrors
+                # DiffusionTrainer.compute_loss so packed CART weights match.
+                attention_mask = batch.get("attention_mask")
+                seq_lengths = batch.get("seq_lengths")
+                if seq_lengths is None:
+                    flat_lengths = batch.get("packed_seq_lengths")
+                    if flat_lengths is not None and labels.shape[0] == 1:
+                        seq_lengths = [flat_lengths]
+
                 outputs = self.model(**batch)
                 logits: torch.Tensor = outputs.logits
-                loss_weights = self._build_loss_weights(timesteps, logits)
+                loss_weights = self._build_loss_weights(
+                    timesteps,
+                    logits,
+                    diffusion_mask=diffusion_mask,
+                    attention_mask=attention_mask,
+                    seq_lengths=seq_lengths,
+                )
                 loss = fast_masked_diffusion_loss(
                     logits=logits,
                     labels=labels,

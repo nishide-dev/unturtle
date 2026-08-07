@@ -459,6 +459,7 @@ def build_masked_diffusion_collator(
     time_epsilon: float = 1e-3,
     completion_only: bool = True,
     mask_token_id: Optional[int] = None,
+    noise: bool = False,
 ):
     """Build a ``MaskedDiffusionDataCollator`` the way ``DiffusionTrainer`` does.
 
@@ -469,16 +470,20 @@ def build_masked_diffusion_collator(
     ``model.config.mask_token_id`` (real checkpoints may only carry the mask id
     on the model config).
 
+    ``noise`` defaults to ``False`` so the CLI takes the same device-side
+    corruption path as the API (#62); the scheduler and ``time_epsilon`` are
+    still passed through because the trainer and evaluator build their forward
+    process from their own args, and a caller may flip ``noise=True`` to get
+    the legacy in-collator noising.
+
     Used by ``unturtle train`` and ``unturtle eval`` when constructing the
     collator explicitly, so ``--alpha-scheduler`` / ``--time-epsilon`` /
     ``--mask-token-id`` are honored instead of silently using defaults.
     """
     from unturtle.diffusion import MaskedDiffusionDataCollator, make_alpha_scheduler
+    from unturtle.diffusion.mask_token import resolve_mask_token_id
 
-    if mask_token_id is None:
-        mask_token_id = getattr(tokenizer, "mask_token_id", None)
-    if mask_token_id is None:
-        mask_token_id = getattr(getattr(model, "config", None), "mask_token_id", None)
+    mask_token_id = resolve_mask_token_id(tokenizer, model, mask_token_id)
 
     return MaskedDiffusionDataCollator(
         tokenizer=tokenizer,
@@ -486,6 +491,7 @@ def build_masked_diffusion_collator(
         mask_token_id=mask_token_id,
         time_epsilon=time_epsilon,
         completion_only=completion_only,
+        noise=noise,
     )
 
 
