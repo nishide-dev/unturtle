@@ -15,9 +15,10 @@
 """Decoding-algorithm selection for Unturtle dLLM generation.
 
 Makes the decoding algorithm an explicit, first-class choice instead of an implicit
-combination of ``MaskedDiffusionGenerationConfig`` flags. Each named algorithm maps to the
-flag set that the model's ``generate`` dispatch understands — so this is
-pure *selection*, with no generation logic of its own.
+combination of ``MaskedDiffusionGenerationConfig`` flags.  Each algorithm is a
+registered :class:`GenerationAlgorithm` describing what it needs from a model and
+which flags (if any) it selects — so this is pure *selection*, with no generation
+logic of its own.
 
 Algorithms (discrete masked diffusion):
   - ``mdlm``         : plain MDLM denoising loop
@@ -45,53 +46,58 @@ Explicit algorithm choices are capability-checked: passing an algorithm the mode
 execute raises ``ValueError`` immediately rather than silently falling back or crashing
 mid-generation.
 
-The registry is intentionally open: continuous-diffusion algorithms (e.g. ``continuous_*``)
-would be added to a separate table when continuous diffusion LMs land. The masked-diffusion
-loops (mdlm/block_decode/bd3lm) are discrete-masked-only; block_ar is for the canvas family.
+The registry is open to future families (discrete flow matching, continuous/latent).
+``auto_priority`` is an explicit number rather than registration order, so a newly
+registered algorithm does **not** outrank the masked ones merely by existing — #69 calls
+that out specifically.  ``flags`` defaults to empty, so a non-masked family is never
+handed ``use_cache`` / ``use_block_diffusion``.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Callable
 
-#: Discrete masked-diffusion algorithms -> the generate() flag set each selects.
-DISCRETE_ALGORITHMS: dict[str, dict[str, bool]] = {
-    "mdlm": {"use_cache": False, "use_block_diffusion": False},
-    "block_decode": {"use_cache": True, "use_block_diffusion": False},
-    "bd3lm": {"use_cache": False, "use_block_diffusion": True},
-}
-
-#: Canvas block-diffusion algorithms -> the generate() flag set each selects.
-#: ``block_ar`` injects no flags; the upstream GenerationConfig governs the loop.
-CANVAS_ALGORITHMS: dict[str, dict[str, bool]] = {
-    "block_ar": {},
-}
-
-#: All registered algorithms.
-ALL_ALGORITHMS: dict[str, dict[str, bool]] = {
-    **DISCRETE_ALGORITHMS,
-    **CANVAS_ALGORITHMS,
-}
+#: Lower numbers win when resolving ``auto``.  Masked/canvas algorithms occupy
+#: 10-40; anything registered later defaults to 1000 and therefore loses.
+_DEFAULT_AUTO_PRIORITY = 1000
 
 
-def algorithm_to_flags(algorithm: str) -> dict[str, bool]:
-    """Return the generate() flag set for a named algorithm.
+@dataclass(frozen=True)
+class GenerationAlgorithm:
+    """One decoding algorithm's selection metadata.
 
-    For discrete masked algorithms (mdlm / block_decode / bd3lm) this returns the
-    ``use_cache`` / ``use_block_diffusion`` flags that the model's generate dispatch
-    understands.
-
-    For ``block_ar`` (DiffusionGemma canvas block diffusion) this returns ``{}`` —
-    no flags are injected because the upstream ``GenerationConfig`` governs the loop
-    entirely; Unturtle only selects the algorithm, it does not override the config.
+    Args:
+        name:                Algorithm name as passed to ``generate(algorithm=...)``.
+        family:              Descriptive grouping (``"masked_discrete"``,
+                             ``"canvas"``, …).  Not an ontology — it exists so a
+                             future family is not forced to describe itself in
+                             masked-diffusion terms.
+        supports:            ``(model) -> bool`` capability probe.
+        flags:               Flags injected into ``generate`` kwargs.  Empty for
+                             families whose loop is governed elsewhere.
+        auto_priority:       Tie-break for ``auto``; lower wins.  Explicit rather
+                             than registration-order so registering an algorithm
+                             cannot silently change existing selection.
+        auto_eligible:       Whether ``auto`` may pick this at all.  ``bd3lm`` is
+                             opt-in via ``bd3lm_requested``, never automatic.
+        unsupported_message: ``(model) -> str`` for the explicit-selection error.
+                             Per-algorithm because each names its missing hook and
+                             a concrete alternative.
     """
-    try:
-        return dict(ALL_ALGORITHMS[algorithm])
-    except KeyError as exc:
-        raise ValueError(
-            f"Unknown decoding algorithm {algorithm!r}. "
-            f"Supported: {sorted(ALL_ALGORITHMS)}."
-        ) from exc
+
+    name: str
+    family: str
+    supports: Callable[[Any], bool]
+    flags: dict[str, bool] = field(default_factory=dict)
+    auto_priority: int = _DEFAULT_AUTO_PRIORITY
+    auto_eligible: bool = True
+    unsupported_message: Callable[[Any], str] | None = None
+
+    def describe_unsupported(self, model: Any) -> str:
+        if self.unsupported_message is not None:
+            return self.unsupported_message(model)
+        return f"{type(model).__name__} does not support algorithm {self.name!r}."
 
 
 def _supports_block_ar(model: Any) -> bool:
@@ -133,70 +139,198 @@ def _supports_bd3lm(model: Any) -> bool:
     return callable(getattr(model, "_sample_block_diffusion", None))
 
 
+def _block_ar_unsupported(model: Any) -> str:
+    return (
+        f"{type(model).__name__} does not support block_ar "
+        f"(native canvas block diffusion, DiffusionGemma family); "
+        f"use algorithm='mdlm' or 'block_decode' for masked models."
+    )
+
+
+def _mdlm_unsupported(model: Any) -> str:
+    return (
+        f"{type(model).__name__} has no masked-diffusion sampling loop "
+        f"(no mask-token semantics); use algorithm='block_ar'."
+    )
+
+
+def _block_decode_unsupported(model: Any) -> str:
+    return (
+        f"{type(model).__name__} does not support block-decode "
+        f"(no usable KV-cache forward); use algorithm='mdlm'."
+    )
+
+
+def _bd3lm_unsupported(model: Any) -> str:
+    return (
+        f"{type(model).__name__} does not implement BD3LM "
+        f"(_sample_block_diffusion); supported on the TinyA2D family. "
+        f"Use algorithm='mdlm' or 'block_decode'."
+    )
+
+
+_ALGORITHMS: list[GenerationAlgorithm] = [
+    GenerationAlgorithm(
+        name="block_ar",
+        family="canvas",
+        supports=_supports_block_ar,
+        # No flags: the upstream GenerationConfig governs the loop entirely.
+        flags={},
+        auto_priority=10,
+        unsupported_message=_block_ar_unsupported,
+    ),
+    GenerationAlgorithm(
+        name="bd3lm",
+        family="masked_discrete",
+        supports=_supports_bd3lm,
+        flags={"use_cache": False, "use_block_diffusion": True},
+        auto_priority=20,
+        # Never chosen automatically — only via the bd3lm_requested opt-in.
+        auto_eligible=False,
+        unsupported_message=_bd3lm_unsupported,
+    ),
+    GenerationAlgorithm(
+        name="block_decode",
+        family="masked_discrete",
+        supports=_supports_block_decode,
+        flags={"use_cache": True, "use_block_diffusion": False},
+        auto_priority=30,
+        unsupported_message=_block_decode_unsupported,
+    ),
+    GenerationAlgorithm(
+        name="mdlm",
+        family="masked_discrete",
+        supports=_supports_mdlm,
+        flags={"use_cache": False, "use_block_diffusion": False},
+        auto_priority=40,
+        unsupported_message=_mdlm_unsupported,
+    ),
+]
+
+
+def iter_algorithms() -> tuple[GenerationAlgorithm, ...]:
+    """Every registered algorithm, in registration order."""
+    return tuple(_ALGORITHMS)
+
+
+def find_algorithm(name: str) -> GenerationAlgorithm | None:
+    """The registered algorithm called ``name``, or ``None``."""
+    for algorithm in _ALGORITHMS:
+        if algorithm.name == name:
+            return algorithm
+    return None
+
+
+def register_algorithm(algorithm: GenerationAlgorithm) -> None:
+    """Add an algorithm to the registry.
+
+    Raises:
+        ValueError: if the name is already taken.  Two algorithms sharing a name
+            would make selection depend on registration order.
+    """
+    if find_algorithm(algorithm.name) is not None:
+        raise ValueError(f"decoding algorithm {algorithm.name!r} is already registered")
+    _ALGORITHMS.append(algorithm)
+
+
+def _unregister_algorithm(algorithm: GenerationAlgorithm) -> None:
+    """Remove an algorithm.  Test/teardown helper, not a public API.
+
+    Removes by identity: ``GenerationAlgorithm`` is a frozen dataclass with value
+    equality, so removing by value could drop a different, equal-looking entry.
+    """
+    for index, existing in enumerate(_ALGORITHMS):
+        if existing is algorithm:
+            del _ALGORITHMS[index]
+            return
+
+
+def _algorithm_names() -> list[str]:
+    return sorted(a.name for a in _ALGORITHMS)
+
+
+def algorithm_to_flags(algorithm: str) -> dict[str, bool]:
+    """Return the generate() flag set for a named algorithm.
+
+    For discrete masked algorithms (mdlm / block_decode / bd3lm) this returns the
+    ``use_cache`` / ``use_block_diffusion`` flags that the model's generate dispatch
+    understands.
+
+    For ``block_ar`` (DiffusionGemma canvas block diffusion) this returns ``{}`` —
+    no flags are injected because the upstream ``GenerationConfig`` governs the loop
+    entirely; Unturtle only selects the algorithm, it does not override the config.
+    A copy is returned so a caller merging it into kwargs cannot corrupt the registry.
+    """
+    entry = find_algorithm(algorithm)
+    if entry is None:
+        raise ValueError(
+            f"Unknown decoding algorithm {algorithm!r}. "
+            f"Supported: {_algorithm_names()}."
+        )
+    return dict(entry.flags)
+
+
 def resolve_algorithm(algorithm: str, model: Any, *, bd3lm_requested: bool) -> str:
     """Resolve ``algorithm`` to a concrete algorithm name.
 
-    ``auto`` picks the fastest path the model supports:
+    ``auto`` picks the fastest path the model supports, by ``auto_priority``:
       - ``block_ar`` first, when the model is a DiffusionGemma-family canvas model
         (implements ``_denoising_step``); this takes priority over masked algorithms.
       - Else BD3LM if requested (and the model implements ``_sample_block_diffusion``),
       - else block-decode (Fast-dLLM) when the model supports the cache hook,
       - else plain MDLM.
 
-    Explicit algorithm names are capability-checked:
-      - ``"block_ar"`` requires ``_supports_block_ar(model)`` (DiffusionGemma family);
-        raises ``ValueError`` mentioning "block_ar" otherwise.
-      - ``"mdlm"`` requires ``_supports_mdlm(model)`` (masked-diffusion loop); raises
-        ``ValueError`` mentioning "masked" when called on a canvas-block model.
-      - ``"block_decode"`` requires ``_supports_block_decode(model)``.
-      - ``"bd3lm"`` (explicit or via auto + bd3lm_requested) requires
-        ``_supports_bd3lm(model)``; BD3LM is implemented on the TinyA2D family today.
+    Explicit algorithm names are capability-checked, each with a message naming the
+    missing hook and a workable alternative.  An explicitly requested algorithm never
+    silently falls back — including ``bd3lm_requested`` under ``auto``.
     """
     if algorithm == "auto":
-        if _supports_block_ar(model):
-            return "block_ar"
+        canvas = find_algorithm("block_ar")
+        if canvas is not None and canvas.supports(model):
+            return canvas.name
+
         if bd3lm_requested:
-            if not _supports_bd3lm(model):
-                raise ValueError(
-                    f"{type(model).__name__} does not implement BD3LM "
-                    f"(_sample_block_diffusion); supported on the TinyA2D family. "
-                    f"Use algorithm='mdlm' or 'block_decode'."
-                )
-            return "bd3lm"
-        if _supports_block_decode(model):
-            return "block_decode"
-        if _supports_mdlm(model):
-            return "mdlm"
+            # Requested explicitly, so an incapable model is an error rather
+            # than a reason to quietly pick something else.
+            bd3lm = find_algorithm("bd3lm")
+            if bd3lm is None or not bd3lm.supports(model):
+                raise ValueError(_bd3lm_unsupported(model))
+            return bd3lm.name
+
+        for entry in sorted(_ALGORITHMS, key=lambda a: a.auto_priority):
+            if entry.auto_eligible and entry.supports(model):
+                return entry.name
+
         raise ValueError(
             f"{type(model).__name__} does not implement any known decoding algorithm "
             "(no _denoising_step, _model_forward_with_cache, or _sample). "
             "Ensure the model is a supported dLLM backbone."
         )
-    if algorithm not in ALL_ALGORITHMS:
+
+    entry = find_algorithm(algorithm)
+    if entry is None:
         raise ValueError(
             f"Unknown decoding algorithm {algorithm!r}. "
-            f"Supported: {sorted(ALL_ALGORITHMS)} (or 'auto')."
+            f"Supported: {_algorithm_names()} (or 'auto')."
         )
-    if algorithm == "block_ar" and not _supports_block_ar(model):
-        raise ValueError(
-            f"{type(model).__name__} does not support block_ar "
-            f"(native canvas block diffusion, DiffusionGemma family); "
-            f"use algorithm='mdlm' or 'block_decode' for masked models."
-        )
-    if algorithm == "mdlm" and not _supports_mdlm(model):
-        raise ValueError(
-            f"{type(model).__name__} has no masked-diffusion sampling loop "
-            f"(no mask-token semantics); use algorithm='block_ar'."
-        )
-    if algorithm == "block_decode" and not _supports_block_decode(model):
-        raise ValueError(
-            f"{type(model).__name__} does not support block-decode "
-            f"(no usable KV-cache forward); use algorithm='mdlm'."
-        )
-    if algorithm == "bd3lm" and not _supports_bd3lm(model):
-        raise ValueError(
-            f"{type(model).__name__} does not implement BD3LM "
-            f"(_sample_block_diffusion); supported on the TinyA2D family. "
-            f"Use algorithm='mdlm' or 'block_decode'."
-        )
-    return algorithm
+    if not entry.supports(model):
+        raise ValueError(entry.describe_unsupported(model))
+    return entry.name
+
+
+def __getattr__(name: str) -> dict[str, dict[str, bool]]:
+    """Derive the historical algorithm tables from the registry.
+
+    ``DISCRETE_ALGORITHMS`` / ``CANVAS_ALGORITHMS`` / ``ALL_ALGORITHMS`` were
+    module-level dicts.  Nothing outside this module reads them, but computing
+    them on demand keeps them from becoming a stale second source of truth.
+    """
+    if name == "ALL_ALGORITHMS":
+        return {a.name: dict(a.flags) for a in _ALGORITHMS}
+    if name == "DISCRETE_ALGORITHMS":
+        return {
+            a.name: dict(a.flags) for a in _ALGORITHMS if a.family == "masked_discrete"
+        }
+    if name == "CANVAS_ALGORITHMS":
+        return {a.name: dict(a.flags) for a in _ALGORITHMS if a.family == "canvas"}
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
