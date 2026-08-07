@@ -297,7 +297,16 @@ def main() -> None:
         f"of {args.trials} trials  (range {min(deltas):+.2%} .. {max(deltas):+.2%})"
     )
     print(f"device path slower in {slower}/{args.trials} trials")
-    if slower not in (0, args.trials):
+    if args.trials < 3:
+        # With one trial `slower` is trivially 0 or 1 == trials, so the
+        # consistency check below can never fire and the median prints as if
+        # it meant something.  Say so rather than looking confident.
+        print(
+            f"  -> {args.trials} trial(s) cannot establish a sign at all. The "
+            "effect here is ~1%, smaller than trial-to-trial drift; use "
+            "--trials 5 or more before reading anything into the median."
+        )
+    elif slower not in (0, args.trials):
         print(
             "  -> sign is NOT consistent across trials: treat this as "
             "'no measurable difference', not as a regression."
