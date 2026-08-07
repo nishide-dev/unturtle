@@ -66,6 +66,13 @@ class AlphaSchedule(Protocol):
     ``alpha`` receives the full ``[B]`` timestep tensor in one call and must
     return a scalar or a matching ``[B]`` result — a shorter tensor would
     broadcast one row's masking rate across the batch, so it is rejected.
+
+    ``alpha(t)`` is expected to lie in ``[0, 1]``.  The masked process computes
+    ``p_mask = 1 - alpha(t)`` *without clamping*, matching the legacy collator,
+    so an out-of-range schedule silently changes the objective rather than
+    raising.  Note this deliberately bypasses ``BaseAlphaScheduler.masking_prob()``,
+    which does clamp — switching to it would look like a harmless cleanup and
+    would break bit-exact parity for any out-of-range schedule.
     """
 
     def alpha(self, t: torch.Tensor) -> torch.Tensor | float: ...

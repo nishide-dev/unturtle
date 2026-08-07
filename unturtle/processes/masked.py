@@ -95,11 +95,17 @@ class MaskedDiffusionProcess:
 
         Returns:
             A :class:`~.base.ProcessOutput` whose ``model_inputs`` carry the
-            noised ``input_ids`` plus every unrelated field, and whose
-            ``objective_inputs`` carry ``labels``, ``diffusion_mask``, and
-            ``timesteps``.
+            noised ``input_ids`` plus every field the process does not own
+            (see ``_SUPERVISION_KEYS``), and whose ``objective_inputs`` carry
+            ``labels``, ``diffusion_mask``, and ``timesteps``.  A batch that
+            already holds supervision keys has them rebuilt, not passed
+            through.
 
-        The input batch and its tensors are never mutated.
+        The input batch and its tensors are never mutated.  Note that
+        pass-through values are the *same* tensor objects, not copies —
+        only process-owned fields are freshly allocated — so a consumer that
+        mutates e.g. ``model_inputs["attention_mask"]`` in place writes
+        through to the caller's batch.
         """
         input_ids: torch.Tensor = batch["input_ids"]
         B, L = input_ids.shape

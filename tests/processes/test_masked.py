@@ -380,6 +380,53 @@ class TestSchedulerNormalization:
         eligible = batch["labels"] != -100
         assert torch.equal(out.objective_inputs["diffusion_mask"], eligible)
 
+    def test_per_row_schedule_applies_per_row_rates(self):
+        """Each row must get its OWN alpha, not row 0's broadcast over the batch.
+
+        Every other schedule here is uniform across rows, so a `[1]`-shaped or
+        otherwise collapsed alpha would go unnoticed.  Real schedules are
+        per-row functions of `t`, which makes this the failure mode that
+        actually ships: the loss still falls while the batch trains at one
+        row's masking rate.
+        """
+
+        class PerRow:
+            """alpha = [1, 0, ...] → row 0 fully clean, row 1 fully masked."""
+
+            def alpha(self, t):
+                out = torch.zeros_like(t)
+                out[0] = 1.0
+                return out
+
+        batch = make_batch()
+        out = make_process(scheduler=PerRow(), completion_only=False)(batch)
+
+        mask = out.objective_inputs["diffusion_mask"]
+        attended = batch["attention_mask"].bool()
+
+        assert not mask[0].any(), "row 0 (alpha=1) must be untouched"
+        assert torch.equal(mask[1], attended[1]), "row 1 (alpha=0) must be masked"
+
+    def test_scalar_schedule_applies_to_every_row(self):
+        """A 0-dim alpha must produce a full [B, L] mask.
+
+        This pins the output shape, not the `expand(B)` call: a scalar carries
+        a single rate, so `expand(B)` and a bare `[1]` broadcast identically
+        against `p_mask[:, None]` and no behavioral test can separate them.
+        The shape guard above is what matters for real (per-row) schedules.
+        """
+
+        class ScalarMaskAll:
+            def alpha(self, t):
+                return torch.tensor(0.0)
+
+        batch = make_batch()
+        out = make_process(scheduler=ScalarMaskAll(), completion_only=False)(batch)
+
+        mask = out.objective_inputs["diffusion_mask"]
+        assert mask.shape == batch["input_ids"].shape
+        assert torch.equal(mask, batch["attention_mask"].bool())
+
 
 # ---------------------------------------------------------------------------
 # J. Validation
@@ -413,6 +460,19 @@ class TestDtypeDevice:
         assert out.objective_inputs["labels"].dtype == torch.long
         assert out.objective_inputs["diffusion_mask"].dtype == torch.bool
         assert out.objective_inputs["timesteps"].is_floating_point()
+
+    def test_batch_size_one(self):
+        # B=1 is the shape-guard boundary: a [1] alpha is simultaneously
+        # "wrong-length" for a larger batch and correct here.
+        batch = {
+            "input_ids": torch.tensor([[5, 6, 7, 8]], dtype=torch.long),
+            "attention_mask": torch.ones(1, 4, dtype=torch.long),
+        }
+        out = make_process(scheduler=MaskAll(), completion_only=False)(batch)
+
+        assert out.objective_inputs["diffusion_mask"].shape == (1, 4)
+        assert out.objective_inputs["timesteps"].shape == (1,)
+        assert (out.model_inputs["input_ids"] == MASK_ID).all()
 
     def test_outputs_on_input_device(self):
         batch = make_batch()
