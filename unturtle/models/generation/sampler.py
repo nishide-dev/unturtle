@@ -64,6 +64,20 @@ from typing import Any, Callable, Mapping
 _DEFAULT_AUTO_PRIORITY = 1000
 
 
+@dataclass
+class GenerationRequest:
+    """One generation call, in the shape every runner receives.
+
+    Deliberately not a config schema: #69 rules out merging every
+    family-specific generation config into one.  This carries the call, and
+    each family keeps interpreting ``generation_config``/``kwargs`` its own way.
+    """
+
+    inputs: Any = None
+    generation_config: Any = None
+    kwargs: dict[str, Any] = field(default_factory=dict)
+
+
 @dataclass(frozen=True)
 class GenerationAlgorithm:
     """One decoding algorithm's selection metadata.
@@ -85,6 +99,12 @@ class GenerationAlgorithm:
         unsupported_message: ``(model) -> str`` for the explicit-selection error.
                              Per-algorithm because each names its missing hook and
                              a concrete alternative.
+        runner:              ``(model, request) -> output``.  Executes the
+                             algorithm.  Each masked runner calls its own sampling
+                             loop directly rather than round-tripping the choice
+                             through ``use_cache``/``use_block_diffusion``
+                             booleans, which is what lets a family with no
+                             corresponding boolean exist at all.
     """
 
     name: str
@@ -94,6 +114,7 @@ class GenerationAlgorithm:
     auto_priority: int = _DEFAULT_AUTO_PRIORITY
     auto_eligible: bool = True
     unsupported_message: Callable[[Any], str] | None = None
+    runner: Callable[[Any, GenerationRequest], Any] | None = None
 
     def __post_init__(self) -> None:
         # `frozen=True` blocks rebinding the field, not mutating the dict it
@@ -177,6 +198,45 @@ def _bd3lm_unsupported(model: Any) -> str:
     )
 
 
+def _run_mdlm(model: Any, request: GenerationRequest) -> Any:
+    return model._sample(
+        request.inputs,
+        generation_config=request.generation_config,
+        **request.kwargs,
+    )
+
+
+def _run_block_decode(model: Any, request: GenerationRequest) -> Any:
+    return model._sample_with_cache(
+        request.inputs,
+        generation_config=request.generation_config,
+        **request.kwargs,
+    )
+
+
+def _run_bd3lm(model: Any, request: GenerationRequest) -> Any:
+    return model._sample_block_diffusion(
+        request.inputs,
+        generation_config=request.generation_config,
+        **request.kwargs,
+    )
+
+
+def _run_block_ar(model: Any, request: GenerationRequest) -> Any:
+    """Delegate to the model's own (upstream) generate.
+
+    The canvas family's loop belongs to upstream `transformers`; Unturtle only
+    selects it.  Calling `generate` here is safe because the DiffusionGemma
+    shim resolves the algorithm and then calls `super().generate` — it does not
+    re-enter dispatch.
+    """
+    return model.generate(
+        request.inputs,
+        generation_config=request.generation_config,
+        **request.kwargs,
+    )
+
+
 _ALGORITHMS: list[GenerationAlgorithm] = [
     GenerationAlgorithm(
         name="block_ar",
@@ -191,6 +251,7 @@ _ALGORITHMS: list[GenerationAlgorithm] = [
         # on the assumption this number covers it.
         auto_priority=10,
         unsupported_message=_block_ar_unsupported,
+        runner=_run_block_ar,
     ),
     GenerationAlgorithm(
         name="bd3lm",
@@ -203,6 +264,7 @@ _ALGORITHMS: list[GenerationAlgorithm] = [
         # Never chosen automatically — only via the bd3lm_requested opt-in.
         auto_eligible=False,
         unsupported_message=_bd3lm_unsupported,
+        runner=_run_bd3lm,
     ),
     GenerationAlgorithm(
         name="block_decode",
@@ -211,6 +273,7 @@ _ALGORITHMS: list[GenerationAlgorithm] = [
         flags={"use_cache": True, "use_block_diffusion": False},
         auto_priority=30,
         unsupported_message=_block_decode_unsupported,
+        runner=_run_block_decode,
     ),
     GenerationAlgorithm(
         name="mdlm",
@@ -219,6 +282,7 @@ _ALGORITHMS: list[GenerationAlgorithm] = [
         flags={"use_cache": False, "use_block_diffusion": False},
         auto_priority=40,
         unsupported_message=_mdlm_unsupported,
+        runner=_run_mdlm,
     ),
 ]
 
@@ -331,6 +395,38 @@ def resolve_algorithm(algorithm: str, model: Any, *, bd3lm_requested: bool) -> s
     if not entry.supports(model):
         raise ValueError(entry.describe_unsupported(model))
     return entry.name
+
+
+def dispatch_generation(
+    model: Any,
+    request: GenerationRequest,
+    algorithm: str = "auto",
+    *,
+    bd3lm_requested: bool = False,
+) -> Any:
+    """Resolve ``algorithm`` for ``model`` and run it.
+
+    Selection is capability-checked first, so an unsupported explicit choice
+    raises before any sampling loop starts — never mid-generation, and never
+    by silently falling back.
+
+    Each algorithm's runner calls its own loop directly.  The choice does not
+    round-trip through ``use_cache`` / ``use_block_diffusion``, which is what
+    lets a family with no corresponding boolean (discrete flow, continuous)
+    register a runner at all.
+
+    Raises:
+        ValueError: unknown algorithm, unsupported algorithm, or a registered
+            algorithm with no runner.
+    """
+    resolved = resolve_algorithm(algorithm, model, bd3lm_requested=bd3lm_requested)
+    entry = find_algorithm(resolved)
+    if entry is None or entry.runner is None:
+        raise ValueError(
+            f"decoding algorithm {resolved!r} has no runner; register one via "
+            "GenerationAlgorithm(runner=...)."
+        )
+    return entry.runner(model, request)
 
 
 def __getattr__(name: str) -> dict[str, dict[str, bool]]:
