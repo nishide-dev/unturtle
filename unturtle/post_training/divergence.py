@@ -92,6 +92,15 @@ def teacher_student_divergence(
                            ``None`` (default) uses the full vocabulary.
                            Values ``>= V`` are clamped and then agree exactly
                            with the dense path.
+
+                           Pass ``None`` to disable, **not** ``0``.  The
+                           reference config spells "full vocabulary" as
+                           ``top_k_logits: 0``, so a caller forwarding that
+                           value unchanged gets a ``ValueError`` rather than
+                           silently different behavior.  Converting the config
+                           sentinel is the trainer's job — doing it here would
+                           make ``0`` and ``None`` synonyms while ``-1``
+                           raises, which reads as a bug.
         reverse_kl_weight: Blend weight ``w`` for the reverse direction:
                            ``(1-w) * KL(teacher||student) + w * KL(student||teacher)``.
                            Ignored for JSD.
