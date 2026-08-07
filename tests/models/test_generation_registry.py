@@ -138,7 +138,7 @@ class TestAutoSelection:
     def test_model_with_no_hooks_raises(self):
         from unturtle.models.generation.sampler import resolve_algorithm
 
-        with pytest.raises(ValueError, match="does not implement"):
+        with pytest.raises(ValueError, match="registered decoding"):
             resolve_algorithm("auto", _Bare(), bd3lm_requested=False)
 
 

@@ -270,5 +270,7 @@ def test_resolve_auto_block_ar_takes_priority_over_bd3lm_requested() -> None:
 def test_resolve_auto_no_capability_raises() -> None:
     class _NoAlgorithms: ...
 
-    with pytest.raises(ValueError, match="known decoding algorithm"):
+    # Message is now derived from the registry (#69 PR C) rather than naming
+    # the three masked hooks, so it enumerates the registered algorithms.
+    with pytest.raises(ValueError, match="registered decoding"):
         resolve_algorithm("auto", _NoAlgorithms(), bd3lm_requested=False)
