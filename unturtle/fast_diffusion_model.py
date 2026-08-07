@@ -1354,6 +1354,14 @@ class FastDiffusionModel:
         # Resolved through the registry rather than a module-level reference so
         # that tests monkeypatching `_patch_*_peft` by name still take effect.
         patcher = integration.peft_patcher
+        if patcher is None:
+            # Unreachable today (all patchers live in this module), but a
+            # patcher behind an optional dependency would resolve to None;
+            # report that as unsupported rather than dying on a TypeError.
+            raise NotImplementedError(
+                f"FastDiffusionModel cannot PEFT-patch model_type={model_type!r}: "
+                f"the {integration.name!r} patcher could not be imported."
+            )
         counts = patcher(model, lora_dropout, bias)
         if integration.peft_report is not None:
             _warn_once(integration.peft_report(model, counts))

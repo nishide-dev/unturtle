@@ -102,34 +102,41 @@ class TestReportedCounts:
         return model
 
     @pytest.mark.parametrize(
-        ("model_type", "expected_fragment"),
+        ("model_type", "expected_fragment", "expected_counts"),
         [
-            ("tiny-a2d-llama", "3 layers"),
-            ("dream", "Dream"),
-            ("modernbert-diffusion", "ModernBERT"),
+            # "3 layers" would NOT discriminate — every family renders it.
+            # Each fragment below appears in exactly one report.
+            ("tiny-a2d-llama", "(bidirectional, causal=False)", "1 QKV layers"),
+            ("dream", "(Dream)", "4 QKV layers (bias kernel)"),
+            ("modernbert-diffusion", "(ModernBERT)", "8 Wo (output proj)"),
         ],
     )
-    def test_report_mentions_the_family_and_count(
-        self, model_type, expected_fragment, monkeypatch
+    def test_report_identifies_the_family_and_its_own_counts(
+        self, model_type, expected_fragment, expected_counts, monkeypatch
     ):
-        """The per-family log line survives the move behind the registry."""
+        """The per-family log line survives the move behind the registry.
+
+        Each patcher returns a *distinct* tuple: identical stubs would make
+        the patcher-to-family wiring unobservable, so mis-pointing an
+        integration at another family's patcher would go unnoticed.
+        """
         from unturtle import fast_diffusion_model as fdm
 
         messages = []
         monkeypatch.setattr(fdm, "_warn_once", lambda msg: messages.append(msg))
         # Patchers touch real module internals; stub them out — this test is
         # about dispatch and reporting, not about kernel injection.
-        for name in (
-            "_patch_a2d_peft",
-            "_patch_dream_peft",
-            "_patch_modernbert_peft",
-        ):
-            monkeypatch.setattr(fdm, name, lambda m, d, b: (1, 2, 3))
+        monkeypatch.setattr(fdm, "_patch_a2d_peft", lambda m, d, b: (1, 2, 3))
+        monkeypatch.setattr(fdm, "_patch_dream_peft", lambda m, d, b: (4, 5, 6))
+        monkeypatch.setattr(fdm, "_patch_modernbert_peft", lambda m, d, b: (7, 8, 9))
 
         fdm.FastDiffusionModel.patch_peft_model(self._peft_like(model_type))
 
         assert messages, "dispatch reported nothing"
-        assert expected_fragment in messages[0]
+        assert expected_fragment in messages[0], messages[0]
+        assert expected_counts in messages[0], (
+            f"counts came from the wrong patcher: {messages[0]}"
+        )
 
     def test_llada_counts_blocks_not_layers(self):
         """LLaDA's hierarchy is transformer.blocks, not model.layers."""
