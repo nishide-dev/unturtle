@@ -876,7 +876,9 @@ class MaskedDiffusionGenerationMixin:
             token-ID tensor directly.
         """
         from unturtle.models.generation.sampler import (
+            GenerationRequest,
             algorithm_to_flags,
+            dispatch_generation,
             resolve_algorithm,
         )
 
@@ -920,10 +922,20 @@ class MaskedDiffusionGenerationMixin:
             attention_mask=attention_mask,
         )
 
-        return self._sample(
-            input_ids,
-            attention_mask=attention_mask,
-            generation_config=generation_config,
+        # Run through the strategy registry (#69) rather than calling `_sample`
+        # and letting it re-derive the choice from `use_cache` /
+        # `use_block_diffusion`.  `resolved` is passed explicitly so the
+        # algorithm decided above is the one that executes; the flags above
+        # remain for callers who set those config fields directly.
+        return dispatch_generation(
+            self,
+            GenerationRequest(
+                inputs=input_ids,
+                generation_config=generation_config,
+                kwargs={"attention_mask": attention_mask},
+            ),
+            algorithm=resolved,
+            bd3lm_requested=bd3lm_requested,
         )
 
     def _sample(
