@@ -162,6 +162,39 @@ class TestSourceDistributions:
             "without the source state"
         )
 
+    def test_uniform_source_may_coincide_with_the_target(self):
+        """The source is plain uniform — it does NOT exclude the target token.
+
+        With probability ~1/V a "corrupted" position draws exactly its own
+        clean token, so `x_t == x_0 == x_1`.  That is the paper's forward
+        process: §B.3 describes "a uniform source over tokens", full stop.
+        Exclusion appears only in the *sampler*, where a jump resamples "from
+        the off-diagonals ... renormalized to exclude the current token"
+        (Appendix B.1) — a different mechanism at a different stage.
+
+        Pinned because de-duplicating the source looks like an obvious
+        improvement and would change the process the objective trains against.
+        """
+        from unturtle.processes import DiscreteFlowProcess
+
+        small_vocab = 4
+        process = DiscreteFlowProcess(
+            vocab_size=small_vocab, mask_token_id=MASK_ID, source="uniform"
+        )
+        batch = {
+            "input_ids": torch.randint(0, small_vocab, (16, 64)),
+            "attention_mask": torch.ones(16, 64, dtype=torch.long),
+        }
+
+        out = process(batch, timesteps=torch.zeros(16))  # t=0: pure source
+
+        collided = out.objective_inputs["source_ids"] == out.objective_inputs["labels"]
+        assert bool(collided.any()), (
+            "with V=4 over 1024 positions the source should coincide with the "
+            "target somewhere; if it never does, the source is excluding the "
+            "target and no longer matches the paper"
+        )
+
     def test_unknown_source_is_rejected(self):
         with pytest.raises(ValueError, match="source"):
             _process(source="gaussian")
@@ -265,6 +298,32 @@ class TestProcessContract:
         assert timesteps.shape == (16,)
         assert bool(((timesteps >= 0.0) & (timesteps <= 1.0)).all())
         assert int(timesteps.unique().numel()) > 1, "every row drew the same t"
+
+    def test_explicit_per_position_timesteps_are_honored(self):
+        """The `[B, L]` branch, which packed batches take.
+
+        Only reached implicitly via `segment_ids` otherwise, so a broadcasting
+        bug there would show up as a subtly wrong path rather than an error.
+        Left half at t=0 (all source), right half at t=1 (all target).
+        """
+        batch = _batch(batch_size=2, seq_len=16)
+        t = torch.zeros(2, 16)
+        t[:, 8:] = 1.0
+
+        out = _process()(batch, timesteps=t)
+
+        x_t = out.model_inputs["input_ids"]
+        x_0 = out.objective_inputs["source_ids"]
+        x_1 = out.objective_inputs["labels"]
+
+        assert torch.equal(x_t[:, :8], x_0[:, :8]), "t=0 half should be all source"
+        assert torch.equal(x_t[:, 8:], x_1[:, 8:]), "t=1 half should be all target"
+
+    def test_mismatched_timestep_shape_is_rejected(self):
+        batch = _batch(batch_size=2, seq_len=8)
+
+        with pytest.raises(ValueError, match="timesteps"):
+            _process()(batch, timesteps=torch.zeros(2, 7))
 
     def test_pass_through_fields_reach_the_model(self):
         batch = _batch()
