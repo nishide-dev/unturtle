@@ -42,6 +42,7 @@ import torch
 from unturtle.kernels.masked_diffusion_loss import fast_masked_diffusion_loss
 
 from .block_attention import create_block_diffusion_attention_mask
+from .block_diffusion_collator import BlockDiffusionDataCollator
 from .trainer import DiffusionTrainer, DiffusionTrainingArguments
 
 
@@ -122,6 +123,31 @@ class BlockDiffusionTrainer(DiffusionTrainer):
         self._block_size: int = getattr(args, "block_size", 32)
 
         super().__init__(*pargs, **kwargs)
+
+    def _build_default_collator(
+        self,
+        tokenizer: Any,
+        mask_token_id: int | None,
+        completion_only: bool,
+    ) -> BlockDiffusionDataCollator:
+        """Inject a block-aware collator rather than the plain masked one.
+
+        BD3LM needs every sequence padded to a ``block_size`` multiple with
+        EOS (real, maskable tokens).  A plain collator pads with pad tokens,
+        ``attention_mask=0`` and ``-100`` labels, so those positions become
+        unmaskable — and when the batch length already happens to be a
+        multiple of ``block_size`` the divisibility check in ``compute_loss``
+        passes and the objective changes with no error.
+        """
+        return BlockDiffusionDataCollator(
+            tokenizer=tokenizer,
+            scheduler=self._alpha_scheduler,
+            mask_token_id=mask_token_id,
+            time_epsilon=self._time_epsilon,
+            completion_only=completion_only,
+            block_size=self._block_size,
+            noise=False,
+        )
 
     # ------------------------------------------------------------------ #
     #  Loss computation                                                   #

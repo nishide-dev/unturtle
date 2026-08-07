@@ -325,13 +325,10 @@ class DiffusionTrainer(UnturtleTrainer):
         if ("data_collator" not in kwargs or kwargs["data_collator"] is None) and (
             tokenizer is not None
         ):
-            kwargs["data_collator"] = MaskedDiffusionDataCollator(
+            kwargs["data_collator"] = self._build_default_collator(
                 tokenizer=tokenizer,
-                scheduler=self._alpha_scheduler,
                 mask_token_id=mask_token_id,
-                time_epsilon=self._time_epsilon,
                 completion_only=completion_only,
-                noise=False,
             )
 
         super().__init__(*pargs, **kwargs)
@@ -455,6 +452,28 @@ class DiffusionTrainer(UnturtleTrainer):
     # ------------------------------------------------------------------ #
     #  Private helpers                                                    #
     # ------------------------------------------------------------------ #
+
+    def _build_default_collator(
+        self,
+        tokenizer: Any,
+        mask_token_id: int | None,
+        completion_only: bool,
+    ) -> MaskedDiffusionDataCollator:
+        """Build the collator injected when the caller supplies none.
+
+        Overridden by subclasses whose objective needs different collation —
+        BD3LM, for instance, must pad to a ``block_size`` multiple with EOS,
+        and a plain collator's pad-token/``-100`` padding would silently
+        change which positions are maskable.
+        """
+        return MaskedDiffusionDataCollator(
+            tokenizer=tokenizer,
+            scheduler=self._alpha_scheduler,
+            mask_token_id=mask_token_id,
+            time_epsilon=self._time_epsilon,
+            completion_only=completion_only,
+            noise=False,
+        )
 
     def _apply_forward_process(
         self, inputs: dict[str, torch.Tensor | Any]
@@ -606,6 +625,7 @@ class DiffusionTrainer(UnturtleTrainer):
             time_epsilon=self._time_epsilon,
             completion_only=getattr(self.args, "completion_only", True),
             metric_key_prefix=metric_key_prefix,
+            cart_p=self._cart_p,
             **kwargs,
         )
 

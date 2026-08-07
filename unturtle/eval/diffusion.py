@@ -58,12 +58,14 @@ class MaskedDiffusionEvaluator(BaseEvaluator):
         completion_only: bool = True,
         metric_key_prefix: str = "eval",
         device: torch.device | str | None = None,
+        cart_p: float = 0.8,
     ) -> None:
         super().__init__(model=model, tokenizer=tokenizer, device=device)
         if isinstance(alpha_scheduler, str):
             alpha_scheduler = make_alpha_scheduler(alpha_scheduler)
         self.alpha_scheduler = alpha_scheduler or LinearAlphaScheduler()
         self.loss_weight_type = loss_weight_type
+        self.cart_p = cart_p
         self.time_epsilon = time_epsilon
         self.completion_only = completion_only
         self.metric_key_prefix = metric_key_prefix
@@ -129,6 +131,8 @@ class MaskedDiffusionEvaluator(BaseEvaluator):
         self,
         timesteps: torch.Tensor,
         logits: torch.Tensor,
+        diffusion_mask: torch.Tensor | None = None,
+        attention_mask: torch.Tensor | None = None,
     ) -> torch.Tensor | None:
         if self.loss_weight_type == "uniform":
             return None
@@ -145,9 +149,32 @@ class MaskedDiffusionEvaluator(BaseEvaluator):
                 weights = torch.tensor(weights, device=device)
             return weights.to(device)
 
+        if self.loss_weight_type == "cart":
+            # `cart` is a valid DiffusionTrainingArguments value and
+            # `DiffusionTrainer.build_diffusion_evaluator` forwards it here, so
+            # evaluating a CART-trained model must not crash.  Reuse the
+            # trainer's implementation rather than duplicating the geometric
+            # reweighting.
+            if diffusion_mask is None:
+                raise ValueError(
+                    "loss_weight_type='cart' needs the diffusion mask; this "
+                    "evaluator was called without one."
+                )
+            from unturtle.diffusion.reweighting import context_adaptive_reweight
+
+            _, L = diffusion_mask.shape
+            weight_matrix = context_adaptive_reweight(L, cart_p=self.cart_p).to(device)
+            clean_mask = ~diffusion_mask
+            if attention_mask is not None:
+                clean_mask = clean_mask & attention_mask.to(
+                    device=clean_mask.device, dtype=torch.bool
+                )
+            weight = clean_mask.float().matmul(weight_matrix)
+            return weight.masked_fill(~diffusion_mask, 0.0)
+
         raise ValueError(
             f"Unknown loss_weight_type '{self.loss_weight_type}'. "
-            "Choose from: 'uniform', 'timestep', 'scheduler'."
+            "Choose from: 'uniform', 'timestep', 'scheduler', 'cart'."
         )
 
     def evaluate(
@@ -179,9 +206,17 @@ class MaskedDiffusionEvaluator(BaseEvaluator):
                 diffusion_mask: torch.Tensor = batch.pop("diffusion_mask")
                 timesteps: torch.Tensor = batch.pop("timesteps")
 
+                # Read-only; the model forward consumes it too.
+                attention_mask = batch.get("attention_mask")
+
                 outputs = self.model(**batch)
                 logits: torch.Tensor = outputs.logits
-                loss_weights = self._build_loss_weights(timesteps, logits)
+                loss_weights = self._build_loss_weights(
+                    timesteps,
+                    logits,
+                    diffusion_mask=diffusion_mask,
+                    attention_mask=attention_mask,
+                )
                 loss = fast_masked_diffusion_loss(
                     logits=logits,
                     labels=labels,

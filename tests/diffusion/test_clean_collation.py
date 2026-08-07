@@ -49,9 +49,16 @@ def _real_tokenizer():
         unk_token="[UNK]",
         mask_token="[MASK]",
         pad_token="[PAD]",
+        eos_token="[EOS]",
     )
     tokenizer.add_special_tokens(
-        {"unk_token": "[UNK]", "mask_token": "[MASK]", "pad_token": "[PAD]"}
+        {
+            "unk_token": "[UNK]",
+            "mask_token": "[MASK]",
+            "pad_token": "[PAD]",
+            # BlockDiffusionDataCollator pads to a block_size multiple with EOS.
+            "eos_token": "[EOS]",
+        }
     )
     return tokenizer
 
@@ -231,19 +238,37 @@ class TestTrainerProcessIntegration:
         assert loss.item() >= 0.0
 
     def test_compute_loss_does_not_renoise_an_already_noised_batch(self, tmp_path):
-        """Packed/legacy collators still noise; the trainer must not do it twice."""
-        trainer, model, _ = _make_trainer(tmp_path)
-        noised = _make_collator()(_samples())
+        """Packed/legacy collators still noise; the trainer must not do it twice.
 
-        before = noised["input_ids"].clone()
-        mask_before = noised["diffusion_mask"].clone()
-        inputs = dict(noised)
-        loss = trainer.compute_loss(model, inputs)
+        Asserted on what the model actually received, not on the input dict:
+        the process is contractually non-mutating, so a double-noise would
+        land in its returned dict and leave the caller's copy pristine — an
+        input-dict assertion here would pass even with the guard removed.
+        """
+        trainer, model, _ = _make_trainer(tmp_path)
+        # A schedule that masks everything makes a second pass unmistakable:
+        # it would overwrite the surviving clean tokens with mask ids.
+        noised = _make_collator()(_samples())
+        expected_ids = noised["input_ids"].clone()
+
+        captured = {}
+        original_forward = model.forward
+
+        def capture(*args, **kwargs):
+            captured["input_ids"] = kwargs.get("input_ids")
+            return original_forward(*args, **kwargs)
+
+        model.forward = capture
+        try:
+            loss = trainer.compute_loss(model, dict(noised))
+        finally:
+            model.forward = original_forward
 
         assert torch.isfinite(loss)
-        # The pre-noised ids must have been used as-is, not corrupted again.
-        assert torch.equal(noised["input_ids"], before)
-        assert torch.equal(noised["diffusion_mask"], mask_before)
+        assert torch.equal(captured["input_ids"], expected_ids), (
+            "the model saw re-corrupted ids: the pre-noised batch must pass "
+            "through the process untouched"
+        )
 
     def test_process_honors_completion_only_from_args(self, tmp_path):
         trainer, _, _ = _make_trainer(tmp_path, completion_only=False)
@@ -348,6 +373,26 @@ class TestBlockDiffusionProcessIntegration:
             **kwargs,
         )
 
+    def test_default_collator_is_block_aware(self, tmp_path):
+        """A BD3LM trainer must not silently inject a plain collator.
+
+        The two pad differently — the block collator appends EOS with
+        attention_mask=1 and EOS labels (maskable), the plain one appends
+        pad tokens with attention_mask=0 and -100 (not maskable).  When the
+        batch length happens to be a block_size multiple the length guard
+        passes and the objective changes silently.
+        """
+        from unturtle.diffusion.block_diffusion_collator import (
+            BlockDiffusionDataCollator,
+        )
+
+        tokenizer = _real_tokenizer()
+        tokenizer.name_or_path = "local"
+        trainer = self._trainer(tmp_path, tokenizer, _tiny_model())
+
+        assert isinstance(trainer.data_collator, BlockDiffusionDataCollator)
+        assert trainer.data_collator.block_size == 4
+
     def test_compute_loss_on_a_clean_batch(self, tmp_path):
         tokenizer = _real_tokenizer()
         tokenizer.name_or_path = "local"
@@ -367,6 +412,50 @@ class TestBlockDiffusionProcessIntegration:
 
         assert loss.ndim == 0
         assert torch.isfinite(loss)
+
+    @pytest.mark.parametrize("completion_only", [True, False])
+    def test_x0_branches_agree(self, completion_only):
+        """Both ways of obtaining x_0 must produce identical tensors.
+
+        `compute_loss` takes x_0 straight from the clean batch, but a
+        pre-noised batch still reconstructs it via
+        ``torch.where(labels == -100, x_t, labels)``.  Those branches must not
+        diverge — this pins the invariant that makes the reconstruction safe
+        (a position is never both masked and labeled -100), so a future change
+        to how the process builds labels cannot silently break the legacy path.
+        """
+        from unturtle.processes import MaskedDiffusionProcess
+
+        class MaskAll:
+            def alpha(self, t):
+                return torch.zeros_like(t)
+
+        prompt_len = 4
+        clean_ids = torch.tensor([list(range(5, 5 + SEQ_LEN))], dtype=torch.long)
+        labels_in = clean_ids.clone()
+        labels_in[:, :prompt_len] = -100
+
+        out = MaskedDiffusionProcess(
+            scheduler=MaskAll(),
+            mask_token_id=MASK_ID,
+            completion_only=completion_only,
+        )(
+            {
+                "input_ids": clean_ids.clone(),
+                "labels": labels_in.clone(),
+                "attention_mask": torch.ones_like(clean_ids),
+            }
+        )
+
+        x_t = out.model_inputs["input_ids"]
+        labels_out = out.objective_inputs["labels"]
+        reconstructed = torch.where(labels_out == -100, x_t, labels_out)
+
+        assert torch.equal(reconstructed, clean_ids), (
+            "the legacy x_0 reconstruction diverged from the true clean ids: "
+            f"x_t={x_t.tolist()} labels={labels_out.tolist()} "
+            f"recon={reconstructed.tolist()} clean={clean_ids.tolist()}"
+        )
 
     @pytest.mark.parametrize("completion_only", [True, False])
     def test_x0_half_holds_the_true_clean_ids(self, tmp_path, completion_only):
@@ -456,6 +545,20 @@ class TestEvaluatorProcessIntegration:
         metrics = evaluator.evaluate(dataset, batch_size=2)
 
         assert metrics, "evaluator returned no metrics"
+        assert all(torch.isfinite(torch.tensor(v)) for v in metrics.values())
+
+    def test_cart_weighting_evaluates(self):
+        """`cart` is a valid trainer setting, so evaluation must not crash.
+
+        `build_diffusion_evaluator` forwards `loss_weight_type` verbatim, so a
+        CART-trained model previously hit `ValueError: Unknown loss_weight_type
+        'cart'` the moment it was evaluated.
+        """
+        evaluator = self._evaluator(loss_weight_type="cart")
+
+        metrics = evaluator.evaluate(_samples(n=4), batch_size=2)
+
+        assert metrics
         assert all(torch.isfinite(torch.tensor(v)) for v in metrics.values())
 
     def test_evaluate_still_works_with_a_noising_collator(self):
