@@ -581,8 +581,14 @@ def build_hybrid_prefix_attention_mask(
         self_attention = torch.eye(seq_len, dtype=torch.bool, device=device)
         allowed = allowed | (~real.view(batch, seq_len, 1) & self_attention)
 
+    # `finfo.min`, not `-inf`, per the convention documented in
+    # `modeling_mdlm_dit.py` / `modeling_llada.py`: SDPA can emit NaNs on
+    # fully-masked query rows with `-inf`, and additive composition of two
+    # `-inf` biases is undefined.  Padded rows are already kept non-empty
+    # above; this is defense in depth and consistency with every other
+    # masking site in the repo.
     mask = torch.zeros((batch, seq_len, seq_len), dtype=dtype, device=device)
-    mask.masked_fill_(~allowed, float("-inf"))
+    mask.masked_fill_(~allowed, torch.finfo(dtype).min)
     return mask.unsqueeze(1)
 
 

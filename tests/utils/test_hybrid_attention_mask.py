@@ -74,12 +74,21 @@ class TestEquationThree:
         Note what this *cannot* establish. Equation (3) case 2 is `1`, not
         `1[j <= i]`, but under a prompt prefix those are indistinguishable —
         every target index already exceeds every prompt index, so the extra
-        term is vacuously true. Verified rather than assumed: writing
-        `key <= query` into the target branch produces byte-identical output
-        across all 45 (L <= 8, Lp) configurations. It is a semantically null
-        change here, not a coverage gap, and it stops being null only if
-        interleaved prompt/target is ever supported — which the paper does
-        not define.
+        term is vacuously true.
+
+        Verified rather than assumed, and the precise form matters. Narrowing
+        *only the target->prompt half*::
+
+            torch.where(query_is_prompt, ..., torch.where(key_is_prompt, key <= query, ones))
+
+        is byte-identical across all 44 (L <= 8, Lp) configurations — a
+        semantically null change, not a coverage gap. Replacing the whole
+        second arm with `key <= query` is a different mutant and IS caught, by
+        five tests, because it also closes target->target. Do not read this
+        note as "the target branch is untested".
+
+        It stops being null only if interleaved prompt/target is ever
+        supported, which the paper does not define.
         """
         allowed = _allowed(_mask([3], seq_len=7))[0, 0]
 
@@ -149,9 +158,13 @@ class TestDegenerateCases:
         At `Lp=0` the hybrid mask is a pure bidirectional mask, and at `Lp=L`
         a pure causal one.  The packed builders produce those two masks by a
         completely different construction (block-diagonal fill loops rather
-        than index broadcasting), so exact equality is evidence the new
+        than index broadcasting), so agreement is evidence the new
         implementation is right rather than merely self-consistent with its
         own tests.
+
+        Compared on *which positions are open*, not on raw values: the packed
+        builders still fill with `-inf` while this one uses `finfo.min`, and
+        the topology is what is being cross-checked.
         """
         from unturtle.utils.packing import (
             build_sdpa_packed_attention_mask,
@@ -162,21 +175,19 @@ class TestDegenerateCases:
         dtype, device = torch.float32, torch.device("cpu")
         seq_info = (torch.tensor([L]), None, L)
 
-        bidirectional = _mask([0], seq_len=L)[0, 0]
         assert torch.equal(
-            bidirectional,
+            _allowed(_mask([0], seq_len=L))[0, 0],
             build_sdpa_packed_bidirectional_attention_mask(
                 seq_info, dtype=dtype, device=device
-            )[0, 0],
-        ), "Lp=0 must equal the bidirectional packed mask"
+            )[0, 0]
+            == 0,
+        ), "Lp=0 must open the same positions as the bidirectional packed mask"
 
-        causal = _mask([L], seq_len=L)[0, 0]
         assert torch.equal(
-            causal,
-            build_sdpa_packed_attention_mask(seq_info, dtype=dtype, device=device)[
-                0, 0
-            ],
-        ), "Lp=L must equal the causal packed mask"
+            _allowed(_mask([L], seq_len=L))[0, 0],
+            build_sdpa_packed_attention_mask(seq_info, dtype=dtype, device=device)[0, 0]
+            == 0,
+        ), "Lp=L must open the same positions as the causal packed mask"
 
     def test_prompt_longer_than_sequence_is_rejected(self):
         with pytest.raises(ValueError, match="prompt_lengths"):
@@ -248,7 +259,8 @@ class TestPadding:
         attention_mask = torch.tensor([[1, 1, 1, 0, 0]])
         mask = _mask([2], seq_len=5, attention_mask=attention_mask)
 
-        rows_all_blocked = torch.isinf(mask[0, 0]).all(dim=-1)
+        blocked = mask[0, 0] == torch.finfo(mask.dtype).min
+        rows_all_blocked = blocked.all(dim=-1)
         assert not bool(rows_all_blocked.any()), (
             f"rows {rows_all_blocked.nonzero().flatten().tolist()} are fully "
             "masked; softmax over them is NaN"
@@ -290,13 +302,23 @@ class TestPadding:
 
 
 class TestAdditiveMaskConvention:
-    def test_blocked_entries_are_negative_infinity(self):
-        """SDPA consumes additive masks; blocked must be -inf, not 0/1."""
+    def test_blocked_entries_use_finfo_min_not_negative_infinity(self):
+        """Additive mask, and blocked uses `finfo.min` per repo convention.
+
+        `modeling_mdlm_dit.py` and `modeling_llada.py` both document why:
+        SDPA can emit NaNs on fully-masked query rows with `-inf`, and adding
+        two `-inf` biases together is undefined.  Every other masking site in
+        the repo follows this; a lone `-inf` outlier would be a trap for
+        whoever composes this mask with another.
+        """
         mask = _mask([2], seq_len=4)
 
         assert mask.dtype == torch.float32
         blocked = mask[0, 0, 0, 2]
-        assert blocked == float("-inf"), f"blocked entry was {blocked}, want -inf"
+        assert blocked == torch.finfo(torch.float32).min, (
+            f"blocked entry was {blocked}, want finfo.min"
+        )
+        assert not bool(torch.isinf(mask).any()), "mask must contain no infinities"
         assert mask[0, 0, 0, 0] == 0.0, "allowed entry must be additive zero"
 
     def test_dtype_is_respected(self):
