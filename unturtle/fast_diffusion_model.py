@@ -84,6 +84,12 @@ from unturtle.models.backbones.modernbert._fast_forward import (
 from unturtle.models.conversion.a2d.tiny_a2d._fast_forward import (
     TinyA2DAttention_fast_forward,
 )
+
+# Model-family loading knowledge (#68).  Safe to import eagerly: the registry
+# holds zero-arg resolvers, so nothing under models/backbones/ is imported
+# until a lookup actually needs a class.  Nothing under unturtle/models/
+# imports this module, so the dependency stays one-directional.
+from unturtle.models.integrations import native_model_classes, post_load_class_swaps
 from unturtle.save import patch_saving_functions, prepare_model_for_kbit_training
 
 _logger = logging.getLogger(__name__)
@@ -709,19 +715,17 @@ def _dequantize_merged_model_(model: Any) -> Any:
 
 #: model_type → callable returning the wrapper class to swap in after a
 #: FastModel load (FastModel loads upstream classes; wrappers add only a
-#: ``generate`` shim, so ``__class__`` swap is safe). Filled by backbone modules.
-_POST_LOAD_CLASS_SWAPS: dict[str, Any] = {}
-
-
-def _resolve_diffusion_gemma_wrapper() -> Any:
-    from unturtle.models.backbones.diffusion_gemma import (
-        UnturtleDiffusionGemmaForBlockDiffusion,
-    )
-
-    return UnturtleDiffusionGemmaForBlockDiffusion
-
-
-_POST_LOAD_CLASS_SWAPS["diffusion_gemma"] = _resolve_diffusion_gemma_wrapper
+#: ``generate`` shim, so ``__class__`` swap is safe).
+#:
+#: Seeded from the BackboneIntegration registry (#68) and left mutable: this
+#: is the documented seam for registering a swap at runtime, and the values
+#: stay zero-arg resolvers so building the map imports no backbone.
+#:
+#: This is a snapshot taken at import time, so an integration registered
+#: later reaches ``resolve_post_load_wrapper()`` but not this dict.  Nothing
+#: registers at runtime today; register before importing the loader, or add
+#: the key here directly, if that ever changes.
+_POST_LOAD_CLASS_SWAPS: dict[str, Any] = post_load_class_swaps()
 
 
 def _apply_post_load_class_swap(model: Any) -> None:
@@ -761,58 +765,18 @@ def _native_model_classes() -> dict[str, Any]:
     """Build the ``model_type`` → unturtle native model class map.
 
     These classes are the from-scratch / wrapper implementations Unturtle owns
-    (LLaDA, Dream, Tiny-A2D Llama/Qwen2/Qwen3). Loading through them bypasses any
-    ``trust_remote_code`` Hub modeling code, so fixes in the unturtle classes
-    (e.g. ``_tied_weights_keys``) always take effect.
+    (LLaDA, Dream, MDLM-DiT, Tiny-A2D Llama/Qwen2/Qwen3). Loading through them
+    bypasses any ``trust_remote_code`` Hub modeling code, so fixes in the
+    unturtle classes (e.g. ``_tied_weights_keys``) always take effect.
+
+    The per-family knowledge lives in the BackboneIntegration registry (#68);
+    this stays as the loader's entry point.  A family whose optional
+    dependencies are missing drops out individually rather than emptying the
+    map.
     """
     import unturtle.models  # noqa: F401 — registers A2D/LLaDA/Dream AutoConfig entries
 
-    classes: dict[str, Any] = {}
-    try:
-        from unturtle.models.backbones.llada import LLaDAModelLM
-
-        classes["llada"] = LLaDAModelLM
-    except ImportError:
-        pass
-    try:
-        from unturtle.models.backbones.mdlm_dit import MDLMDiTForMaskedDiffusionLM
-
-        classes["mdlm-dit"] = MDLMDiTForMaskedDiffusionLM
-    except ImportError:
-        pass
-    try:
-        from unturtle.models.backbones.dream import DreamModel
-
-        classes["dream"] = DreamModel
-        # DreamConfig.model_type is "Dream" (capital D) — match Hub configs.
-        classes["Dream"] = DreamModel
-    except ImportError:
-        pass
-    try:
-        from unturtle.models.conversion.a2d.tiny_a2d.modeling_llama import (
-            TinyA2DLlamaLMHeadModel,
-        )
-
-        classes["tiny-a2d-llama"] = TinyA2DLlamaLMHeadModel
-    except ImportError:
-        pass
-    try:
-        from unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen2 import (
-            TinyA2DQwen2LMHeadModel,
-        )
-
-        classes["tiny-a2d-qwen2"] = TinyA2DQwen2LMHeadModel
-    except ImportError:
-        pass
-    try:
-        from unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen3 import (
-            TinyA2DQwen3LMHeadModel,
-        )
-
-        classes["tiny-a2d-qwen3"] = TinyA2DQwen3LMHeadModel
-    except ImportError:
-        pass
-    return classes
+    return native_model_classes()
 
 
 def _load_native(
