@@ -555,12 +555,15 @@ class DiffusionTrainer(UnturtleTrainer):
         t = timesteps.to(device)
 
         if self._loss_weight_type == "timestep":
-            # d1 SFT: weight = 1/t per sequence, broadcast over L
-            return 1.0 / t.clamp_min(1e-6)  # [B]
+            # d1 SFT: weight = 1/t.  `t` is [B] unpacked (broadcast over L) or
+            # [B, L] on a clean packed batch, where each position carries its
+            # own segment's t (#62); the kernel accepts either.
+            return 1.0 / t.clamp_min(1e-6)  # [B] or [B, L]
 
         if self._loss_weight_type == "scheduler":
             # MDLM: w(t) = -α'(t) / (1 - α(t))
-            w: torch.Tensor = self._alpha_scheduler.weight(t)  # [B]
+            # Shape follows `t`: [B] unpacked, [B, L] on a clean packed batch.
+            w: torch.Tensor = self._alpha_scheduler.weight(t)
             return w.to(device)
 
         if self._loss_weight_type == "cart":
@@ -599,13 +602,24 @@ class DiffusionTrainer(UnturtleTrainer):
             )
 
         collator = data_collator or self.data_collator
-        if isinstance(
-            collator, PackedMaskedDiffusionDataCollator
-        ) and self._loss_weight_type not in ("uniform", "cart"):
+        # Only the *noising* packed collator is incompatible: it collapses each
+        # packed row's per-sample timesteps to a mean.  A clean packed collator
+        # defers corruption to the forward process, which samples per segment
+        # and emits `[B, L]` (#62).  Narrowed to match the guards in
+        # `__init__` and `MaskedDiffusionEvaluator` — before this, a clean
+        # packed setup that trained without complaint raised here.
+        if (
+            isinstance(collator, PackedMaskedDiffusionDataCollator)
+            and getattr(collator, "noise", True)
+            and self._loss_weight_type not in ("uniform", "cart")
+        ):
             raise ValueError(
-                "PackedMaskedDiffusionDataCollator is not supported for diffusion evaluation with "
-                "loss_weight_type='timestep' or 'scheduler'. Use uniform/cart weighting or pass an "
-                "unpacked MaskedDiffusionDataCollator explicitly."
+                "A *noising* PackedMaskedDiffusionDataCollator is not supported for "
+                "diffusion evaluation with loss_weight_type='timestep' or "
+                "'scheduler': it collapses each packed row's per-sample timesteps "
+                "to a mean. Pass noise=False so the forward process samples per "
+                "segment, use uniform/cart weighting, or pass an unpacked "
+                "MaskedDiffusionDataCollator explicitly."
             )
 
         return MaskedDiffusionEvaluator(

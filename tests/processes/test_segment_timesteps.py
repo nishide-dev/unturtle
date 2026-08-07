@@ -37,6 +37,59 @@ def _process(scheduler=None, **kwargs):
     )
 
 
+def _real_tokenizer():
+    """A real fast tokenizer with a mask token, for trainer-level tests."""
+    from tokenizers import Tokenizer, models, pre_tokenizers
+    from transformers import PreTrainedTokenizerFast
+
+    raw = Tokenizer(models.BPE(unk_token="[UNK]"))
+    raw.pre_tokenizer = pre_tokenizers.Whitespace()
+    tokenizer = PreTrainedTokenizerFast(
+        tokenizer_object=raw,
+        unk_token="[UNK]",
+        mask_token="[MASK]",
+        pad_token="[PAD]",
+        eos_token="[EOS]",
+    )
+    tokenizer.add_special_tokens(
+        {
+            "unk_token": "[UNK]",
+            "mask_token": "[MASK]",
+            "pad_token": "[PAD]",
+            "eos_token": "[EOS]",
+        }
+    )
+    tokenizer.name_or_path = "local"
+    return tokenizer
+
+
+def _real_model(vocab_size=128):
+    from transformers import BertConfig, BertForMaskedLM
+
+    return BertForMaskedLM(
+        BertConfig(
+            vocab_size=vocab_size,
+            hidden_size=16,
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            intermediate_size=32,
+            max_position_embeddings=64,
+        )
+    )
+
+
+def _real_packed_collator(tokenizer, *, noise):
+    from unturtle.diffusion.packed_collator import PackedMaskedDiffusionDataCollator
+
+    return PackedMaskedDiffusionDataCollator(
+        tokenizer=tokenizer,
+        max_seq_length=16,
+        mask_token_id=tokenizer.mask_token_id,
+        completion_only=False,
+        noise=noise,
+    )
+
+
 def _packed_batch():
     """One row holding three packed samples of lengths 2, 3, 1."""
     return {
@@ -286,6 +339,72 @@ class TestPackedWeightingGuards:
         """The process supplies a per-segment [B, L] t, so it is well-defined."""
         assert self._evaluator(self._packed(noise=False), weighting) is not None
 
+    @pytest.mark.parametrize("weighting", ["timestep", "scheduler"])
+    def test_trainer_build_evaluator_agrees_with_the_evaluator(
+        self, weighting, tmp_path
+    ):
+        """`build_diffusion_evaluator` must apply the same narrowed guard.
+
+        It carried its own copy of the pre-#62 guard, rejecting *any* packed
+        collator regardless of `noise`.  A clean packed setup therefore trained
+        without complaint and then raised when asked for its evaluator.
+        """
+        from unturtle.diffusion import DiffusionTrainer, DiffusionTrainingArguments
+
+        tokenizer = _real_tokenizer()
+        collator = _real_packed_collator(tokenizer, noise=False)
+        args = DiffusionTrainingArguments(
+            output_dir=str(tmp_path),
+            per_device_train_batch_size=1,
+            max_steps=1,
+            use_cpu=True,
+            bf16=False,
+            fp16=False,
+            remove_unused_columns=False,
+            report_to=[],
+            loss_weight_type=weighting,
+        )
+        trainer = DiffusionTrainer(
+            model=_real_model(),
+            args=args,
+            train_dataset=[{"input_ids": [5, 6, 7]}],
+            processing_class=tokenizer,
+            data_collator=collator,
+        )
+
+        assert trainer.build_diffusion_evaluator() is not None
+
+    @pytest.mark.parametrize("weighting", ["timestep", "scheduler"])
+    def test_trainer_build_evaluator_still_rejects_noising_packed(
+        self, weighting, tmp_path
+    ):
+        """Narrowing must not open the case that is genuinely ill-defined."""
+        from unturtle.diffusion import DiffusionTrainer, DiffusionTrainingArguments
+
+        tokenizer = _real_tokenizer()
+        args = DiffusionTrainingArguments(
+            output_dir=str(tmp_path),
+            per_device_train_batch_size=1,
+            max_steps=1,
+            use_cpu=True,
+            bf16=False,
+            fp16=False,
+            remove_unused_columns=False,
+            report_to=[],
+            loss_weight_type=weighting,
+        )
+        # The trainer's own __init__ guard already rejects this pairing, which
+        # is the behaviour under test: the two guards must agree.
+        with pytest.raises(ValueError, match="noising"):
+            trainer = DiffusionTrainer(
+                model=_real_model(),
+                args=args,
+                train_dataset=[{"input_ids": [5, 6, 7]}],
+                processing_class=tokenizer,
+                data_collator=_real_packed_collator(tokenizer, noise=True),
+            )
+            trainer.build_diffusion_evaluator()
+
 
 class TestCleanPackedActuallyRuns:
     """Constructing the evaluator is not evidence the path works.
@@ -373,3 +492,113 @@ class TestCleanPackedActuallyRuns:
 
         assert torch.isfinite(loss), f"{weighting} produced {loss}"
         assert loss.item() >= 0.0
+
+    @pytest.mark.parametrize("weighting", ["timestep", "scheduler"])
+    def test_per_segment_timesteps_actually_reach_the_loss(self, weighting, tmp_path):
+        """The packed row's per-segment `t` must survive all the way to the loss.
+
+        `test_compute_loss_on_a_clean_packed_batch` only asserts the loss is
+        finite, which is not enough: collapsing `(B, L)` timesteps back to a
+        per-row mean — the exact pre-#62 bug #62 was filed to remove — still
+        produces a perfectly finite loss.  Mutation-verified: mean-reducing the
+        weights in `DiffusionTrainer._build_loss_weights` passes the entire
+        1009-test suite.  Only `uniform` and `cart` are excluded here, because
+        neither reads `timesteps` at all.
+
+        Feeds one fixed batch through `compute_loss` twice, changing *only* the
+        timesteps: once with genuine per-segment values, once with each row's
+        mean.  Any implementation that reduces `(B, L)` to a row summary makes
+        the two identical.
+        """
+        from unturtle.diffusion import DiffusionTrainer, DiffusionTrainingArguments
+        from unturtle.diffusion.packed_collator import (
+            PackedMaskedDiffusionDataCollator,
+        )
+        from unturtle.kernels.masked_diffusion_loss import (
+            fast_masked_diffusion_loss,
+        )
+
+        tokenizer = self._tokenizer()
+        model = self._model()
+        collator = PackedMaskedDiffusionDataCollator(
+            tokenizer=tokenizer,
+            max_seq_length=16,
+            mask_token_id=tokenizer.mask_token_id,
+            completion_only=False,
+            noise=False,
+        )
+        args = DiffusionTrainingArguments(
+            output_dir=str(tmp_path),
+            per_device_train_batch_size=1,
+            max_steps=1,
+            use_cpu=True,
+            bf16=False,
+            fp16=False,
+            remove_unused_columns=False,
+            report_to=[],
+            loss_weight_type=weighting,
+        )
+        trainer = DiffusionTrainer(
+            model=model,
+            args=args,
+            train_dataset=[{"input_ids": [5, 6, 7]}],
+            processing_class=tokenizer,
+            data_collator=collator,
+        )
+
+        clean = collator([{"input_ids": [5, 6, 7]}, {"input_ids": [8, 9]}])
+        noised = trainer._apply_forward_process(dict(clean))
+        per_segment = noised["timesteps"]
+
+        assert per_segment.dim() == 2, (
+            f"expected [B, L] per-segment timesteps, got {tuple(per_segment.shape)}"
+        )
+
+        # Segments must carry genuinely different t, or collapsing to the row
+        # mean would be a no-op and the assertion below could not fail.
+        owned = per_segment > 0
+        distinct = torch.unique(per_segment[owned])
+        assert distinct.numel() > 1, (
+            "packed row carries a single timestep; this batch cannot "
+            f"distinguish per-segment from row-mean weighting (t={distinct})"
+        )
+
+        model.eval()  # dropout would perturb the comparison with its own noise
+        with torch.no_grad():
+            actual = trainer.compute_loss(model, {**noised, "timesteps": per_segment})
+
+            # Reference: the same loss computed from the per-position weights
+            # this weighting is *defined* to use.  Asserting merely that the
+            # per-segment loss differs from the row-mean loss is not enough — a
+            # trainer that mangles the weights also produces a different number,
+            # and "different" would accept it.  Verified: an implementation that
+            # mean-reduces `(B, L)` weights satisfies the difference check while
+            # returning a loss five orders of magnitude off.
+            labels = noised["labels"]
+            diffusion_mask = noised["diffusion_mask"]
+            forward_inputs = {
+                k: v
+                for k, v in noised.items()
+                if k not in ("labels", "diffusion_mask", "timesteps")
+            }
+            logits = model(**forward_inputs).logits
+            if weighting == "timestep":
+                expected_w = 1.0 / per_segment.clamp_min(1e-6)
+            else:
+                expected_w = trainer._alpha_scheduler.weight(per_segment)
+            expected = fast_masked_diffusion_loss(
+                logits=logits,
+                labels=labels,
+                diffusion_mask=diffusion_mask,
+                loss_weights=expected_w,
+            )
+
+        assert expected_w.shape == per_segment.shape, (
+            f"{weighting}: weights collapsed from {tuple(per_segment.shape)} to "
+            f"{tuple(expected_w.shape)} before reaching the loss"
+        )
+        assert torch.allclose(actual, expected, atol=1e-5), (
+            f"{weighting}: trainer loss {actual.item():.6f} does not match the "
+            f"per-segment reference {expected.item():.6f}; the [B, L] timesteps "
+            "are being altered between the process and the loss"
+        )
