@@ -489,6 +489,91 @@ def build_sdpa_packed_bidirectional_attention_mask(
     return result
 
 
+def build_hybrid_prefix_attention_mask(
+    prompt_lengths: torch.Tensor,
+    seq_len: int,
+    *,
+    dtype: torch.dtype,
+    device: torch.device,
+    attention_mask: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Hybrid causal-bidirectional SDPA mask for PreDiff-LM adaptation (#63).
+
+    Implements equation (3) of arXiv:2607.25157 §3.2 over a prompt prefix of
+    length ``Lp`` followed by a target region::
+
+                | 1[j <= i]   i, j in prompt
+        M_ij =  | 1           i in target, j in prompt
+                | 1           i, j in target
+                | 0           i in prompt, j in target
+
+    The prompt keeps the causal pattern the AR weights were pretrained under;
+    the target denoises bidirectionally with full access to the prompt; and
+    the prompt is shielded from the corrupted target, which is the asymmetry
+    that distinguishes this from uniform bidirectional adaptation.  Note the
+    target -> prompt quadrant is unconditional, *not* ``1[j <= i]``: a target
+    token sees the whole prompt.
+
+    The prompt is a contiguous prefix, as in the paper.  Interleaved
+    prompt/target segments have no defined semantics there and are not
+    supported here.
+
+    Distinct from the packed builders above: those are block-diagonal over
+    concatenated samples and return ``[1, 1, T, T]``; this is per-row over a
+    padded batch and returns ``[B, 1, L, L]``.  It is also the only mask here
+    that is *partly* causal, so do not substitute it for either
+    :func:`build_sdpa_packed_attention_mask` (fully causal) or
+    :func:`build_sdpa_packed_bidirectional_attention_mask` (fully
+    bidirectional).
+
+    Args:
+        prompt_lengths: ``[B]`` integer prompt prefix length per row.
+        seq_len:        Padded sequence length ``L``.
+        attention_mask: Optional ``[B, L]`` real-token mask.  Padding is
+                        excluded on both axes — a padded position neither
+                        attends nor is attended to.
+
+    Returns:
+        Additive ``[B, 1, L, L]`` mask: ``0`` where attention is allowed,
+        ``-inf`` where it is blocked.
+    """
+    lengths = prompt_lengths.to(device=device, dtype=torch.int64).reshape(-1)
+    if bool(((lengths < 0) | (lengths > seq_len)).any()):
+        raise ValueError(
+            f"prompt_lengths must satisfy 0 <= Lp <= seq_len={seq_len}, got "
+            f"{lengths.tolist()}"
+        )
+
+    batch = lengths.shape[0]
+    idx = torch.arange(seq_len, device=device)
+    query = idx.view(1, seq_len, 1)  # i
+    key = idx.view(1, 1, seq_len)  # j
+    boundary = lengths.view(batch, 1, 1)
+
+    query_is_prompt = query < boundary
+    key_is_prompt = key < boundary
+
+    # Equation (3), assembled as one boolean expression rather than four
+    # quadrant writes: every (i, j) is covered by exactly one arm, so a
+    # missing case would be a shape error rather than a silently unwritten
+    # region.
+    allowed = torch.where(
+        query_is_prompt,
+        key_is_prompt & (key <= query),  # causal inside the prompt; target blocked
+        torch.ones_like(key_is_prompt),  # target sees all prompt and all target
+    )
+
+    if attention_mask is not None:
+        real = attention_mask.to(device=device, dtype=torch.bool).reshape(
+            batch, seq_len
+        )
+        allowed = allowed & real.view(batch, 1, seq_len) & real.view(batch, seq_len, 1)
+
+    mask = torch.zeros((batch, seq_len, seq_len), dtype=dtype, device=device)
+    mask.masked_fill_(~allowed, float("-inf"))
+    return mask.unsqueeze(1)
+
+
 def _normalize_packed_lengths(
     seq_lengths: Any,
     *,
