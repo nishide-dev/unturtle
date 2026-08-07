@@ -30,11 +30,15 @@ from .registry import (
     resolve_native_class,
     resolve_peft_patcher,
     resolve_post_load_wrapper,
+    resolve_sparse_output,
     supported_peft_model_types,
 )
+from .sparse_output import SPARSE_OUTPUT_CAPABILITY, SparseOutputAccess
 
 __all__ = [
+    "SPARSE_OUTPUT_CAPABILITY",
     "BackboneIntegration",
+    "SparseOutputAccess",
     "find_integration",
     "find_peft_integration",
     "iter_integrations",
@@ -44,5 +48,6 @@ __all__ = [
     "resolve_native_class",
     "resolve_peft_patcher",
     "resolve_post_load_wrapper",
+    "resolve_sparse_output",
     "supported_peft_model_types",
 ]

@@ -36,6 +36,11 @@ from __future__ import annotations
 from typing import Any
 
 from .base import BackboneIntegration
+from .sparse_output import (
+    SPARSE_OUTPUT_CAPABILITY,
+    SparseOutputAccess,
+    standard_sparse_output,
+)
 
 
 def _llada() -> Any:
@@ -207,7 +212,10 @@ _INTEGRATIONS: list[BackboneIntegration] = [
         peft_model_types=("tiny-a2d-llama", "llama"),
         _peft_patcher=_a2d_patcher,
         peft_report=_a2d_report,
-        capabilities=frozenset({"masked_generation", "block_decode"}),
+        _sparse_output_resolver=standard_sparse_output,
+        capabilities=frozenset(
+            {"masked_generation", "block_decode", SPARSE_OUTPUT_CAPABILITY}
+        ),
     ),
     BackboneIntegration(
         name="tiny-a2d-qwen2",
@@ -216,7 +224,10 @@ _INTEGRATIONS: list[BackboneIntegration] = [
         peft_model_types=("tiny-a2d-qwen2", "qwen2"),
         _peft_patcher=_a2d_patcher,
         peft_report=_a2d_report,
-        capabilities=frozenset({"masked_generation", "block_decode"}),
+        _sparse_output_resolver=standard_sparse_output,
+        capabilities=frozenset(
+            {"masked_generation", "block_decode", SPARSE_OUTPUT_CAPABILITY}
+        ),
     ),
     BackboneIntegration(
         name="tiny-a2d-qwen3",
@@ -225,7 +236,10 @@ _INTEGRATIONS: list[BackboneIntegration] = [
         peft_model_types=("tiny-a2d-qwen3", "qwen3"),
         _peft_patcher=_a2d_patcher,
         peft_report=_a2d_report,
-        capabilities=frozenset({"masked_generation", "block_decode"}),
+        _sparse_output_resolver=standard_sparse_output,
+        capabilities=frozenset(
+            {"masked_generation", "block_decode", SPARSE_OUTPUT_CAPABILITY}
+        ),
     ),
     BackboneIntegration(
         name="modernbert-diffusion",
@@ -370,3 +384,21 @@ def post_load_class_swaps() -> dict[str, Any]:
         for model_type in integration.model_types:
             swaps[model_type] = integration._wrapper_resolver
     return swaps
+
+
+def resolve_sparse_output(model: Any) -> SparseOutputAccess | None:
+    """Sparse-output access for ``model``, or ``None`` if unsupported.
+
+    Takes the model rather than a ``model_type`` so callers (#61) never touch
+    ``config``, an ``isinstance`` ladder, or a model hierarchy.  Returns
+    ``None`` both for families that have not opted in and for models whose
+    shape cannot support the path, so the dense fallback stays automatic.
+    """
+    model_type = getattr(getattr(model, "config", None), "model_type", None)
+    integration = find_integration(model_type)
+    if integration is None or not integration.has_capability(SPARSE_OUTPUT_CAPABILITY):
+        return None
+    resolver = integration._sparse_output_resolver
+    if resolver is None:
+        return None
+    return resolver(model)
