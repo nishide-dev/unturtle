@@ -90,6 +90,7 @@ def sparse_masked_diffusion_loss(
     logit_softcapping: float = 0,
     logit_scaling: float = 0,
     loss_norm_type: str = "token",
+    right_shift: bool = False,
     **forward_kwargs: Any,
 ) -> torch.Tensor:
     """Masked-diffusion CE loss without materializing ``[B, L, V]`` logits.
@@ -103,6 +104,14 @@ def sparse_masked_diffusion_loss(
         loss_weights:   ``[B]`` or ``[B, L]`` per-token weights, or ``None``.
         loss_norm_type: ``"token"`` (default, by ``n_maskable``), ``"sequence"``
                         or ``"batch"`` — matching the dense loss.
+        right_shift:    Dream Shift Operation.  The dense path rotates the
+                        ``[B, L, V]`` logits so position ``i`` is scored by the
+                        model's output at ``i-1``; here the same rotation is
+                        applied to the ``[B, L, H]`` hidden states instead.
+                        The projection is position-wise, so
+                        ``shift(h) @ W == shift(h @ W)`` exactly — verified to
+                        0.0 absolute difference in float64 — on a tensor
+                        ``V/H`` times smaller.
         forward_kwargs: Passed to the backbone (``attention_mask``,
                         ``position_ids``, …).  Only pass what the backbone
                         forward consumes: unknown keys are silently absorbed by
@@ -148,6 +157,13 @@ def sparse_masked_diffusion_loss(
     maskable_mask = labels != -100
 
     hidden = access.hidden_states(model, input_ids=input_ids, **forward_kwargs)
+
+    # Dream Shift Operation, applied one tensor earlier than the dense path.
+    # Must happen *before* `active` indexes into `hidden`, or every gathered
+    # row is off by one position — a misalignment that still yields a
+    # plausible-looking loss, so it would not announce itself.
+    if right_shift:
+        hidden = torch.cat([hidden[:, :1], hidden[:, :-1]], dim=1)
 
     # Intersect with the supervised positions.  This is a *size* optimization,
     # not a correctness one: `F.cross_entropy` defaults to `ignore_index=-100`,

@@ -50,6 +50,10 @@ import torch
 
 from unturtle.eval import GenerationEvaluator, MaskedDiffusionEvaluator
 from unturtle.kernels.masked_diffusion_loss import fast_masked_diffusion_loss
+from unturtle.kernels.sparse_masked_loss import (
+    sparse_masked_diffusion_loss,
+    supports_sparse_masked_loss,
+)
 from unturtle.processes import MaskedDiffusionProcess
 from unturtle.trainer import UnturtleTrainer, UnturtleTrainingArguments
 
@@ -202,6 +206,23 @@ class DiffusionTrainingArguments(UnturtleTrainingArguments):
             )
         },
     )
+    sparse_lm_head: bool = field(
+        default=False,
+        metadata={
+            "help": (
+                "Project only masked positions through the LM head instead of "
+                "computing full [B, L, V] logits (#61).  Numerically identical "
+                "to the dense path.  Defaults off because it is NOT a win at "
+                "the ~50%% average mask ratio MDLM training produces: measured "
+                "+8%% (32K vocab) to +10%% (128K) peak memory there, versus "
+                "-28%% / -41%% at a 15%% mask ratio.  Enable for low-mask-ratio "
+                "schedules or when step time matters more than peak memory.  "
+                "Requires a backbone declaring 'sparse_output_projection'; "
+                "raises at construction otherwise rather than silently "
+                "falling back."
+            )
+        },
+    )
 
 
 class DiffusionTrainer(UnturtleTrainer):
@@ -302,9 +323,31 @@ class DiffusionTrainer(UnturtleTrainer):
         self._cart_p: float = getattr(args, "cart_p", 0.8)
         self._loss_norm_type: str = getattr(args, "loss_norm_type", "token")
         self._right_shift_logits: bool = getattr(args, "right_shift_logits", False)
+        self._sparse_lm_head: bool = getattr(args, "sparse_lm_head", False)
         completion_only: bool = getattr(args, "completion_only", True)
 
         model = kwargs.get("model") or (pargs[0] if pargs else None)
+
+        # Checked at construction, not per step: a silent fallback would turn
+        # an explicit opt-in into a no-op that surfaces only as unexplained
+        # memory use.
+        #
+        # Deliberately no guard for logit_softcapping / logit_scaling: neither
+        # is a field on DiffusionTrainingArguments, so a check against `args`
+        # could never fire and would read as protection that does not exist.
+        # `sparse_masked_diffusion_loss` rejects them where they can actually
+        # be passed.  Add one here only alongside adding the fields.
+        if (
+            self._sparse_lm_head
+            and model is not None
+            and not supports_sparse_masked_loss(model)
+        ):
+            raise ValueError(
+                f"sparse_lm_head=True but {type(model).__name__} does not "
+                "declare the 'sparse_output_projection' capability. "
+                "Supported today: the Tiny-A2D family. Set "
+                "sparse_lm_head=False to use the dense path."
+            )
 
         tokenizer = kwargs.get("tokenizer") or kwargs.get("processing_class")
         mask_token_id = resolve_mask_token_id(tokenizer, model)
@@ -436,6 +479,37 @@ class DiffusionTrainer(UnturtleTrainer):
             if flat_lengths is not None and labels.shape[0] == 1:
                 seq_lengths = [flat_lengths]
 
+        # `getattr` default, not `self._sparse_lm_head`: test fixtures build
+        # trainers without running `__init__` (SimpleNamespace / __new__), and
+        # an opt-in optimization must never be the reason such a trainer fails
+        # to compute a loss at all.  (BlockDiffusionTrainer is NOT an example —
+        # it calls super().__init__ and gets the attribute normally.)
+        if getattr(self, "_sparse_lm_head", False) and not return_outputs:
+            # `return_outputs` forces the dense path: the caller wants the
+            # model outputs, and the whole point of the sparse path is that
+            # `[B, L, V]` logits are never built.  Silently returning outputs
+            # without logits would break callers worse than being slower.
+            loss_weights = self._build_loss_weights(
+                timesteps,
+                labels.device,
+                diffusion_mask,
+                attention_mask=attention_mask,
+                seq_lengths=seq_lengths,
+            )
+            forward_kwargs = {
+                k: v for k, v in inputs.items() if k not in ("input_ids", "labels")
+            }
+            return sparse_masked_diffusion_loss(
+                model=model,
+                input_ids=inputs["input_ids"],
+                labels=labels,
+                diffusion_mask=diffusion_mask,
+                loss_weights=loss_weights,
+                loss_norm_type=self._loss_norm_type,
+                right_shift=self._right_shift_logits,
+                **forward_kwargs,
+            )
+
         outputs = model(**inputs)
         logits: torch.Tensor = outputs.logits  # [B, L, V]
 
@@ -452,7 +526,7 @@ class DiffusionTrainer(UnturtleTrainer):
 
         loss_weights = self._build_loss_weights(
             timesteps,
-            logits,
+            logits.device,
             diffusion_mask,
             attention_mask=attention_mask,
             seq_lengths=seq_lengths,
@@ -533,12 +607,17 @@ class DiffusionTrainer(UnturtleTrainer):
     def _build_loss_weights(
         self,
         timesteps: torch.Tensor,
-        logits: torch.Tensor,
+        device: torch.device,
         diffusion_mask: torch.Tensor,
         attention_mask: torch.Tensor | None = None,
         seq_lengths: Any | None = None,
     ) -> torch.Tensor | None:
         """Return per-token loss weights based on ``loss_weight_type``.
+
+        Takes a ``device`` rather than the logits tensor: every weighting is a
+        function of ``timesteps`` and the mask, and none reads the vocabulary
+        dimension.  Depending on ``[B, L, V]`` merely to reach ``.device``
+        would force that tensor to exist on the sparse LM-head path (#61).
 
         Args:
             attention_mask: optional ``[B, L]`` real-token mask.  Used by CART
@@ -551,7 +630,6 @@ class DiffusionTrainer(UnturtleTrainer):
         if self._loss_weight_type == "uniform":
             return None
 
-        device = logits.device
         t = timesteps.to(device)
 
         if self._loss_weight_type == "timestep":

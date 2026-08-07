@@ -261,7 +261,7 @@ class BlockDiffusionTrainer(DiffusionTrainer):
 
         # --- 10. Build per-token loss weights (inherited machinery) ---
         loss_weights = self._build_loss_weights(
-            timesteps, logits, diffusion_mask, attention_mask=padding_mask
+            timesteps, logits.device, diffusion_mask, attention_mask=padding_mask
         )
 
         # --- 11. Compute masked diffusion loss ---
