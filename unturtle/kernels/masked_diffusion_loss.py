@@ -105,15 +105,29 @@ def masked_diffusion_loss_from_timesteps(
     Computes ``fast_masked_diffusion_loss`` with per-sequence weights ``1 / t``
     where ``t`` is the diffusion timestep used during the forward process.
 
+    Exported as part of the public API for callers writing their own training
+    loop.  ``DiffusionTrainer`` does not route through here — it builds the
+    weights itself in ``_build_loss_weights`` and calls
+    ``fast_masked_diffusion_loss`` directly — so changes to this wrapper do not
+    affect the trainer, and vice versa.
+
     Args:
         logits:         ``(B, L, V)``
         labels:         ``(B, L)``
         diffusion_mask: ``(B, L)`` bool
-        timesteps:      ``(B,)`` float in ``(eps, 1]`` – the diffusion timestep
-                        for each sequence in the batch.
+        timesteps:      ``(B,)`` float in ``(eps, 1]`` – one timestep per
+                        sequence, broadcast over ``L``.  Or ``(B, L)``: one
+                        timestep per *position*, for packed rows whose segments
+                        each own their own ``t`` (#62).
 
     Returns:
         Scalar loss.
+
+    Note:
+        When ``B == L`` the shape check cannot distinguish a ``(B, L)`` tensor
+        from its transpose, so a transposed ``timesteps`` is accepted and
+        silently yields a different loss.  Orientation is the caller's
+        responsibility; only the rank/extent are validated here.
     """
     # `[B, L]` is accepted since #62 PR3: a packed row holds several original
     # samples, each owning its own timestep, so one value per row cannot

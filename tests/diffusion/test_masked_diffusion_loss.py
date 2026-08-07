@@ -234,12 +234,44 @@ class TestFastMaskedDiffusionLoss:
             f"(B,)={per_row.item():.6f} != (B,L)-expanded={expanded.item():.6f}"
         )
 
+    def test_square_batch_cannot_detect_a_transposed_timestep_tensor(self):
+        """Documents a real limitation rather than pretending it is covered.
+
+        When `B == L`, `(B, L)` and its transpose are the same shape, so the
+        shape check cannot tell them apart: a transposed `timesteps` is accepted
+        and silently produces a different loss.  Orientation is the caller's
+        responsibility.  Pinned here so that if a future validation *does* catch
+        it, this test fails and the docstring gets updated with it.
+        """
+        torch.manual_seed(3)
+        B = L = 4
+        V = 50
+        logits = torch.randn(B, L, V)
+        labels = torch.randint(0, V, (B, L))
+        mask = torch.ones(B, L, dtype=torch.bool)
+        t = torch.rand(B, L) * 0.9 + 0.1
+
+        upright = self.masked_diffusion_loss_from_timesteps(logits, labels, mask, t)
+        transposed = self.masked_diffusion_loss_from_timesteps(
+            logits, labels, mask, t.T.contiguous()
+        )
+
+        assert not torch.allclose(upright, transposed, atol=1e-4), (
+            "the fixture's `t` is transpose-symmetric, so it cannot show that "
+            "orientation matters"
+        )
+
     @pytest.mark.parametrize("bad_shape", [(4,), (3, 13), (12,), (3, 12, 1)])
     def test_rejects_timesteps_that_match_neither_shape(self, bad_shape):
-        """A wrong shape raises, and raises `ValueError` rather than asserting.
+        """A wrong shape is rejected by *this* wrapper, as a `ValueError`.
 
-        `assert` statements vanish under `python -O`, which would let a
-        mis-shaped weight broadcast silently into the loss.
+        The `ValueError` type is the point, not merely that something raises:
+        the downstream kernel has its own `assert` on the weight shape, so
+        deleting this guard still raises here — as `AssertionError`. Requiring
+        `ValueError` pins rejection to the wrapper. That matters because
+        `assert` vanishes under `python -O` while this check does not, so under
+        `-O` the wrapper's guard is the only one left. (pytest never runs under
+        `-O`, so no test can observe that directly.)
         """
         torch.manual_seed(14)
         B, L, V = 3, 12, 200
