@@ -56,7 +56,8 @@ handed ``use_cache`` / ``use_block_diffusion``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from types import MappingProxyType
+from typing import Any, Callable, Mapping
 
 #: Lower numbers win when resolving ``auto``.  Masked/canvas algorithms occupy
 #: 10-40; anything registered later defaults to 1000 and therefore loses.
@@ -89,10 +90,17 @@ class GenerationAlgorithm:
     name: str
     family: str
     supports: Callable[[Any], bool]
-    flags: dict[str, bool] = field(default_factory=dict)
+    flags: Mapping[str, bool] = field(default_factory=dict)
     auto_priority: int = _DEFAULT_AUTO_PRIORITY
     auto_eligible: bool = True
     unsupported_message: Callable[[Any], str] | None = None
+
+    def __post_init__(self) -> None:
+        # `frozen=True` blocks rebinding the field, not mutating the dict it
+        # points at — so a caller could otherwise edit the registry's own flags
+        # in place.  Store a read-only view instead.
+        if not isinstance(self.flags, MappingProxyType):
+            object.__setattr__(self, "flags", MappingProxyType(dict(self.flags)))
 
     def describe_unsupported(self, model: Any) -> str:
         if self.unsupported_message is not None:
@@ -176,6 +184,11 @@ _ALGORITHMS: list[GenerationAlgorithm] = [
         supports=_supports_block_ar,
         # No flags: the upstream GenerationConfig governs the loop entirely.
         flags={},
+        # Inert: `resolve_algorithm` checks block_ar *before* the bd3lm opt-in,
+        # so it is never reached by the priority loop.  That sequencing is not
+        # expressible as a priority — it is what makes a canvas model win even
+        # when bd3lm was requested — so do not "simplify" the special case away
+        # on the assumption this number covers it.
         auto_priority=10,
         unsupported_message=_block_ar_unsupported,
     ),
@@ -184,6 +197,8 @@ _ALGORITHMS: list[GenerationAlgorithm] = [
         family="masked_discrete",
         supports=_supports_bd3lm,
         flags={"use_cache": False, "use_block_diffusion": True},
+        # Also inert, for the same reason: `auto_eligible=False` keeps bd3lm out
+        # of the loop, and the bd3lm_requested branch selects it positionally.
         auto_priority=20,
         # Never chosen automatically — only via the bd3lm_requested opt-in.
         auto_eligible=False,

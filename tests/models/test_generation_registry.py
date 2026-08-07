@@ -246,6 +246,39 @@ class TestExtensibility:
         finally:
             sampler._ALGORITHMS[:] = original
 
+    def test_algorithm_without_a_custom_message_still_explains_itself(self):
+        """The path a future family registered without a message would hit."""
+        from unturtle.models.generation import sampler
+        from unturtle.models.generation.sampler import (
+            GenerationAlgorithm,
+            register_algorithm,
+            resolve_algorithm,
+        )
+
+        newcomer = GenerationAlgorithm(
+            name="toy-bare",
+            family="continuous",
+            supports=lambda model: False,
+            # No unsupported_message: exercise the default.
+        )
+        register_algorithm(newcomer)
+        try:
+            with pytest.raises(ValueError) as excinfo:
+                resolve_algorithm("toy-bare", _Masked(), bd3lm_requested=False)
+            message = str(excinfo.value)
+            assert "toy-bare" in message
+            assert "_Masked" in message
+        finally:
+            sampler._unregister_algorithm(newcomer)
+
+    def test_registry_flags_cannot_be_mutated_in_place(self):
+        """`frozen=True` blocks rebinding, not dict mutation — so guard it."""
+        from unturtle.models.generation.sampler import find_algorithm
+
+        entry = find_algorithm("mdlm")
+        with pytest.raises((TypeError, AttributeError)):
+            entry.flags["use_cache"] = True
+
     def test_bd3lm_is_never_chosen_automatically(self):
         """`auto` must not pick bd3lm without the explicit request.
 
