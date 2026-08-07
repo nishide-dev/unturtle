@@ -149,6 +149,29 @@ class TestNonMutation:
         # Even when nothing is masked, the model input must be a fresh tensor.
         assert out.model_inputs["input_ids"] is not batch["input_ids"]
 
+    @pytest.mark.parametrize("completion_only", [True, False])
+    def test_returned_labels_do_not_alias_the_input_labels(self, completion_only):
+        # PR2 hands these to a Trainer that pops/edits `labels` on a batch the
+        # caller may still hold, so aliasing must be impossible in either mode.
+        batch = make_batch()
+        out = make_process(scheduler=KeepAll(), completion_only=completion_only)(batch)
+
+        labels = out.objective_inputs["labels"]
+        assert labels is not batch["labels"]
+        assert labels is not batch["input_ids"]
+
+        original = batch["labels"].clone()
+        labels[:] = -100
+        assert torch.equal(batch["labels"], original)
+
+    def test_returned_diffusion_mask_does_not_alias_attention_mask(self):
+        batch = make_batch(with_labels=False)
+        out = make_process(scheduler=MaskAll(), completion_only=False)(batch)
+
+        original = batch["attention_mask"].clone()
+        out.objective_inputs["diffusion_mask"][:] = False
+        assert torch.equal(batch["attention_mask"], original)
+
 
 # ---------------------------------------------------------------------------
 # C. Completion-only semantics
@@ -317,6 +340,17 @@ class TestTimeEpsilonBounds:
         assert (t >= eps).all()
         assert (t < 1.0).all()
 
+    def test_zero_epsilon_is_valid(self):
+        # 0 <= time_epsilon < 1 per spec, so 0.0 must be accepted, not rejected.
+        batch = {"input_ids": torch.randint(1, 50, (64, 2))}
+        process = make_process(scheduler=HalfLinear(), time_epsilon=0.0)
+
+        t = process(batch, generator=torch.Generator().manual_seed(0)).objective_inputs[
+            "timesteps"
+        ]
+        assert (t >= 0.0).all()
+        assert (t < 1.0).all()
+
 
 # ---------------------------------------------------------------------------
 # I. Scheduler return normalization
@@ -328,6 +362,16 @@ class TestSchedulerNormalization:
         batch = make_batch()
         out = make_process(scheduler=MaskAll())(batch)
         assert out.objective_inputs["diffusion_mask"].any()
+
+    def test_wrong_length_schedule_is_rejected(self):
+        # A [1] result for B=2 would silently broadcast to every row, applying
+        # one row's masking rate to the whole batch. Fail loudly instead.
+        class WrongLength:
+            def alpha(self, t):
+                return torch.zeros(1)
+
+        with pytest.raises(ValueError, match="alpha"):
+            make_process(scheduler=WrongLength())(make_batch())
 
     def test_float_returning_scheduler(self):
         batch = make_batch()

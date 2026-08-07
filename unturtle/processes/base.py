@@ -62,8 +62,10 @@ class AlphaSchedule(Protocol):
     """Structural view of the scheduler behavior a masked process needs.
 
     Satisfied by ``unturtle.diffusion.schedulers.BaseAlphaScheduler`` without
-    the process layer importing it.  Implementations should be vectorized:
-    ``alpha`` receives the full ``[B]`` timestep tensor in one call.
+    the process layer importing it.  Implementations must be vectorized:
+    ``alpha`` receives the full ``[B]`` timestep tensor in one call and must
+    return a scalar or a matching ``[B]`` result — a shorter tensor would
+    broadcast one row's masking rate across the batch, so it is rejected.
     """
 
     def alpha(self, t: torch.Tensor) -> torch.Tensor | float: ...

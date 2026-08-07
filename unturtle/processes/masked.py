@@ -126,7 +126,15 @@ class MaskedDiffusionProcess:
         # Normalized without assuming the schedule already returns the right
         # dtype/device.  Deliberately unclamped, matching the legacy collator.
         alpha_t = torch.as_tensor(self.scheduler.alpha(t), device=device, dtype=t.dtype)
-        p_mask = (1.0 - alpha_t).expand(B) if alpha_t.dim() == 0 else 1.0 - alpha_t
+        if alpha_t.dim() == 0:
+            alpha_t = alpha_t.expand(B)
+        elif alpha_t.shape != (B,):
+            # A [1] result would broadcast one row's rate over the whole batch.
+            raise ValueError(
+                f"scheduler.alpha(t) must return a scalar or a [{B}] tensor, "
+                f"got shape {tuple(alpha_t.shape)}"
+            )
+        p_mask = 1.0 - alpha_t
 
         # --- Bernoulli corruption over eligible positions ---
         rand = torch.rand((B, L), device=device, generator=generator)
