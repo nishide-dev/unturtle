@@ -276,6 +276,23 @@ class TestProcessContract:
             "the process mutated its caller's batch"
         )
 
+    def test_supplied_labels_are_cloned_not_aliased(self):
+        """The non-mutation contract covers every field, not just input_ids.
+
+        Nothing writes to `labels` in that branch today, so aliasing them is
+        latent rather than active — but `base.ForwardProcess` makes
+        non-mutation load-bearing, and a later edit adding a `-100` write would
+        reach through to the caller silently.
+        """
+        batch = _batch()
+        batch["labels"] = batch["input_ids"].clone()
+
+        out = _process()(batch)
+
+        assert out.objective_inputs["labels"] is not batch["labels"], (
+            "labels were aliased to the caller's tensor rather than cloned"
+        )
+
     def test_same_generator_seed_reproduces_the_state(self):
         batch = _batch()
 
@@ -369,6 +386,66 @@ class TestProcessContract:
         )
 
 
+class TestTimeEpsilon:
+    def test_sampled_timesteps_respect_the_lower_bound(self):
+        """`time_epsilon` is a documented, validated argument with a purpose."""
+        batch = _batch(batch_size=32, seq_len=8)
+
+        out = _process(time_epsilon=0.9)(batch)
+
+        t = out.objective_inputs["timesteps"]
+        assert bool((t >= 0.9).all()), f"minimum sampled t was {t.min().item()}"
+        assert bool((t <= 1.0).all())
+
+    def test_it_also_bounds_per_segment_draws(self):
+        batch = {
+            "input_ids": torch.randint(1, VOCAB, (1, 8)),
+            "attention_mask": torch.ones(1, 8, dtype=torch.long),
+            "segment_ids": torch.tensor([[0, 0, 0, 0, 1, 1, 1, 1]]),
+        }
+
+        out = _process(time_epsilon=0.8)(batch)
+
+        assert bool((out.objective_inputs["timesteps"] >= 0.8).all())
+
+    @pytest.mark.parametrize("bad", [1.0, 1.5, -0.1])
+    def test_out_of_range_epsilon_is_rejected(self, bad):
+        with pytest.raises(ValueError, match="time_epsilon"):
+            _process(time_epsilon=bad)
+
+    @pytest.mark.parametrize("bad", [0, -1])
+    def test_non_positive_vocab_is_rejected(self, bad):
+        from unturtle.processes import DiscreteFlowProcess
+
+        with pytest.raises(ValueError, match="vocab_size"):
+            DiscreteFlowProcess(vocab_size=bad, mask_token_id=MASK_ID)
+
+    def test_the_uniform_source_can_draw_the_last_vocab_id(self):
+        """Pins the `randint` upper bound, which is exclusive.
+
+        An off-by-one to `vocab_size - 1` still draws plenty of distinct
+        in-range tokens, so a "looks uniform" check cannot see it.
+        """
+        from unturtle.processes import DiscreteFlowProcess
+
+        small = 8
+        process = DiscreteFlowProcess(
+            vocab_size=small, mask_token_id=MASK_ID, source="uniform"
+        )
+        batch = {
+            "input_ids": torch.randint(0, small, (16, 64)),
+            "attention_mask": torch.ones(16, 64, dtype=torch.long),
+        }
+
+        source = process(batch, timesteps=torch.zeros(16)).objective_inputs[
+            "source_ids"
+        ]
+
+        assert int(source.max()) == small - 1, (
+            f"the largest drawn id was {int(source.max())}, expected {small - 1}"
+        )
+
+
 class TestPadding:
     def test_padding_is_never_corrupted(self):
         batch = {
@@ -424,7 +501,14 @@ class TestPackedSegments:
         """`segment_ids = -1` marks positions no sample owns.
 
         A raw gather on -1 raises on CPU and fires an async device-side assert
-        on CUDA that poisons the context — the bug #62 hit.
+        on CUDA that poisons the context — the bug #62 hit.  Padding borrows
+        segment 0's draw to keep the gather legal, then must be zeroed.
+
+        Asserting only `isfinite` is not enough: segment 0's borrowed value is
+        perfectly finite, so the zeroing could be deleted and the test would
+        still pass.  Mutation-verified.  Leaving the borrowed value in place
+        hands padding a real-looking `t` to any consumer reading `timesteps`
+        directly.
         """
         batch = {
             "input_ids": torch.randint(1, VOCAB, (1, 8)),
@@ -433,8 +517,14 @@ class TestPackedSegments:
         }
 
         out = _process()(batch)
+        timesteps = out.objective_inputs["timesteps"]
 
-        assert torch.isfinite(out.objective_inputs["timesteps"]).all()
+        assert torch.isfinite(timesteps).all()
+        assert bool((timesteps[0, 5:] == 0).all()), (
+            f"unowned positions kept a borrowed timestep {timesteps[0, 5:]}; "
+            "they must be zeroed"
+        )
+        assert bool((timesteps[0, :5] > 0).all()), "real positions lost their timestep"
 
     def test_segment_ids_are_not_forwarded_to_the_model(self):
         batch = {
