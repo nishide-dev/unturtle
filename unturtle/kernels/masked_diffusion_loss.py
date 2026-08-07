@@ -115,10 +115,16 @@ def masked_diffusion_loss_from_timesteps(
     Returns:
         Scalar loss.
     """
-    assert timesteps.shape == (logits.shape[0],), (
-        f"timesteps must have shape (B,)={logits.shape[0]}, got {timesteps.shape}"
-    )
-    loss_weights = 1.0 / timesteps.clamp_min(1e-6)  # [B]
+    # `[B, L]` is accepted since #62 PR3: a packed row holds several original
+    # samples, each owning its own timestep, so one value per row cannot
+    # represent them.
+    B, L = logits.shape[0], logits.shape[1]
+    if timesteps.shape not in ((B,), (B, L)):
+        raise ValueError(
+            f"timesteps must have shape (B,)={(B,)} or (B, L)={(B, L)}, "
+            f"got {tuple(timesteps.shape)}"
+        )
+    loss_weights = 1.0 / timesteps.clamp_min(1e-6)  # [B] or [B, L]
     return fast_masked_diffusion_loss(
         logits=logits,
         labels=labels,

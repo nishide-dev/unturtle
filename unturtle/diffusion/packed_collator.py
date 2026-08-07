@@ -210,7 +210,6 @@ class PackedMaskedDiffusionDataCollator:
           ``packed_seq_lengths``  – [total_samples] int32 flat sample lengths (Flash Attn varlen)
           ``cu_seqlens``          – list[Tensor] per-batch int32 cumulative seq lengths
           ``seq_lengths``         – list[Tensor] per-batch int32 individual sample lengths
-          ``sample_timesteps``    – list[Tensor] per-sample ``t`` values per row
           ``position_ids``        – [B, max_seq_length] 0-based position within sample
         """
         # 1. Prepare each sample
@@ -303,8 +302,9 @@ class PackedMaskedDiffusionDataCollator:
         # Build dense (B,) timesteps tensor for DiffusionTrainer compatibility.
         # Each packed row may contain multiple samples with different t values;
         # we use the mean t per row as a representative value for loss weighting.
-        # The per-sample list is preserved as ``sample_timesteps`` for
-        # custom trainers that need per-sample granularity.
+        # Per-sample granularity is available by passing `noise=False` and
+        # letting the process sample per segment; this path's mean is the
+        # legacy compromise.
         dense_timesteps = torch.stack([t.mean() for t in all_timesteps])  # [B], float32
 
         # Build flat packed_seq_lengths tensor for get_packed_info_from_kwargs().
@@ -341,7 +341,6 @@ class PackedMaskedDiffusionDataCollator:
             "packed_seq_lengths": packed_seq_lengths,  # [total_samples] — for TinyA2DAttention_fast_forward
             "cu_seqlens": all_cu_seqlens,  # list[Tensor], one per batch elem
             "seq_lengths": all_seq_lengths,  # list[Tensor], one per batch elem
-            "sample_timesteps": all_timesteps,  # list[Tensor] — per-sample granularity
         }
 
         # 4. Always build the dense block-diagonal mask for non-Flash fallbacks.
