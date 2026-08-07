@@ -24,6 +24,28 @@ path gathers first::
 
 so the output projection runs on the masked positions only.
 
+**Peak memory only improves below roughly a 40% mask ratio.**  Measured on an
+RTX 6000 Ada, bf16, B=4, L=1024, H=1024, forward + loss + backward:
+
+===========  ==========  ===========  ==========
+vocab        mask 15%    mask 50%     mask 75%
+===========  ==========  ===========  ==========
+32000        -28%        +8%          +35%
+128256       -41%        +10%         +49%
+===========  ==========  ===========  ==========
+
+(negative = sparse uses less).  The dense path is harder to beat than the
+``[B, L, V]`` shape suggests: ``Fast_CrossEntropyLoss`` upcasts per tile in
+registers and never materializes an fp32 logits tensor, so dense holds one
+bf16 ``[B, L, V]`` while sparse holds a bf16 ``[M, V]`` plus its autograd
+graph.  Past ``M/(B·L) ≈ 0.4`` the gather stops paying for itself.
+
+That matters because MDLM-style training samples ``t ~ U(0, 1)``, giving ~50%
+average masking — the regime where this path is *not* a memory win.  It is a
+win for low-mask-ratio schedules and, separately, for step time (compute
+scales with ``M``, not ``B·L``).  Callers should pick a path on measured mask
+ratio rather than assuming.
+
 Numerically identical to :func:`~unturtle.kernels.masked_diffusion_loss.fast_masked_diffusion_loss`
 — same loss, same gradients — because cross-entropy at unmasked positions
 contributes exactly zero under ``ignore_index=-100``.  Gathering removes terms
@@ -65,6 +87,8 @@ def sparse_masked_diffusion_loss(
     labels: torch.Tensor,
     diffusion_mask: torch.Tensor,
     loss_weights: torch.Tensor | None = None,
+    logit_softcapping: float = 0,
+    logit_scaling: float = 0,
     loss_norm_type: str = "token",
     **forward_kwargs: Any,
 ) -> torch.Tensor:
@@ -101,6 +125,17 @@ def sparse_masked_diffusion_loss(
             "first."
         )
 
+    if logit_softcapping != 0 or logit_scaling != 0:
+        # Accepted only to reject: `fast_masked_diffusion_loss` applies these to
+        # the logits, and a caller switching paths must not lose them silently.
+        # Measured on a toy vocab, ignoring `logit_scaling=0.0625` (Cohere) puts
+        # the loss 142% off.  Neither Tiny-A2D backbone uses them today.
+        raise ValueError(
+            "sparse_masked_diffusion_loss does not implement logit_softcapping "
+            "or logit_scaling; use fast_masked_diffusion_loss for models that "
+            "need them (Gemma-2 softcap, Cohere scaling)."
+        )
+
     B, L = labels.shape
     if diffusion_mask.shape != (B, L):
         raise ValueError(
@@ -122,19 +157,29 @@ def sparse_masked_diffusion_loss(
     # can mark `-100` positions as masked.
     active = diffusion_mask & maskable_mask
     if not bool(active.any()):
-        # No terms at all. Sum-of-nothing is 0, and returning a tensor tied to
-        # the graph keeps backward() valid for callers that always call it.
-        return hidden.sum() * 0.0
+        # No terms at all.  Project a single row anyway so `lm_head.weight`
+        # stays in the backward graph: with untied weights the dense path
+        # yields a zero grad for it, and a parameter that never participates
+        # trips DDP's find_unused_parameters / desyncs FSDP buckets.  The
+        # multiply by zero keeps the value and every gradient at zero.
+        probe = access.project(model, hidden.reshape(-1, hidden.shape[-1])[:1])
+        return probe.sum() * 0.0
 
     selected_hidden = hidden[active]  # [M, H]
     selected_labels = labels[active]  # [M]
 
     logits = access.project(model, selected_hidden)  # [M, V]
+    # Upcast the [M] losses, never the [M, V] logits.  An fp32 copy of the
+    # projection is 2 bytes/element on top of the bf16 original, both retained
+    # by autograd — enough to make this path use *more* peak memory than the
+    # dense one past roughly a two-thirds mask ratio, which is the regime
+    # MDLM-style training actually runs in.  The dense path upcasts the
+    # per-token loss for the same reason (fused_masked_diffusion_loss L137).
     per_token = F.cross_entropy(
-        logits.float(),
+        logits,
         selected_labels,
         reduction="none",
-    )  # [M]
+    ).float()  # [M]
 
     if loss_weights is not None:
         weights = loss_weights

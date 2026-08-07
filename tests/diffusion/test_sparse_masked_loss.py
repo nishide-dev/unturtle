@@ -341,6 +341,162 @@ class TestItStaysSparse:
             )
 
 
+class TestNoFullVocabUpcast:
+    def test_logits_are_not_upcast_before_cross_entropy(self):
+        """Upcasting `[M, V]` would cost more memory than the path saves.
+
+        An fp32 copy of the projection is retained by autograd alongside the
+        bf16 original, which past roughly a two-thirds mask ratio makes this
+        path use *more* peak memory than the dense one — inverting the point
+        of #61.  Only the `[M]` losses may be upcast.
+        """
+        from unturtle.kernels.sparse_masked_loss import sparse_masked_diffusion_loss
+
+        model = _tiny_a2d_model().to(torch.bfloat16)
+        model.eval()
+        input_ids, labels, diffusion_mask = _batch()
+
+        seen_dtypes = []
+        head = model.get_output_embeddings()
+        original = head.forward
+
+        def record(x):
+            out = original(x)
+            seen_dtypes.append(out.dtype)
+            return out
+
+        head.forward = record
+        try:
+            with torch.no_grad():
+                loss = sparse_masked_diffusion_loss(
+                    model=model,
+                    input_ids=input_ids,
+                    labels=labels,
+                    diffusion_mask=diffusion_mask,
+                )
+        finally:
+            head.forward = original
+
+        assert seen_dtypes == [torch.bfloat16]
+        # The reduction itself is still fp32, matching the dense path.
+        assert loss.dtype == torch.float32
+
+    def test_bf16_loss_matches_the_dense_path(self):
+        from unturtle.kernels.masked_diffusion_loss import fast_masked_diffusion_loss
+        from unturtle.kernels.sparse_masked_loss import sparse_masked_diffusion_loss
+
+        model = _tiny_a2d_model().to(torch.bfloat16)
+        model.eval()
+        input_ids, labels, diffusion_mask = _batch()
+
+        with torch.no_grad():
+            dense = fast_masked_diffusion_loss(
+                logits=model(input_ids=input_ids).logits,
+                labels=labels,
+                diffusion_mask=diffusion_mask,
+            )
+            sparse = sparse_masked_diffusion_loss(
+                model=model,
+                input_ids=input_ids,
+                labels=labels,
+                diffusion_mask=diffusion_mask,
+            )
+
+        assert torch.allclose(sparse, dense, rtol=1e-2, atol=1e-3)
+
+
+class TestRejectsUnimplementedOptions:
+    @pytest.mark.parametrize(
+        "kwargs",
+        [{"logit_softcapping": 30.0}, {"logit_scaling": 0.0625}],
+    )
+    def test_raises_rather_than_ignoring(self, kwargs):
+        """Silently dropping these would train a different objective."""
+        from unturtle.kernels.sparse_masked_loss import sparse_masked_diffusion_loss
+
+        model = _tiny_a2d_model()
+        input_ids, labels, diffusion_mask = _batch()
+
+        with pytest.raises(ValueError, match="logit_"):
+            sparse_masked_diffusion_loss(
+                model=model,
+                input_ids=input_ids,
+                labels=labels,
+                diffusion_mask=diffusion_mask,
+                **kwargs,
+            )
+
+    def test_rejects_an_unknown_norm_type(self):
+        from unturtle.kernels.sparse_masked_loss import sparse_masked_diffusion_loss
+
+        model = _tiny_a2d_model()
+        input_ids, labels, diffusion_mask = _batch()
+
+        with pytest.raises(ValueError, match="loss_norm_type"):
+            sparse_masked_diffusion_loss(
+                model=model,
+                input_ids=input_ids,
+                labels=labels,
+                diffusion_mask=diffusion_mask,
+                loss_norm_type="nonsense",
+            )
+
+    def test_rejects_a_mismatched_diffusion_mask(self):
+        from unturtle.kernels.sparse_masked_loss import sparse_masked_diffusion_loss
+
+        model = _tiny_a2d_model()
+        input_ids, labels, _ = _batch()
+
+        with pytest.raises(ValueError, match="diffusion_mask"):
+            sparse_masked_diffusion_loss(
+                model=model,
+                input_ids=input_ids,
+                labels=labels,
+                diffusion_mask=torch.zeros(1, 1, dtype=torch.bool),
+            )
+
+    def test_rejects_mismatched_weight_shapes(self):
+        from unturtle.kernels.sparse_masked_loss import sparse_masked_diffusion_loss
+
+        model = _tiny_a2d_model()
+        input_ids, labels, diffusion_mask = _batch()
+
+        with pytest.raises(ValueError, match="loss_weights"):
+            sparse_masked_diffusion_loss(
+                model=model,
+                input_ids=input_ids,
+                labels=labels,
+                diffusion_mask=diffusion_mask,
+                loss_weights=torch.ones(3, 3),
+            )
+
+    def test_accepts_b_by_one_weights(self):
+        from unturtle.kernels.masked_diffusion_loss import fast_masked_diffusion_loss
+        from unturtle.kernels.sparse_masked_loss import sparse_masked_diffusion_loss
+
+        model = _tiny_a2d_model()
+        model.eval()
+        input_ids, labels, diffusion_mask = _batch()
+        weights = torch.tensor([[2.0], [0.5]])
+
+        with torch.no_grad():
+            dense = fast_masked_diffusion_loss(
+                logits=model(input_ids=input_ids).logits,
+                labels=labels,
+                diffusion_mask=diffusion_mask,
+                loss_weights=weights,
+            )
+            sparse = sparse_masked_diffusion_loss(
+                model=model,
+                input_ids=input_ids,
+                labels=labels,
+                diffusion_mask=diffusion_mask,
+                loss_weights=weights,
+            )
+
+        assert torch.allclose(sparse, dense, atol=1e-6)
+
+
 class TestFallback:
     def test_reports_unsupported_models(self):
         """Callers need to know when to take the dense path."""
@@ -372,6 +528,84 @@ class TestFallback:
                 labels=labels,
                 diffusion_mask=diffusion_mask,
             )
+
+    def test_empty_mask_keeps_the_head_in_the_backward_graph(self):
+        """An unused parameter desyncs DDP buckets, even with a zero gradient.
+
+        Untied weights make this observable: the dense path yields a zero grad
+        for `lm_head.weight`, so the sparse path must too rather than leaving
+        it `None`.
+        """
+        from unturtle.kernels.sparse_masked_loss import sparse_masked_diffusion_loss
+
+        model = _tiny_a2d_model()
+        model.config.tie_word_embeddings = False
+        head = model.get_output_embeddings()
+        head.weight = torch.nn.Parameter(head.weight.detach().clone())
+        assert head.weight is not model.get_input_embeddings().weight
+
+        input_ids, labels, _ = _batch()
+        empty = torch.zeros_like(labels, dtype=torch.bool)
+
+        sparse_masked_diffusion_loss(
+            model=model,
+            input_ids=input_ids,
+            labels=labels,
+            diffusion_mask=empty,
+        ).backward()
+
+        assert head.weight.grad is not None, (
+            "lm_head dropped out of the backward graph on an empty mask"
+        )
+        assert torch.all(head.weight.grad == 0)
+
+    @pytest.mark.parametrize("loss_norm_type", ["token", "sequence", "batch"])
+    def test_empty_mask_matches_dense_in_every_norm(self, loss_norm_type):
+        from unturtle.kernels.masked_diffusion_loss import fast_masked_diffusion_loss
+        from unturtle.kernels.sparse_masked_loss import sparse_masked_diffusion_loss
+
+        model = _tiny_a2d_model()
+        model.eval()
+        input_ids, labels, _ = _batch()
+        empty = torch.zeros_like(labels, dtype=torch.bool)
+
+        with torch.no_grad():
+            dense = fast_masked_diffusion_loss(
+                logits=model(input_ids=input_ids).logits,
+                labels=labels,
+                diffusion_mask=empty,
+                loss_norm_type=loss_norm_type,
+            )
+            sparse = sparse_masked_diffusion_loss(
+                model=model,
+                input_ids=input_ids,
+                labels=labels,
+                diffusion_mask=empty,
+                loss_norm_type=loss_norm_type,
+            )
+
+        assert torch.allclose(sparse, dense, atol=1e-6)
+
+    def test_all_ignored_row_does_not_divide_by_zero(self):
+        """A sequence with no supervised position at all (`sequence` norm)."""
+        from unturtle.kernels.sparse_masked_loss import sparse_masked_diffusion_loss
+
+        model = _tiny_a2d_model()
+        model.eval()
+        input_ids, labels, diffusion_mask = _batch()
+        labels[1, :] = -100
+        diffusion_mask[1, :] = False
+
+        with torch.no_grad():
+            loss = sparse_masked_diffusion_loss(
+                model=model,
+                input_ids=input_ids,
+                labels=labels,
+                diffusion_mask=diffusion_mask,
+                loss_norm_type="sequence",
+            )
+
+        assert torch.isfinite(loss)
 
     def test_empty_mask_does_not_divide_by_zero(self):
         from unturtle.kernels.sparse_masked_loss import sparse_masked_diffusion_loss
