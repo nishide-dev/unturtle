@@ -55,17 +55,51 @@ class SparseOutputAccess:
     project: Callable[[Any, Any], Any]
 
 
+def _resolve_backbone(model: Any) -> Any | None:
+    """The module that produces hidden states, below the output head.
+
+    ``get_decoder()`` rather than ``model.model``: on a ``PeftModel``,
+    ``.model`` is the *LM-head model*, not the backbone
+    (``PeftModel.model -> TinyA2DLlamaLMHeadModel``), so running it executes
+    the head and returns logits — the exact cost this capability exists to
+    avoid, and shaped just like hidden states.  ``get_decoder()`` unwraps
+    correctly through PEFT and is the transformers-standard accessor.
+    """
+    get_decoder = getattr(model, "get_decoder", None)
+    if get_decoder is not None:
+        try:
+            backbone = get_decoder()
+        except (AttributeError, NotImplementedError):
+            backbone = None
+        if backbone is not None and backbone is not model:
+            return backbone
+    return None
+
+
 def _standard_hidden_states(model: Any, **forward_kwargs: Any) -> Any:
     """Run the backbone and return its last hidden state.
 
-    ``model.model`` is the transformers convention for "everything below the
-    output head", so this covers any family that follows it.
+    Raises:
+        TypeError: if the backbone does not return a ``last_hidden_state``.
+            Deliberately loud: a module returning logits here would look like
+            a valid hidden-state tensor and silently double-apply the output
+            head, corrupting both loss and gradients.
     """
-    outputs = model.model(**forward_kwargs)
+    backbone = _resolve_backbone(model)
+    if backbone is None:
+        raise TypeError(
+            f"{type(model).__name__} exposes no decoder backbone; "
+            "sparse output should not have been resolved for it."
+        )
+    outputs = backbone(**forward_kwargs)
     hidden = getattr(outputs, "last_hidden_state", None)
     if hidden is None:
-        # Some backbones return a plain tuple.
-        hidden = outputs[0]
+        raise TypeError(
+            f"{type(backbone).__name__} returned "
+            f"{type(outputs).__name__} without `last_hidden_state`; the "
+            "sparse-output path needs hidden states, and treating another "
+            "tensor as hidden states would double-apply the output head."
+        )
     return hidden
 
 
@@ -75,16 +109,22 @@ def _standard_project(model: Any, hidden: Any) -> Any:
 
 
 def standard_sparse_output(model: Any) -> SparseOutputAccess | None:
-    """Access for a model following the standard transformers layout.
+    """Access for a model whose backbone is reachable via ``get_decoder()``.
 
     Returns ``None`` when the model cannot support the sparse path — no output
-    embedding to project with, or no ``.model`` backbone to run without the
+    embedding to project with, or no separate backbone to run without the
     head — so callers fall back to the dense path rather than crashing.
+
+    Note this checks that the pieces *exist*, not that the backbone returns
+    hidden states; that is verified at call time (see
+    :func:`_standard_hidden_states`).  A family whose ``get_decoder()``
+    returns logits must therefore not be given this resolver just because the
+    attributes are present.
     """
     get_output_embeddings = getattr(model, "get_output_embeddings", None)
     if get_output_embeddings is None or get_output_embeddings() is None:
         return None
-    if getattr(model, "model", None) is None:
+    if _resolve_backbone(model) is None:
         return None
     return SparseOutputAccess(
         hidden_states=_standard_hidden_states,

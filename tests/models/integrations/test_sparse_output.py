@@ -134,19 +134,28 @@ class TestSparseOutputAccess:
             "sparse projection diverged from the dense LM head"
         )
 
-    def test_projection_is_the_models_own_output_embedding(self):
-        """Must use the real head, or tied weights would silently diverge."""
+    def test_projection_tracks_updates_to_the_real_head(self):
+        """A private copy of the head would drift once weights change.
+
+        Comparing against `get_output_embeddings()(hidden)` alone would be
+        tautological — that is literally what the implementation calls. So
+        mutate the head's weight and require the projection to follow.
+        """
         from unturtle.models.integrations import resolve_sparse_output
 
         model = _tiny_a2d_model()
         access = resolve_sparse_output(model)
+        hidden = torch.randn(3, model.config.hidden_size)
 
         with torch.no_grad():
-            hidden = torch.randn(3, model.config.hidden_size)
-            projected = access.project(model, hidden)
-            expected = model.get_output_embeddings()(hidden)
+            before = access.project(model, hidden).clone()
+            model.get_output_embeddings().weight.mul_(2.0)
+            after = access.project(model, hidden)
 
-        assert torch.equal(projected, expected)
+        assert not torch.allclose(before, after), (
+            "projection ignored a weight update; it is not using the live head"
+        )
+        assert torch.allclose(after, before * 2.0, atol=1e-5)
 
 
 class TestNoTrainerSideModelInspection:
@@ -191,30 +200,229 @@ class TestGracefulDegradation:
             def get_output_embeddings(self):
                 return torch.nn.Linear(4, 8)
 
-        # No `.model` backbone to run without the head.
+        # No decoder backbone to run without the head.
+        assert resolve_sparse_output(_Model()) is None
+
+    def test_self_returning_decoder_has_no_access(self):
+        """A `get_decoder()` returning the model itself would re-run the head."""
+        from unturtle.models.integrations import resolve_sparse_output
+
+        class _Cfg:
+            model_type = "tiny-a2d-llama"
+
+        class _Model:
+            config = _Cfg()
+
+            def get_output_embeddings(self):
+                return torch.nn.Linear(4, 8)
+
+            def get_decoder(self):
+                return self
+
         assert resolve_sparse_output(_Model()) is None
 
 
-@pytest.mark.parametrize("wrapped", [False, True])
-def test_works_through_a_peft_style_wrapper(wrapped):
-    """Real training runs are PEFT-wrapped; access must survive that."""
-    from unturtle.models.integrations import resolve_sparse_output
+def _peft_wrapped(model):
+    import peft
 
-    model = _tiny_a2d_model()
-    if not wrapped:
-        assert resolve_sparse_output(model) is not None
-        return
+    return peft.get_peft_model(
+        model,
+        peft.LoraConfig(
+            r=4, target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM"
+        ),
+    )
 
-    class _Wrapper:
-        def __init__(self, inner):
-            self.base_model = inner
-            self.config = inner.config
 
-        def get_output_embeddings(self):
-            return self.base_model.get_output_embeddings()
+class TestThroughRealPeft:
+    """Training runs are PEFT-wrapped, so this is the primary use case.
 
-        @property
-        def model(self):
-            return self.base_model.model
+    A hand-rolled wrapper is not good enough here: PEFT nests as
+    ``PeftModel.model -> LM-head model`` (one level shallower than intuition
+    suggests), so a stand-in that exposes the backbone at ``.model`` would
+    model a hierarchy PEFT never produces and hide a real bug.
+    """
 
-    assert resolve_sparse_output(_Wrapper(model)) is not None
+    def test_access_resolves(self):
+        from unturtle.models.integrations import resolve_sparse_output
+
+        assert resolve_sparse_output(_peft_wrapped(_tiny_a2d_model())) is not None
+
+    def test_hidden_states_are_hidden_sized_not_vocab_sized(self):
+        from unturtle.models.integrations import resolve_sparse_output
+
+        model = _peft_wrapped(_tiny_a2d_model())
+        model.eval()
+        access = resolve_sparse_output(model)
+
+        with torch.no_grad():
+            hidden = access.hidden_states(model, input_ids=torch.randint(0, 64, (2, 5)))
+
+        assert hidden.shape == (2, 5, 16), (
+            f"got {tuple(hidden.shape)}; vocab-sized output means the LM head ran"
+        )
+
+    def test_lm_head_never_runs(self):
+        from unturtle.models.integrations import resolve_sparse_output
+
+        model = _peft_wrapped(_tiny_a2d_model())
+        model.eval()
+        access = resolve_sparse_output(model)
+
+        head = model.get_output_embeddings()
+        calls = []
+        original = head.forward
+        head.forward = lambda *a, **k: calls.append(1) or original(*a, **k)
+        try:
+            with torch.no_grad():
+                access.hidden_states(model, input_ids=torch.randint(0, 64, (1, 4)))
+        finally:
+            head.forward = original
+
+        assert calls == [], "the LM head ran under PEFT; the sparse path saved nothing"
+
+    def test_projection_matches_the_dense_path(self):
+        from unturtle.models.integrations import resolve_sparse_output
+
+        model = _peft_wrapped(_tiny_a2d_model())
+        model.eval()
+        access = resolve_sparse_output(model)
+
+        input_ids = torch.randint(0, 64, (2, 6))
+        mask = torch.zeros(2, 6, dtype=torch.bool)
+        mask[0, 2] = mask[1, 5] = True
+
+        with torch.no_grad():
+            dense = model(input_ids=input_ids).logits[mask]
+            hidden = access.hidden_states(model, input_ids=input_ids)
+            sparse = access.project(model, hidden[mask])
+
+        assert torch.allclose(sparse, dense, atol=1e-5)
+
+
+class TestGradientsFlow:
+    """#61 is a *training* path; forward equivalence alone proves nothing."""
+
+    def test_sparse_gradients_match_the_dense_path(self):
+        from unturtle.models.integrations import resolve_sparse_output
+
+        input_ids = torch.randint(0, 64, (2, 6))
+        mask = torch.zeros(2, 6, dtype=torch.bool)
+        mask[0, 1] = mask[0, 3] = mask[1, 4] = True
+        targets = torch.randint(0, 64, (int(mask.sum()),))
+
+        torch.manual_seed(0)
+        dense_model = _tiny_a2d_model()
+        torch.manual_seed(0)
+        sparse_model = _tiny_a2d_model()
+
+        dense_logits = dense_model(input_ids=input_ids).logits[mask]
+        torch.nn.functional.cross_entropy(dense_logits, targets).backward()
+
+        access = resolve_sparse_output(sparse_model)
+        hidden = access.hidden_states(sparse_model, input_ids=input_ids)
+        sparse_logits = access.project(sparse_model, hidden[mask])
+        torch.nn.functional.cross_entropy(sparse_logits, targets).backward()
+
+        dense_grads = dict(dense_model.named_parameters())
+        checked = 0
+        for name, param in sparse_model.named_parameters():
+            reference = dense_grads[name]
+            if reference.grad is None:
+                assert param.grad is None, f"{name}: sparse produced a spurious grad"
+                continue
+            assert param.grad is not None, f"{name}: sparse path dropped the gradient"
+            assert torch.allclose(param.grad, reference.grad, atol=1e-6), name
+            checked += 1
+
+        assert checked > 0, "no gradients compared; the test proved nothing"
+
+    def test_hidden_states_stay_attached_to_the_graph(self):
+        """A stray `.detach()` would silently make training a no-op."""
+        from unturtle.models.integrations import resolve_sparse_output
+
+        model = _tiny_a2d_model()
+        access = resolve_sparse_output(model)
+
+        hidden = access.hidden_states(model, input_ids=torch.randint(0, 64, (1, 4)))
+
+        assert hidden.requires_grad
+        assert hidden.grad_fn is not None
+
+
+class TestForwardKwargsReachTheBackbone:
+    """A dropped attention mask would corrupt every padded batch, silently."""
+
+    @pytest.mark.parametrize("extra_key", ["attention_mask", "position_ids"])
+    def test_kwarg_changes_the_result(self, extra_key):
+        from unturtle.models.integrations import resolve_sparse_output
+
+        model = _tiny_a2d_model()
+        model.eval()
+        access = resolve_sparse_output(model)
+
+        input_ids = torch.randint(1, 64, (1, 6))
+        if extra_key == "attention_mask":
+            extra = torch.tensor([[1, 1, 1, 1, 0, 0]])
+        else:
+            extra = torch.tensor([[5, 4, 3, 2, 1, 0]])
+
+        with torch.no_grad():
+            plain = access.hidden_states(model, input_ids=input_ids)
+            with_extra = access.hidden_states(
+                model, input_ids=input_ids, **{extra_key: extra}
+            )
+
+        assert not torch.allclose(plain, with_extra), (
+            f"{extra_key} did not reach the backbone; it is being dropped"
+        )
+
+    def test_matches_dense_under_a_padding_mask(self):
+        from unturtle.models.integrations import resolve_sparse_output
+
+        model = _tiny_a2d_model()
+        model.eval()
+        access = resolve_sparse_output(model)
+
+        input_ids = torch.randint(1, 64, (2, 6))
+        attention_mask = torch.tensor([[1, 1, 1, 1, 0, 0], [1, 1, 1, 1, 1, 1]])
+        mask = torch.zeros(2, 6, dtype=torch.bool)
+        mask[0, 2] = mask[1, 4] = True
+
+        with torch.no_grad():
+            dense = model(input_ids=input_ids, attention_mask=attention_mask).logits[
+                mask
+            ]
+            hidden = access.hidden_states(
+                model, input_ids=input_ids, attention_mask=attention_mask
+            )
+            sparse = access.project(model, hidden[mask])
+
+        assert torch.allclose(sparse, dense, atol=1e-5)
+
+
+class TestLoudFailureOnLogitReturningBackbone:
+    def test_raises_rather_than_treating_logits_as_hidden_states(self):
+        """The failure mode that shipped green before review.
+
+        A backbone returning logits looks exactly like hidden states, so
+        accepting it would double-apply the output head.
+        """
+        from unturtle.models.integrations.sparse_output import (
+            _standard_hidden_states,
+        )
+
+        class _LogitBackbone(torch.nn.Module):
+            def forward(self, **kwargs):
+                # A plain tuple, as some upstream backbones return.
+                return (torch.randn(1, 4, 64),)
+
+        class _Model(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.backbone = _LogitBackbone()
+
+            def get_decoder(self):
+                return self.backbone
+
+        with pytest.raises(TypeError, match="last_hidden_state"):
+            _standard_hidden_states(_Model(), input_ids=torch.zeros(1, 4).long())
