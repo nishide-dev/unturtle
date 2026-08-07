@@ -155,6 +155,90 @@ class TestFastMaskedDiffusionLoss:
             f"cuda timestep: ref={ref.item():.6f} got={got.item():.6f}"
         )
 
+    def test_per_position_timesteps_weight_each_position(self):
+        """`(B, L)` timesteps weight positions individually, not per row.
+
+        Packed rows hold several original samples, each owning its own `t`
+        (#62).  A `(B, L)` tensor is the only way to express that, and it must
+        be applied elementwise — collapsing it to a per-row value is exactly
+        the approximation #62 removed.
+        """
+        torch.manual_seed(11)
+        B, L, V = 3, 12, 200
+        logits = torch.randn(B, L, V)
+        labels = torch.randint(0, V, (B, L))
+        mask = torch.rand(B, L) > 0.5
+        t = torch.rand(B, L) * 0.9 + 0.1  # [B, L], every position differs
+
+        ref = _reference_masked_ce(logits, labels, mask, loss_weights=1.0 / t)
+        got = self.masked_diffusion_loss_from_timesteps(logits, labels, mask, t)
+
+        assert torch.allclose(ref, got, atol=1e-4), (
+            f"per-position: ref={ref.item():.6f} got={got.item():.6f}"
+        )
+
+    def test_per_position_timesteps_differ_from_row_mean(self):
+        """Guards the point of `(B, L)`: it must not be a relabelled `(B,)`.
+
+        A weighted mean is not the mean of the weights, so feeding each row's
+        mean `t` has to give a different loss.  Without this, an implementation
+        that silently reduced `(B, L)` to its row mean would still pass the
+        elementwise-reference test on some inputs.
+        """
+        torch.manual_seed(12)
+        B, L, V = 2, 10, 100
+        logits = torch.randn(B, L, V)
+        labels = torch.randint(0, V, (B, L))
+        mask = torch.ones(B, L, dtype=torch.bool)
+        t = torch.rand(B, L) * 0.9 + 0.1
+
+        per_position = self.masked_diffusion_loss_from_timesteps(
+            logits, labels, mask, t
+        )
+        row_mean = self.masked_diffusion_loss_from_timesteps(
+            logits, labels, mask, t.mean(dim=1)
+        )
+
+        assert not torch.allclose(per_position, row_mean, atol=1e-4), (
+            "per-position weighting collapsed to the row mean: "
+            f"{per_position.item():.6f} vs {row_mean.item():.6f}"
+        )
+
+    def test_broadcast_timesteps_match_expanded_form(self):
+        """`(B,)` must behave exactly like its `(B, L)` expansion."""
+        torch.manual_seed(13)
+        B, L, V = 3, 12, 200
+        logits = torch.randn(B, L, V)
+        labels = torch.randint(0, V, (B, L))
+        mask = torch.rand(B, L) > 0.5
+        t = torch.rand(B) * 0.9 + 0.1
+
+        per_row = self.masked_diffusion_loss_from_timesteps(logits, labels, mask, t)
+        expanded = self.masked_diffusion_loss_from_timesteps(
+            logits, labels, mask, t[:, None].expand(B, L).contiguous()
+        )
+
+        assert torch.allclose(per_row, expanded, atol=1e-6), (
+            f"(B,)={per_row.item():.6f} != (B,L)-expanded={expanded.item():.6f}"
+        )
+
+    @pytest.mark.parametrize("bad_shape", [(4,), (3, 13), (12,), (3, 12, 1)])
+    def test_rejects_timesteps_that_match_neither_shape(self, bad_shape):
+        """A wrong shape raises, and raises `ValueError` rather than asserting.
+
+        `assert` statements vanish under `python -O`, which would let a
+        mis-shaped weight broadcast silently into the loss.
+        """
+        torch.manual_seed(14)
+        B, L, V = 3, 12, 200
+        logits = torch.randn(B, L, V)
+        labels = torch.randint(0, V, (B, L))
+        mask = torch.rand(B, L) > 0.5
+        t = torch.rand(*bad_shape) * 0.9 + 0.1
+
+        with pytest.raises(ValueError, match="timesteps must have shape"):
+            self.masked_diffusion_loss_from_timesteps(logits, labels, mask, t)
+
     def test_large_vocab_cpu(self):
         """Vocab > 65536 triggers the chunked forward path."""
         torch.manual_seed(99)
