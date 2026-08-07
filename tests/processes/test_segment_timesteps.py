@@ -158,3 +158,116 @@ class TestWeightingBecomesCorrect:
             "segments drew indistinguishable timesteps; the fixture cannot "
             "show what the mean discarded"
         )
+
+
+class TestPackedCollatorIntegration:
+    """The collator emits topology; the process owns corruption (#62 PR3)."""
+
+    class _Tok:
+        mask_token_id = MASK_ID
+        pad_token_id = 0
+        eos_token_id = 2
+
+    def _collator(self, noise):
+        from unturtle.diffusion.packed_collator import (
+            PackedMaskedDiffusionDataCollator,
+        )
+
+        return PackedMaskedDiffusionDataCollator(
+            tokenizer=self._Tok(),
+            max_seq_length=16,
+            mask_token_id=MASK_ID,
+            completion_only=False,
+            noise=noise,
+        )
+
+    def _features(self):
+        return [{"input_ids": [5, 6, 7]}, {"input_ids": [8, 9]}]
+
+    def test_clean_collator_emits_topology_not_supervision(self):
+        batch = self._collator(noise=False)(self._features())
+
+        assert "segment_ids" in batch
+        # Both supervision keys or neither: one alone is the half-noised shape
+        # `classify_batch` rejects.
+        assert "diffusion_mask" not in batch
+        assert "timesteps" not in batch
+
+    def test_noising_collator_is_unchanged(self):
+        batch = self._collator(noise=True)(self._features())
+
+        assert "diffusion_mask" in batch
+        assert "timesteps" in batch
+        assert batch["timesteps"].shape == (1,), "the legacy row mean is [B]"
+
+    def test_segment_ids_identify_the_original_samples(self):
+        batch = self._collator(noise=False)(self._features())
+        segments = batch["segment_ids"][0]
+
+        # Two samples of length 3 and 2, then padding.
+        assert segments[:3].tolist() == [0, 0, 0]
+        assert segments[3:5].tolist() == [1, 1]
+        assert (segments[5:] == -1).all(), "padding must own no sample"
+
+    def test_clean_packed_batch_flows_through_the_process(self):
+        batch = self._collator(noise=False)(self._features())
+        out = _process()(
+            {
+                "input_ids": batch["input_ids"],
+                "attention_mask": batch["attention_mask"],
+                "labels": batch["labels"],
+                "segment_ids": batch["segment_ids"].clamp_min(0),
+            }
+        )
+
+        t = out.objective_inputs["timesteps"]
+        assert t.shape == batch["input_ids"].shape
+        # Each original sample shares one t.
+        assert t[0, 0] == t[0, 1] == t[0, 2]
+        assert t[0, 3] == t[0, 4]
+
+
+class TestPackedWeightingGuards:
+    """`timestep`/`scheduler` were barred on packed input; only the row mean was the reason."""
+
+    class _Tok:
+        mask_token_id = MASK_ID
+        pad_token_id = 0
+        eos_token_id = 2
+
+    def _packed(self, noise):
+        from unturtle.diffusion.packed_collator import (
+            PackedMaskedDiffusionDataCollator,
+        )
+
+        return PackedMaskedDiffusionDataCollator(
+            tokenizer=self._Tok(), max_seq_length=16, mask_token_id=MASK_ID, noise=noise
+        )
+
+    def _evaluator(self, collator, weighting):
+        import torch.nn as nn
+
+        from unturtle.eval import MaskedDiffusionEvaluator
+
+        class _Cfg:
+            model_type = "tiny-a2d-llama"
+            mask_token_id = MASK_ID
+
+        model = nn.Linear(2, 2)
+        model.config = _Cfg()
+        return MaskedDiffusionEvaluator(
+            model=model,
+            tokenizer=self._Tok(),
+            data_collator=collator,
+            loss_weight_type=weighting,
+        )
+
+    @pytest.mark.parametrize("weighting", ["timestep", "scheduler"])
+    def test_noising_packed_still_rejected(self, weighting):
+        with pytest.raises(ValueError, match="noising"):
+            self._evaluator(self._packed(noise=True), weighting)
+
+    @pytest.mark.parametrize("weighting", ["timestep", "scheduler"])
+    def test_clean_packed_is_now_allowed(self, weighting):
+        """The process supplies a per-segment [B, L] t, so it is well-defined."""
+        assert self._evaluator(self._packed(noise=False), weighting) is not None

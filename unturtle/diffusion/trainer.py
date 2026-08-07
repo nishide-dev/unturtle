@@ -355,13 +355,23 @@ class DiffusionTrainer(UnturtleTrainer):
         # verify the model actually consumes it (see compute_loss).
         self._packed_metadata_checked = False
 
-        if isinstance(
-            self.data_collator, PackedMaskedDiffusionDataCollator
-        ) and self._loss_weight_type not in ("uniform", "cart"):
+        # `timestep`/`scheduler` weighting needs a per-sample t.  The *noising*
+        # packed collator collapses its samples to a row mean, which is the
+        # wrong t for each of them, so those weightings stay barred there.  The
+        # clean packed collator emits `segment_ids` and lets the process build
+        # a full [B, L] instead, so it is fine (#62 PR3).
+        collator = self.data_collator
+        if (
+            isinstance(collator, PackedMaskedDiffusionDataCollator)
+            and getattr(collator, "noise", True)
+            and self._loss_weight_type not in ("uniform", "cart")
+        ):
             raise ValueError(
-                "PackedMaskedDiffusionDataCollator is not supported for diffusion training with "
-                "loss_weight_type='timestep' or 'scheduler'. Use uniform/cart weighting or an "
-                "unpacked MaskedDiffusionDataCollator."
+                "A *noising* PackedMaskedDiffusionDataCollator is not supported for "
+                "diffusion training with loss_weight_type='timestep' or 'scheduler': "
+                "it collapses each packed row's per-sample timesteps to a mean. "
+                "Pass noise=False so the forward process samples per segment, use "
+                "uniform/cart weighting, or use an unpacked collator."
             )
 
     # ------------------------------------------------------------------ #

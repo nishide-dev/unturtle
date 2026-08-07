@@ -106,9 +106,17 @@ class PackedMaskedDiffusionDataCollator:
     time_epsilon: float = 1e-3
     completion_only: bool = True
     truncate_long: str = "truncate"  # "truncate" | "drop"
+    #: When ``False``, pack and emit ``segment_ids`` but apply no corruption —
+    #: the device-side ``MaskedDiffusionProcess`` samples one timestep per
+    #: segment instead of this collator collapsing them to a row mean (#62).
+    noise: bool = True
 
     def __post_init__(self) -> None:
-        if self.mask_token_id is None:
+        if self.mask_token_id is None and not self.noise:
+            # A clean collator never writes a mask token, so it does not need
+            # one; the process resolves it from orchestration.
+            pass
+        elif self.mask_token_id is None:
             if self.tokenizer.mask_token_id is None:
                 raise ValueError(
                     "Tokenizer has no mask_token_id.  Pass mask_token_id "
@@ -226,6 +234,8 @@ class PackedMaskedDiffusionDataCollator:
         out_attn_mask = torch.zeros(B, L, dtype=torch.long)
         out_diffusion_mask = torch.zeros(B, L, dtype=torch.bool)
         out_position_ids = torch.zeros(B, L, dtype=torch.long)
+        # -1 at padding: no original sample owns those positions.
+        out_segment_ids = torch.full((B, L), -1, dtype=torch.long)
 
         # per-batch-element metadata (variable number of samples per slot)
         all_cu_seqlens: list[torch.Tensor] = []
@@ -253,13 +263,18 @@ class PackedMaskedDiffusionDataCollator:
                 )
                 p_mask = 1.0 - alpha_t
 
-                rand = torch.rand(slen)
-                maskable_t = torch.tensor(maskable, dtype=torch.bool)
-                diff_mask = (rand < p_mask) & maskable_t  # [slen] bool
+                if self.noise:
+                    rand = torch.rand(slen)
+                    maskable_t = torch.tensor(maskable, dtype=torch.bool)
+                    diff_mask = (rand < p_mask) & maskable_t  # [slen] bool
 
-                # Apply noising
-                noised = torch.tensor(ids, dtype=torch.long)
-                noised[diff_mask] = self.mask_token_id
+                    # Apply noising
+                    noised = torch.tensor(ids, dtype=torch.long)
+                    noised[diff_mask] = self.mask_token_id
+                else:
+                    # Clean path: the process corrupts device-side, per segment.
+                    diff_mask = torch.zeros(slen, dtype=torch.bool)
+                    noised = torch.tensor(ids, dtype=torch.long)
 
                 # Keep clean labels for all maskable positions; prompt/pad stay -100.
                 lbl = torch.tensor(clean_labels, dtype=torch.long)
@@ -272,6 +287,7 @@ class PackedMaskedDiffusionDataCollator:
                 out_attn_mask[b, offset:end] = 1
                 out_diffusion_mask[b, offset:end] = diff_mask
                 out_position_ids[b, offset:end] = pos
+                out_segment_ids[b, offset:end] = len(seq_lens)
 
                 seq_lens.append(slen)
                 offset = end
@@ -302,9 +318,26 @@ class PackedMaskedDiffusionDataCollator:
             "input_ids": out_input_ids,
             "labels": out_labels,
             "attention_mask": out_attn_mask,
-            "diffusion_mask": out_diffusion_mask,
             "position_ids": out_position_ids,
-            "timesteps": dense_timesteps,  # [B] — DiffusionTrainer compatible
+            # Packing topology: which original sample owns each position.  The
+            # process reads it to sample one timestep per sample; padding is -1.
+            "segment_ids": out_segment_ids,
+            # Both supervision keys, or neither: `classify_batch` treats a
+            # batch carrying only one of them as half-noised and rejects it,
+            # and an all-False `diffusion_mask` with no `timesteps` is exactly
+            # that shape.  The clean path emits neither and lets the process
+            # build both — sampling one timestep per segment rather than the
+            # row mean this path is stuck with, which is the wrong t for every
+            # sample in the row and why it bars `timestep`/`scheduler`
+            # weighting.
+            **(
+                {
+                    "diffusion_mask": out_diffusion_mask,
+                    "timesteps": dense_timesteps,
+                }
+                if self.noise
+                else {}
+            ),
             "packed_seq_lengths": packed_seq_lengths,  # [total_samples] — for TinyA2DAttention_fast_forward
             "cu_seqlens": all_cu_seqlens,  # list[Tensor], one per batch elem
             "seq_lengths": all_seq_lengths,  # list[Tensor], one per batch elem
