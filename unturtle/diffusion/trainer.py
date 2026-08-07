@@ -328,25 +328,26 @@ class DiffusionTrainer(UnturtleTrainer):
 
         model = kwargs.get("model") or (pargs[0] if pargs else None)
 
-        if self._sparse_lm_head:
-            # Checked here, not per step: a silent fallback would turn an
-            # explicit opt-in into a no-op that only shows up as unexplained
-            # memory use.  The kernel rejects softcapping/scaling for the same
-            # reason (they would be silently dropped), so reject them together.
-            if model is not None and not supports_sparse_masked_loss(model):
-                raise ValueError(
-                    f"sparse_lm_head=True but {type(model).__name__} does not "
-                    "declare the 'sparse_output_projection' capability. "
-                    "Supported today: the Tiny-A2D family. Set "
-                    "sparse_lm_head=False to use the dense path."
-                )
-            for option in ("logit_softcapping", "logit_scaling"):
-                if getattr(args, option, 0):
-                    raise ValueError(
-                        f"sparse_lm_head=True is incompatible with {option}: "
-                        "the sparse path does not apply it, and dropping it "
-                        "silently would change the loss."
-                    )
+        # Checked at construction, not per step: a silent fallback would turn
+        # an explicit opt-in into a no-op that surfaces only as unexplained
+        # memory use.
+        #
+        # Deliberately no guard for logit_softcapping / logit_scaling: neither
+        # is a field on DiffusionTrainingArguments, so a check against `args`
+        # could never fire and would read as protection that does not exist.
+        # `sparse_masked_diffusion_loss` rejects them where they can actually
+        # be passed.  Add one here only alongside adding the fields.
+        if (
+            self._sparse_lm_head
+            and model is not None
+            and not supports_sparse_masked_loss(model)
+        ):
+            raise ValueError(
+                f"sparse_lm_head=True but {type(model).__name__} does not "
+                "declare the 'sparse_output_projection' capability. "
+                "Supported today: the Tiny-A2D family. Set "
+                "sparse_lm_head=False to use the dense path."
+            )
 
         tokenizer = kwargs.get("tokenizer") or kwargs.get("processing_class")
         mask_token_id = resolve_mask_token_id(tokenizer, model)
@@ -478,10 +479,11 @@ class DiffusionTrainer(UnturtleTrainer):
             if flat_lengths is not None and labels.shape[0] == 1:
                 seq_lengths = [flat_lengths]
 
-        # `getattr` default, not `self._sparse_lm_head`: subclasses and tests
-        # construct trainers that bypass `__init__` (BlockDiffusionTrainer,
-        # `object.__new__`-style fixtures), and an opt-in optimization must
-        # never be the reason such a trainer fails to compute a loss.
+        # `getattr` default, not `self._sparse_lm_head`: test fixtures build
+        # trainers without running `__init__` (SimpleNamespace / __new__), and
+        # an opt-in optimization must never be the reason such a trainer fails
+        # to compute a loss at all.  (BlockDiffusionTrainer is NOT an example —
+        # it calls super().__init__ and gets the attribute normally.)
         if getattr(self, "_sparse_lm_head", False) and not return_outputs:
             # `return_outputs` forces the dense path: the caller wants the
             # model outputs, and the whole point of the sparse path is that

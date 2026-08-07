@@ -286,6 +286,114 @@ class TestItActuallyTakesTheSparsePath:
         assert hasattr(outputs, "logits"), "outputs must carry logits"
 
 
+class TestPackedBatches:
+    """Packed batches are this PR's real risk surface.
+
+    The sparse path calls the backbone directly instead of going through the
+    LM-head wrapper, so it is the `forward_kwargs` filter — not the loss maths
+    — that decides whether `block_attention_mask` / `packed_seq_lengths` still
+    reach attention.  Losing them does not raise: attention silently stops
+    being blocked at sample boundaries, samples contaminate each other, and
+    the loss still decreases (CLAUDE.md flags exactly this).  Parity on a
+    packed batch is the cheap way to keep a future refactor of that filter
+    honest.
+    """
+
+    @pytest.mark.parametrize("weighting", ["uniform", "timestep", "cart"])
+    def test_packed_parity(self, weighting, tmp_path):
+        """`cart` matters most here — it is the only weighting reading
+        packed structure (`seq_lengths`), so it exercises the metadata path
+        end to end rather than only the attention kwargs."""
+        from unturtle.diffusion.packed_collator import (
+            PackedMaskedDiffusionDataCollator,
+        )
+
+        tokenizer = _tokenizer()
+        collator = PackedMaskedDiffusionDataCollator(
+            tokenizer=tokenizer,
+            max_seq_length=16,
+            mask_token_id=tokenizer.mask_token_id,
+            completion_only=False,
+            noise=False,
+        )
+        clean = collator([{"input_ids": [5, 6, 7]}, {"input_ids": [8, 9]}])
+
+        dense = _trainer(
+            _tiny_a2d_model(),
+            tmp_path / "dense",
+            loss_weight_type=weighting,
+            sparse_lm_head=False,
+        )
+        sparse = _trainer(
+            _tiny_a2d_model(),
+            tmp_path / "sparse",
+            loss_weight_type=weighting,
+            sparse_lm_head=True,
+        )
+        dense.model.eval()
+        sparse.model.eval()
+
+        # Noise ONCE and hand both trainers the same corrupted batch.  A clean
+        # packed batch carries no `diffusion_mask`, so letting each trainer
+        # noise it inside `compute_loss` gives them different random masks and
+        # the comparison measures the RNG, not the two code paths.
+        noised = dense._apply_forward_process(dict(clean))
+
+        with torch.no_grad():
+            dense_loss = dense.compute_loss(dense.model, dict(noised))
+            sparse_loss = sparse.compute_loss(sparse.model, dict(noised))
+
+        assert torch.isfinite(dense_loss), f"{weighting}: dense loss {dense_loss}"
+        assert torch.allclose(sparse_loss, dense_loss, atol=1e-6), (
+            f"packed {weighting}: dense={dense_loss.item():.8f} "
+            f"sparse={sparse_loss.item():.8f}"
+        )
+
+    def test_packed_attention_metadata_reaches_the_backbone(self, tmp_path):
+        """Pins the kwargs themselves, not just that the losses agree.
+
+        Loss parity would survive both paths dropping the metadata together;
+        this asserts the packed keys actually arrive.
+        """
+        from unturtle.diffusion.packed_collator import (
+            PackedMaskedDiffusionDataCollator,
+        )
+
+        tokenizer = _tokenizer()
+        collator = PackedMaskedDiffusionDataCollator(
+            tokenizer=tokenizer,
+            max_seq_length=16,
+            mask_token_id=tokenizer.mask_token_id,
+            completion_only=False,
+            noise=False,
+        )
+        clean = collator([{"input_ids": [5, 6, 7]}, {"input_ids": [8, 9]}])
+
+        trainer = _trainer(_tiny_a2d_model(), tmp_path, sparse_lm_head=True)
+        trainer.model.eval()
+
+        backbone = trainer.model.get_decoder()
+        original = backbone.forward
+        seen: dict[str, object] = {}
+
+        def capture(*args, **kwargs):
+            seen.update(kwargs)
+            return original(*args, **kwargs)
+
+        backbone.forward = capture
+        try:
+            with torch.no_grad():
+                trainer.compute_loss(trainer.model, dict(clean))
+        finally:
+            backbone.forward = original
+
+        for key in ("block_attention_mask", "packed_seq_lengths"):
+            assert seen.get(key) is not None, (
+                f"the sparse path did not pass {key!r} to the backbone; "
+                "attention would not be blocked at packed-sample boundaries"
+            )
+
+
 class TestRejectsUnsupportedConfigurations:
     def test_unsupported_model_raises_at_construction(self, tmp_path):
         """Fail loudly rather than fall back: a silent no-op is invisible."""
@@ -295,18 +403,6 @@ class TestRejectsUnsupportedConfigurations:
     def test_unsupported_model_is_fine_with_the_flag_off(self, tmp_path):
         """The guard must only fire for callers who asked for the sparse path."""
         assert _trainer(_bert_model(), tmp_path, sparse_lm_head=False) is not None
-
-    @pytest.mark.parametrize("option", ["logit_softcapping", "logit_scaling"])
-    def test_softcapping_and_scaling_are_rejected(self, option, tmp_path):
-        """The sparse kernel does not apply them; dropping them silently would
-        change the loss (measured 142% off for logit_scaling=0.0625)."""
-        from unturtle.diffusion import DiffusionTrainingArguments
-
-        if option not in DiffusionTrainingArguments.__dataclass_fields__:
-            pytest.skip(f"{option} is not a training argument")
-
-        with pytest.raises(ValueError, match=option):
-            _trainer(_tiny_a2d_model(), tmp_path, sparse_lm_head=True, **{option: 0.5})
 
 
 class TestDefaultIsUnchanged:
