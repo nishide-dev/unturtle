@@ -137,17 +137,28 @@ class BlockDiffusionTrainer(DiffusionTrainer):
     ) -> torch.Tensor | tuple[torch.Tensor, Any]:
         """Compute the BD3LM loss on the concatenated [x_t, x_0] sequence.
 
-        Expects ``inputs`` to contain the keys produced by
+        Accepts either collator contract (#62).  From the clean
         :class:`~.block_diffusion_collator.BlockDiffusionDataCollator`:
 
-          ``input_ids``      – noised token ids ``x_t``, shape ``(B, L)``
-          ``labels``         – clean token ids ``x_0``; ``-100`` at prompt/padding
-          ``diffusion_mask`` – bool tensor, ``True`` at masked positions, ``(B, L)``
-          ``timesteps``      – sampled ``t``, shape ``(B,)``
+          ``input_ids``      – clean token ids ``x_0``, shape ``(B, L)``
+          ``labels``         – supervision targets; ``-100`` at prompt/padding
           ``attention_mask`` – standard padding mask ``(B, L)`` (consumed here;
                                replaced by the block attention mask)
+
+        the forward process then produces ``x_t``, ``diffusion_mask``, and
+        ``timesteps`` device-side.  A pre-noised batch (packed collator, or a
+        legacy noising collator passed explicitly) is passed through untouched
+        and ``x_0`` is reconstructed from ``labels`` as before.
         """
         # --- 1. Extract diffusion-specific keys ---
+        # With the clean collator the batch still holds the true x_0 here, so
+        # capture it before the process overwrites input_ids with x_t (#62).
+        clean_input_ids: torch.Tensor | None = (
+            None if "diffusion_mask" in inputs else inputs["input_ids"].clone()
+        )
+
+        inputs = self._apply_forward_process(inputs)
+
         labels: torch.Tensor = inputs.pop("labels")  # [B, L]
         diffusion_mask: torch.Tensor = inputs.pop("diffusion_mask")  # [B, L]
         timesteps: torch.Tensor = inputs.pop("timesteps")  # [B]
@@ -158,7 +169,7 @@ class BlockDiffusionTrainer(DiffusionTrainer):
         # counts as clean context.
         padding_mask = inputs.pop("attention_mask", None)
 
-        # --- 3. Reconstruct x_0 from labels (replace -100 with x_t tokens) ---
+        # --- 3. Obtain x_0 (directly on the clean path, else reconstructed) ---
         noised_ids: torch.Tensor = inputs.pop("input_ids")  # [B, L]
         B, L = noised_ids.shape
 
@@ -169,11 +180,19 @@ class BlockDiffusionTrainer(DiffusionTrainer):
                 "the same block_size to pad sequences before training."
             )
 
-        clean_ids = labels.clone()
-        # Where labels == -100 (prompt / padding positions), use the noised ids.
-        # For masked positions, labels already hold x_0; for unmasked positions,
-        # input_ids == labels (collator leaves them intact).
-        clean_ids = torch.where(clean_ids == -100, noised_ids, clean_ids)  # [B, L]
+        if clean_input_ids is not None:
+            # Clean-collator path: x_0 comes straight from the batch, so no
+            # inference is needed.  (The reconstruction below is also correct
+            # for the process's own output — it never leaves a position both
+            # masked and labeled -100 — but taking x_0 directly keeps the
+            # invariant local instead of spread across two components.)
+            clean_ids = clean_input_ids
+        else:
+            # Pre-noised batch (packed or an explicitly-passed legacy collator):
+            # x_0 must be reconstructed.  Where labels == -100 (prompt/padding)
+            # use the noised ids; at masked positions labels already hold x_0,
+            # and at unmasked positions input_ids == labels.
+            clean_ids = torch.where(labels == -100, noised_ids, labels)  # [B, L]
 
         # --- 4. Concatenate [x_t, x_0] → (B, 2L) ---
         concat_ids = torch.cat([noised_ids, clean_ids], dim=1)  # [B, 2L]

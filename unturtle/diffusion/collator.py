@@ -15,15 +15,25 @@
 """
 Data collator for masked diffusion language model training.
 
-``MaskedDiffusionDataCollator`` applies the *forward noising process* to each
-batch: it randomly masks a fraction of completion tokens (based on a sampled
-diffusion timestep ``t``) and replaces them with the ``[MASK]`` token id.  The
-resulting batch contains:
+``MaskedDiffusionDataCollator`` has two modes.
+
+With ``noise=True`` (the default, historical behavior) it applies the *forward
+noising process* to each batch: it randomly masks a fraction of completion
+tokens (based on a sampled diffusion timestep ``t``) and replaces them with the
+``[MASK]`` token id.  The resulting batch contains:
 
   ``input_ids``      – noised token ids (masked positions → mask_token_id)
   ``labels``         – clean token ids (``x_0``); prompt/padding positions → -100
   ``diffusion_mask`` – bool tensor, True at masked positions
   ``timesteps``      – sampled ``t`` values, shape ``(B,)``
+
+With ``noise=False`` it performs *clean collation* only — padding and
+supervision, no corruption — and emits just ``input_ids`` / ``labels`` /
+``attention_mask``.  Corruption then happens device-side via
+:class:`~unturtle.processes.MaskedDiffusionProcess`, which keeps the noising off
+the CPU DataLoader workers and decouples RNG from worker sharding (#62).
+``DiffusionTrainer`` and ``MaskedDiffusionEvaluator`` construct the collator
+this way; ``PackedMaskedDiffusionDataCollator`` still noises during collation.
 
 Reference implementations:
   dllm-reasoning/d1   SFT/sft_trainer.py  ::  dLLMDataCollator
@@ -62,6 +72,14 @@ class MaskedDiffusionDataCollator:
                          corresponds to the "completion-only SFT" mode used by
                          LLaDA / d1.  If ``False``, all tokens (including the
                          prompt) are eligible for masking.
+        noise:           If ``True`` (default), apply the forward noising process
+                         during collation — the historical behavior.  If
+                         ``False``, emit a *clean* batch (padding and supervision
+                         only, no ``diffusion_mask`` / ``timesteps``) and leave
+                         corruption to a device-side
+                         :class:`~unturtle.processes.MaskedDiffusionProcess`.
+                         ``DiffusionTrainer`` and ``MaskedDiffusionEvaluator``
+                         opt into the clean path; see #62.
     """
 
     tokenizer: PreTrainedTokenizerBase
@@ -69,9 +87,15 @@ class MaskedDiffusionDataCollator:
     mask_token_id: int | None = None
     time_epsilon: float = 1e-3
     completion_only: bool = True
+    noise: bool = True
 
     def __post_init__(self) -> None:
         if self.mask_token_id is None:
+            # A clean collator never writes a mask token, so it does not need
+            # one; requiring it here would break callers whose mask id lives on
+            # the model config rather than the tokenizer.
+            if not self.noise:
+                return
             if self.tokenizer.mask_token_id is None:
                 raise ValueError(
                     "Tokenizer has no mask_token_id.  Pass mask_token_id explicitly "
@@ -129,6 +153,12 @@ class MaskedDiffusionDataCollator:
         input_ids: torch.Tensor = batch["input_ids"]  # [B, L]
         B, L = input_ids.shape
 
+        # --- clean path (#62): padding + supervision only ---
+        # Corruption is applied device-side by MaskedDiffusionProcess after the
+        # Trainer/Evaluator moves the batch to the accelerator.
+        if not self.noise:
+            return batch
+
         # --- determine maskable positions ---
         if self.completion_only and "labels" in batch:
             # Positions where the original label is not -100 are completion tokens
@@ -157,6 +187,9 @@ class MaskedDiffusionDataCollator:
         diffusion_mask: torch.Tensor = (rand < p_mask) & maskable  # [B, L] bool
 
         # --- apply noising ---
+        # __post_init__ guarantees a resolved id on the noising path; only the
+        # clean path (which returned above) may leave it None.
+        assert self.mask_token_id is not None
         noised_input_ids = input_ids.clone()
         noised_input_ids[diffusion_mask] = self.mask_token_id
 

@@ -50,9 +50,11 @@ import torch
 
 from unturtle.eval import GenerationEvaluator, MaskedDiffusionEvaluator
 from unturtle.kernels.masked_diffusion_loss import fast_masked_diffusion_loss
+from unturtle.processes import MaskedDiffusionProcess
 from unturtle.trainer import UnturtleTrainer, UnturtleTrainingArguments
 
 from .collator import MaskedDiffusionDataCollator
+from .mask_token import resolve_mask_token_id
 from .packed_collator import PackedMaskedDiffusionDataCollator
 from .reweighting import context_adaptive_reweight
 from .schedulers import BaseAlphaScheduler, LinearAlphaScheduler, make_alpha_scheduler
@@ -300,22 +302,37 @@ class DiffusionTrainer(UnturtleTrainer):
 
         model = kwargs.get("model") or (pargs[0] if pargs else None)
 
-        # Inject MaskedDiffusionDataCollator unless the caller supplied one
-        if "data_collator" not in kwargs or kwargs["data_collator"] is None:
-            tokenizer = kwargs.get("tokenizer") or kwargs.get("processing_class")
-            if tokenizer is not None:
-                mask_token_id = getattr(tokenizer, "mask_token_id", None)
-                if mask_token_id is None:
-                    mask_token_id = getattr(
-                        getattr(model, "config", None), "mask_token_id", None
-                    )
-                kwargs["data_collator"] = MaskedDiffusionDataCollator(
-                    tokenizer=tokenizer,
-                    scheduler=self._alpha_scheduler,
-                    mask_token_id=mask_token_id,
-                    time_epsilon=self._time_epsilon,
-                    completion_only=completion_only,
-                )
+        tokenizer = kwargs.get("tokenizer") or kwargs.get("processing_class")
+        mask_token_id = resolve_mask_token_id(tokenizer, model)
+
+        # The forward process owns corruption (#62).  It runs inside
+        # compute_loss, after the Trainer has moved the batch to the
+        # accelerator, so noising happens device-side rather than in CPU
+        # DataLoader workers.
+        self.forward_process: MaskedDiffusionProcess | None = (
+            MaskedDiffusionProcess(
+                scheduler=self._alpha_scheduler,
+                mask_token_id=mask_token_id,
+                time_epsilon=self._time_epsilon,
+                completion_only=completion_only,
+            )
+            if mask_token_id is not None
+            else None
+        )
+
+        # Inject a *clean* collator unless the caller supplied one: padding and
+        # supervision only, with the process applying corruption later.
+        if ("data_collator" not in kwargs or kwargs["data_collator"] is None) and (
+            tokenizer is not None
+        ):
+            kwargs["data_collator"] = MaskedDiffusionDataCollator(
+                tokenizer=tokenizer,
+                scheduler=self._alpha_scheduler,
+                mask_token_id=mask_token_id,
+                time_epsilon=self._time_epsilon,
+                completion_only=completion_only,
+                noise=False,
+            )
 
         super().__init__(*pargs, **kwargs)
 
@@ -387,6 +404,8 @@ class DiffusionTrainer(UnturtleTrainer):
                     " / ".join(key for key in _PACKED_METADATA_KEYS if key in inputs),
                 )
 
+        inputs = self._apply_forward_process(inputs)
+
         labels: torch.Tensor = inputs.pop("labels")  # [B, L]
         diffusion_mask: torch.Tensor = inputs.pop("diffusion_mask")
         timesteps: torch.Tensor = inputs.pop("timesteps")
@@ -436,6 +455,37 @@ class DiffusionTrainer(UnturtleTrainer):
     # ------------------------------------------------------------------ #
     #  Private helpers                                                    #
     # ------------------------------------------------------------------ #
+
+    def _apply_forward_process(
+        self, inputs: dict[str, torch.Tensor | Any]
+    ) -> dict[str, torch.Tensor | Any]:
+        """Corrupt a clean batch device-side, or pass a pre-noised one through.
+
+        Two collator contracts coexist during the #62 migration: the clean
+        collator (this trainer's default) emits no ``diffusion_mask``, while
+        ``PackedMaskedDiffusionDataCollator`` and any explicitly-passed legacy
+        collator still noise during collation.  Presence of ``diffusion_mask``
+        is the discriminator — re-noising an already-corrupted batch would
+        mask a fraction of the mask tokens themselves and silently change the
+        objective.
+
+        RNG comes from the global torch stream, which Trainer/Accelerate
+        already seed via ``set_seed``; this keeps gradient accumulation and
+        multi-rank behavior on the existing rails.
+        """
+        if "diffusion_mask" in inputs:
+            return inputs
+
+        if self.forward_process is None:
+            raise ValueError(
+                "DiffusionTrainer received a clean batch (no 'diffusion_mask') but "
+                "has no forward process: mask_token_id could not be resolved from "
+                "the tokenizer or model config.  Pass a tokenizer with a mask token, "
+                "set model.config.mask_token_id, or supply a noising data_collator."
+            )
+
+        output = self.forward_process(inputs)
+        return {**output.model_inputs, **output.objective_inputs}
 
     def _build_loss_weights(
         self,

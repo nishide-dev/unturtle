@@ -20,9 +20,11 @@ from typing import Any
 import torch
 
 from unturtle.diffusion.collator import MaskedDiffusionDataCollator
+from unturtle.diffusion.mask_token import resolve_mask_token_id
 from unturtle.diffusion.packed_collator import PackedMaskedDiffusionDataCollator
 from unturtle.diffusion.schedulers import LinearAlphaScheduler, make_alpha_scheduler
 from unturtle.kernels.masked_diffusion_loss import fast_masked_diffusion_loss
+from unturtle.processes import MaskedDiffusionProcess
 
 from .base import BaseEvaluator
 
@@ -65,17 +67,30 @@ class MaskedDiffusionEvaluator(BaseEvaluator):
         self.time_epsilon = time_epsilon
         self.completion_only = completion_only
         self.metric_key_prefix = metric_key_prefix
-        mask_token_id = getattr(tokenizer, "mask_token_id", None)
-        if mask_token_id is None:
-            mask_token_id = getattr(
-                getattr(model, "config", None), "mask_token_id", None
+        mask_token_id = resolve_mask_token_id(tokenizer, model)
+        self.mask_token_id = mask_token_id
+
+        # Corruption is applied device-side (#62), mirroring DiffusionTrainer.
+        # Kept as None when no mask id resolves so an explicitly-supplied
+        # noising collator still evaluates.
+        self.forward_process: MaskedDiffusionProcess | None = (
+            MaskedDiffusionProcess(
+                scheduler=self.alpha_scheduler,
+                mask_token_id=mask_token_id,
+                time_epsilon=time_epsilon,
+                completion_only=completion_only,
             )
+            if mask_token_id is not None
+            else None
+        )
+
         self.data_collator = data_collator or MaskedDiffusionDataCollator(
             tokenizer=tokenizer,
             scheduler=self.alpha_scheduler,
             mask_token_id=mask_token_id,
             time_epsilon=time_epsilon,
             completion_only=completion_only,
+            noise=False,
         )
         if (
             isinstance(self.data_collator, PackedMaskedDiffusionDataCollator)
@@ -86,6 +101,29 @@ class MaskedDiffusionEvaluator(BaseEvaluator):
                 "loss_weight_type='timestep' or 'scheduler'. Use uniform weighting or an "
                 "unpacked MaskedDiffusionDataCollator."
             )
+
+    def _apply_forward_process(self, batch: dict[str, Any]) -> dict[str, Any]:
+        """Corrupt a clean batch device-side, or pass a pre-noised one through.
+
+        Mirrors ``DiffusionTrainer._apply_forward_process``.  Presence of
+        ``diffusion_mask`` means an explicitly-supplied noising collator (or
+        the packed collator) already did the corruption — re-noising would
+        mask the mask tokens themselves and skew every reported metric.
+        """
+        if "diffusion_mask" in batch:
+            return batch
+
+        if self.forward_process is None:
+            raise ValueError(
+                "MaskedDiffusionEvaluator received a clean batch (no "
+                "'diffusion_mask') but has no forward process: mask_token_id "
+                "could not be resolved from the tokenizer or model config.  "
+                "Pass a tokenizer with a mask token, set "
+                "model.config.mask_token_id, or supply a noising data_collator."
+            )
+
+        output = self.forward_process(batch)
+        return {**output.model_inputs, **output.objective_inputs}
 
     def _build_loss_weights(
         self,
@@ -136,6 +174,7 @@ class MaskedDiffusionEvaluator(BaseEvaluator):
                     break
 
                 batch = self._move_to_device(batch)
+                batch = self._apply_forward_process(batch)
                 labels: torch.Tensor = batch.pop("labels")
                 diffusion_mask: torch.Tensor = batch.pop("diffusion_mask")
                 timesteps: torch.Tensor = batch.pop("timesteps")
