@@ -51,6 +51,7 @@ Paper:
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import torch
 
@@ -113,3 +114,64 @@ def context_adaptive_reweight(
         weight.fill_diagonal_(0.0)
 
     return weight  # [L, L], float32
+
+
+def cart_loss_weights(
+    diffusion_mask: torch.Tensor,
+    cart_p: float,
+    attention_mask: torch.Tensor | None = None,
+    seq_lengths: Any | None = None,
+) -> torch.Tensor:
+    """Per-token CART weights for a batch (Dream context-adaptive reweighting).
+
+    For each masked position ``n``, the weight is the geometric-decayed sum of
+    contributions from every *clean* (unmasked, real) position.
+
+    Shared by ``DiffusionTrainer`` and ``MaskedDiffusionEvaluator`` so the two
+    cannot drift — in particular so eval honors packed-sample boundaries and
+    stays comparable with the training loss.
+
+    Args:
+        diffusion_mask: ``[B, L]`` bool, ``True`` at masked positions.
+        cart_p:         Geometric sharpness.
+        attention_mask: Optional ``[B, L]`` real-token mask.  Padding must not
+                        contribute clean context, otherwise identical samples
+                        padded to different lengths get different weights.
+        seq_lengths:    Optional per-row packed sample lengths (one entry per
+                        batch row).  Clean context must not cross packed-sample
+                        boundaries; the geometric weight is translation
+                        invariant, so restricting the matmul to each sample's
+                        diagonal block reproduces the unpacked weights exactly.
+
+    Returns:
+        ``[B, L]`` weights, zero everywhere the diffusion loss is not computed.
+    """
+    device = diffusion_mask.device
+    _, L = diffusion_mask.shape
+    weight_matrix = context_adaptive_reweight(L, cart_p=cart_p).to(device)
+
+    clean_mask = ~diffusion_mask
+    if attention_mask is not None:
+        clean_mask = clean_mask & attention_mask.to(device=device, dtype=torch.bool)
+    clean_f = clean_mask.float()
+
+    if seq_lengths is not None:
+        weight = torch.zeros(
+            diffusion_mask.shape, dtype=weight_matrix.dtype, device=device
+        )
+        for b, lengths in enumerate(seq_lengths):
+            if isinstance(lengths, torch.Tensor):
+                lengths = lengths.tolist()
+            offset = 0
+            for slen in lengths:
+                end = min(offset + int(slen), L)
+                if end <= offset:
+                    continue
+                weight[b, offset:end] = clean_f[b, offset:end].matmul(
+                    weight_matrix[offset:end, offset:end]
+                )
+                offset = end
+    else:
+        weight = clean_f.matmul(weight_matrix)
+
+    return weight.masked_fill(~diffusion_mask, 0.0)

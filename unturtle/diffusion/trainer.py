@@ -54,9 +54,13 @@ from unturtle.processes import MaskedDiffusionProcess
 from unturtle.trainer import UnturtleTrainer, UnturtleTrainingArguments
 
 from .collator import MaskedDiffusionDataCollator
-from .mask_token import resolve_mask_token_id
+from .mask_token import (
+    classify_batch,
+    require_mask_token_id,
+    resolve_mask_token_id,
+)
 from .packed_collator import PackedMaskedDiffusionDataCollator
-from .reweighting import context_adaptive_reweight
+from .reweighting import cart_loss_weights
 from .schedulers import BaseAlphaScheduler, LinearAlphaScheduler, make_alpha_scheduler
 
 logger = logging.getLogger(__name__)
@@ -325,6 +329,11 @@ class DiffusionTrainer(UnturtleTrainer):
         if ("data_collator" not in kwargs or kwargs["data_collator"] is None) and (
             tokenizer is not None
         ):
+            if self.forward_process is None:
+                # Clean collator + no process means nothing would ever corrupt
+                # the batch.  Unrecoverable, so fail here rather than minutes
+                # later on the first compute_loss.
+                require_mask_token_id(tokenizer, model, context="DiffusionTrainer")
             kwargs["data_collator"] = self._build_default_collator(
                 tokenizer=tokenizer,
                 mask_token_id=mask_token_id,
@@ -483,16 +492,21 @@ class DiffusionTrainer(UnturtleTrainer):
         Two collator contracts coexist during the #62 migration: the clean
         collator (this trainer's default) emits no ``diffusion_mask``, while
         ``PackedMaskedDiffusionDataCollator`` and any explicitly-passed legacy
-        collator still noise during collation.  Presence of ``diffusion_mask``
-        is the discriminator — re-noising an already-corrupted batch would
-        mask a fraction of the mask tokens themselves and silently change the
-        objective.
+        collator still noise during collation.  A batch carrying *both*
+        supervision keys is already corrupted and passes through — re-noising
+        it would mask a fraction of the mask tokens themselves and silently
+        change the objective.
+
+        A batch carrying only one of the two keys is rejected rather than
+        guessed at: passing it through dies later on a bare ``KeyError``, and
+        noising it would silently discard the caller's ``timesteps``.
 
         RNG comes from the global torch stream, which Trainer/Accelerate
         already seed via ``set_seed``; this keeps gradient accumulation and
         multi-rank behavior on the existing rails.
         """
-        if "diffusion_mask" in inputs:
+        pre_noised = classify_batch(inputs, "DiffusionTrainer")
+        if pre_noised:
             return inputs
 
         if self.forward_process is None:
@@ -529,7 +543,6 @@ class DiffusionTrainer(UnturtleTrainer):
 
         device = logits.device
         t = timesteps.to(device)
-        _, L = diffusion_mask.shape
 
         if self._loss_weight_type == "timestep":
             # d1 SFT: weight = 1/t per sequence, broadcast over L
@@ -546,43 +559,12 @@ class DiffusionTrainer(UnturtleTrainer):
             # summed over clean (unmasked) positions i.
             #
             # Reference: dev/repos/Dream/src/trainer/fsdp_sft_trainer.py L91-115, L805-821
-            weight_matrix = context_adaptive_reweight(L, cart_p=self._cart_p).to(device)
-            # Clean context = REAL tokens that are not currently masked.
-            # Padding (attention_mask == 0) must not contribute geometric
-            # weight, otherwise identical samples padded to different lengths
-            # get different CART weights.
-            clean_mask = ~diffusion_mask  # [B, L] — True at clean/unmasked positions
-            if attention_mask is not None:
-                clean_mask = clean_mask & attention_mask.to(
-                    device=clean_mask.device, dtype=torch.bool
-                )
-            clean_f = clean_mask.float()
-            if seq_lengths is not None:
-                # Packed rows: clean context must not cross sample boundaries.
-                # The geometric weight is translation-invariant, so restricting
-                # the matmul to each sample's diagonal block reproduces the
-                # unpacked per-sample weights exactly.
-                weight = torch.zeros(
-                    diffusion_mask.shape, dtype=weight_matrix.dtype, device=device
-                )
-                for b, lengths in enumerate(seq_lengths):
-                    if isinstance(lengths, torch.Tensor):
-                        lengths = lengths.tolist()
-                    offset = 0
-                    for slen in lengths:
-                        end = min(offset + int(slen), L)
-                        if end <= offset:
-                            continue
-                        weight[b, offset:end] = clean_f[b, offset:end].matmul(
-                            weight_matrix[offset:end, offset:end]
-                        )
-                        offset = end
-            else:
-                # weight[b, n] = sum of geometric weights from clean positions to n
-                weight = clean_f.matmul(weight_matrix)  # [B, L]
-            # zero everywhere the diffusion loss is not computed (clean + pad)
-            weight = weight.masked_fill(~diffusion_mask, 0.0)
-            return weight  # [B, L]
+            return cart_loss_weights(
+                diffusion_mask,
+                cart_p=self._cart_p,
+                attention_mask=attention_mask,
+                seq_lengths=seq_lengths,
+            )  # [B, L]
 
         raise ValueError(
             f"Unknown loss_weight_type '{self._loss_weight_type}'. "

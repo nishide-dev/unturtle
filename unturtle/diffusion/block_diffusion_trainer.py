@@ -43,6 +43,7 @@ from unturtle.kernels.masked_diffusion_loss import fast_masked_diffusion_loss
 
 from .block_attention import create_block_diffusion_attention_mask
 from .block_diffusion_collator import BlockDiffusionDataCollator
+from .mask_token import classify_batch
 from .trainer import DiffusionTrainer, DiffusionTrainingArguments
 
 
@@ -179,8 +180,12 @@ class BlockDiffusionTrainer(DiffusionTrainer):
         # --- 1. Extract diffusion-specific keys ---
         # With the clean collator the batch still holds the true x_0 here, so
         # capture it before the process overwrites input_ids with x_t (#62).
+        # Uses the same classifier as the base trainer so the two cannot
+        # disagree about which contract a batch follows.
         clean_input_ids: torch.Tensor | None = (
-            None if "diffusion_mask" in inputs else inputs["input_ids"].clone()
+            None
+            if classify_batch(inputs, "BlockDiffusionTrainer")
+            else inputs["input_ids"].clone()
         )
 
         inputs = self._apply_forward_process(inputs)

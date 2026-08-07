@@ -20,7 +20,7 @@ from typing import Any
 import torch
 
 from unturtle.diffusion.collator import MaskedDiffusionDataCollator
-from unturtle.diffusion.mask_token import resolve_mask_token_id
+from unturtle.diffusion.mask_token import classify_batch, resolve_mask_token_id
 from unturtle.diffusion.packed_collator import PackedMaskedDiffusionDataCollator
 from unturtle.diffusion.schedulers import LinearAlphaScheduler, make_alpha_scheduler
 from unturtle.kernels.masked_diffusion_loss import fast_masked_diffusion_loss
@@ -94,14 +94,19 @@ class MaskedDiffusionEvaluator(BaseEvaluator):
             completion_only=completion_only,
             noise=False,
         )
-        if (
-            isinstance(self.data_collator, PackedMaskedDiffusionDataCollator)
-            and self.loss_weight_type != "uniform"
-        ):
+        if isinstance(
+            self.data_collator, PackedMaskedDiffusionDataCollator
+        ) and self.loss_weight_type not in ("uniform", "cart"):
+            # Mirrors DiffusionTrainer's guard: 'cart' is allowed because it
+            # weights by seq_lengths rather than by the packed row's mean
+            # timestep, which is the approximation that makes 'timestep' and
+            # 'scheduler' wrong on packed batches.  Diverging from the trainer
+            # here would crash build_diffusion_evaluator for a CART-trained
+            # model that trained without complaint.
             raise ValueError(
-                "PackedMaskedDiffusionDataCollator is not supported for diffusion evaluation with "
-                "loss_weight_type='timestep' or 'scheduler'. Use uniform weighting or an "
-                "unpacked MaskedDiffusionDataCollator."
+                f"PackedMaskedDiffusionDataCollator is not supported for diffusion "
+                f"evaluation with loss_weight_type={self.loss_weight_type!r}. Use "
+                "uniform/cart weighting or an unpacked MaskedDiffusionDataCollator."
             )
 
     def _apply_forward_process(self, batch: dict[str, Any]) -> dict[str, Any]:
@@ -112,7 +117,7 @@ class MaskedDiffusionEvaluator(BaseEvaluator):
         the packed collator) already did the corruption — re-noising would
         mask the mask tokens themselves and skew every reported metric.
         """
-        if "diffusion_mask" in batch:
+        if classify_batch(batch, "MaskedDiffusionEvaluator"):
             return batch
 
         if self.forward_process is None:
@@ -133,6 +138,7 @@ class MaskedDiffusionEvaluator(BaseEvaluator):
         logits: torch.Tensor,
         diffusion_mask: torch.Tensor | None = None,
         attention_mask: torch.Tensor | None = None,
+        seq_lengths: Any | None = None,
     ) -> torch.Tensor | None:
         if self.loss_weight_type == "uniform":
             return None
@@ -152,25 +158,23 @@ class MaskedDiffusionEvaluator(BaseEvaluator):
         if self.loss_weight_type == "cart":
             # `cart` is a valid DiffusionTrainingArguments value and
             # `DiffusionTrainer.build_diffusion_evaluator` forwards it here, so
-            # evaluating a CART-trained model must not crash.  Reuse the
-            # trainer's implementation rather than duplicating the geometric
-            # reweighting.
+            # evaluating a CART-trained model must not crash.  Shares the
+            # trainer's implementation so the two cannot drift — notably so
+            # packed-sample boundaries are honored and eval loss stays
+            # comparable with train loss.
             if diffusion_mask is None:
                 raise ValueError(
                     "loss_weight_type='cart' needs the diffusion mask; this "
                     "evaluator was called without one."
                 )
-            from unturtle.diffusion.reweighting import context_adaptive_reweight
+            from unturtle.diffusion.reweighting import cart_loss_weights
 
-            _, L = diffusion_mask.shape
-            weight_matrix = context_adaptive_reweight(L, cart_p=self.cart_p).to(device)
-            clean_mask = ~diffusion_mask
-            if attention_mask is not None:
-                clean_mask = clean_mask & attention_mask.to(
-                    device=clean_mask.device, dtype=torch.bool
-                )
-            weight = clean_mask.float().matmul(weight_matrix)
-            return weight.masked_fill(~diffusion_mask, 0.0)
+            return cart_loss_weights(
+                diffusion_mask,
+                cart_p=self.cart_p,
+                attention_mask=attention_mask,
+                seq_lengths=seq_lengths,
+            )
 
         raise ValueError(
             f"Unknown loss_weight_type '{self.loss_weight_type}'. "
@@ -206,8 +210,14 @@ class MaskedDiffusionEvaluator(BaseEvaluator):
                 diffusion_mask: torch.Tensor = batch.pop("diffusion_mask")
                 timesteps: torch.Tensor = batch.pop("timesteps")
 
-                # Read-only; the model forward consumes it too.
+                # Read-only; the model forward consumes them too.  Mirrors
+                # DiffusionTrainer.compute_loss so packed CART weights match.
                 attention_mask = batch.get("attention_mask")
+                seq_lengths = batch.get("seq_lengths")
+                if seq_lengths is None:
+                    flat_lengths = batch.get("packed_seq_lengths")
+                    if flat_lengths is not None and labels.shape[0] == 1:
+                        seq_lengths = [flat_lengths]
 
                 outputs = self.model(**batch)
                 logits: torch.Tensor = outputs.logits
@@ -216,6 +226,7 @@ class MaskedDiffusionEvaluator(BaseEvaluator):
                     logits,
                     diffusion_mask=diffusion_mask,
                     attention_mask=attention_mask,
+                    seq_lengths=seq_lengths,
                 )
                 loss = fast_masked_diffusion_loss(
                     logits=logits,

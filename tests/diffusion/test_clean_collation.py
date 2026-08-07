@@ -270,6 +270,23 @@ class TestTrainerProcessIntegration:
             "through the process untouched"
         )
 
+    @pytest.mark.parametrize("present", ["diffusion_mask", "timesteps"])
+    def test_half_noised_batch_is_rejected(self, tmp_path, present):
+        """A batch with only one supervision key is a bug, not a contract.
+
+        Passing it through dies later on a bare KeyError; noising it silently
+        discards the caller's timesteps.  Neither is acceptable, so it raises.
+        """
+        trainer, model, _ = _make_trainer(tmp_path)
+        noised = _make_collator()(_samples())
+
+        batch = {k: v for k, v in noised.items() if k != "timesteps"}
+        if present == "timesteps":
+            batch = {k: v for k, v in noised.items() if k != "diffusion_mask"}
+
+        with pytest.raises(ValueError, match="half-noised"):
+            trainer.compute_loss(model, batch)
+
     def test_process_honors_completion_only_from_args(self, tmp_path):
         trainer, _, _ = _make_trainer(tmp_path, completion_only=False)
 
@@ -560,6 +577,71 @@ class TestEvaluatorProcessIntegration:
 
         assert metrics
         assert all(torch.isfinite(torch.tensor(v)) for v in metrics.values())
+
+    def test_cart_weights_match_the_trainer_on_packed_rows(self):
+        """Eval CART must honor packed boundaries, or its loss is incomparable.
+
+        The trainer restricts the geometric matmul to each packed sample's
+        diagonal block; an evaluator doing a whole-row matmul lets masked
+        positions absorb context from the neighbouring sample and reports a
+        different number for the same model and batch.
+        """
+        from unturtle.diffusion.reweighting import cart_loss_weights
+
+        diffusion_mask = torch.tensor([[True, False, True, False]])
+        attention_mask = torch.ones(1, 4, dtype=torch.long)
+        seq_lengths = [[2, 2]]
+        timesteps = torch.tensor([0.5])
+        logits = torch.zeros(1, 4, 8)
+
+        # Goes through the evaluator's own _build_loss_weights, so a failure
+        # to forward seq_lengths is caught here rather than in the helper.
+        evaluator = self._evaluator(loss_weight_type="cart")
+        got = evaluator._build_loss_weights(
+            timesteps,
+            logits,
+            diffusion_mask=diffusion_mask,
+            attention_mask=attention_mask,
+            seq_lengths=seq_lengths,
+        )
+
+        expected = cart_loss_weights(
+            diffusion_mask,
+            cart_p=evaluator.cart_p,
+            attention_mask=attention_mask,
+            seq_lengths=seq_lengths,
+        )
+        whole_row = cart_loss_weights(
+            diffusion_mask, cart_p=evaluator.cart_p, attention_mask=attention_mask
+        )
+
+        assert not torch.allclose(expected, whole_row), (
+            "test is vacuous: packed and unpacked weights coincide here"
+        )
+        assert torch.allclose(got, expected), (
+            "evaluator ignored packed sample boundaries; its CART loss is not "
+            "comparable with the trainer's"
+        )
+
+    def test_packed_cart_evaluator_constructs(self):
+        """A CART-trained packed model must be evaluable, not crash on build.
+
+        The trainer allows packed + cart (CART weights by seq_lengths, not by
+        the packed row's mean timestep), so an evaluator that rejects it would
+        fail only after training completed.
+        """
+        from unturtle.diffusion.packed_collator import (
+            PackedMaskedDiffusionDataCollator,
+        )
+
+        packed = PackedMaskedDiffusionDataCollator(
+            tokenizer=_Tokenizer(), mask_token_id=MASK_ID
+        )
+
+        self._evaluator(data_collator=packed, loss_weight_type="cart")
+
+        with pytest.raises(ValueError, match="timestep"):
+            self._evaluator(data_collator=packed, loss_weight_type="timestep")
 
     def test_evaluate_still_works_with_a_noising_collator(self):
         """An explicitly-passed legacy collator must keep working (CLI passes one)."""

@@ -26,7 +26,42 @@ optional.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
+
+# Keys a noising collator adds and the forward process owns.  Both must be
+# present or both absent; see :func:`classify_batch`.
+_NOISED_KEYS = ("diffusion_mask", "timesteps")
+
+
+def classify_batch(batch: Mapping[str, Any], context: str) -> bool:
+    """Return whether ``batch`` was already corrupted by a noising collator.
+
+    Two collator contracts coexist during the #62 migration, so callers must
+    decide whether to apply the forward process.  A half-noised batch is
+    always a bug and is rejected here rather than guessed at:
+
+    - ``diffusion_mask`` without ``timesteps`` would pass through and die on a
+      bare ``KeyError`` deep inside ``compute_loss``.
+    - ``timesteps`` without ``diffusion_mask`` would be *noised*, silently
+      overwriting the caller's timesteps with freshly sampled ones.
+
+    Raises:
+        ValueError: if exactly one of the noised keys is present.
+    """
+    present = [key for key in _NOISED_KEYS if key in batch]
+    if not present:
+        return False
+    if len(present) == len(_NOISED_KEYS):
+        return True
+
+    missing = [key for key in _NOISED_KEYS if key not in batch]
+    raise ValueError(
+        f"{context} received a half-noised batch: it carries {present} but not "
+        f"{missing}.  A collator must emit either all of {list(_NOISED_KEYS)} "
+        "(noising) or none of them (clean collation); emitting some silently "
+        "changes the training objective."
+    )
 
 
 def resolve_mask_token_id(
