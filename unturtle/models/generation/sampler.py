@@ -47,10 +47,18 @@ execute raises ``ValueError`` immediately rather than silently falling back or c
 mid-generation.
 
 The registry is open to future families (discrete flow matching, continuous/latent).
-``auto_priority`` is an explicit number rather than registration order, so a newly
-registered algorithm does **not** outrank the masked ones merely by existing — #69 calls
-that out specifically.  ``flags`` defaults to empty, so a non-masked family is never
-handed ``use_cache`` / ``use_block_diffusion``.
+A family needs a name, a capability probe, and a runner — nothing else.  In particular
+the core never reads ``use_cache`` or ``use_block_diffusion``: those live on the masked
+algorithms' own registrations, so a continuous or flow family is never handed a concept
+borrowed from masked diffusion.  ``auto_priority`` is an explicit number rather than
+registration order, so a newly registered algorithm does **not** outrank the masked ones
+merely by existing — #69 calls that out specifically.
+
+Note the flags remain *user-visible* ``MaskedDiffusionGenerationConfig`` fields with
+their own cross-validation (``use_block_diffusion`` and ``use_cache`` are mutually
+exclusive), and ``generate`` still injects the resolved algorithm's flags so a caller
+setting them directly keeps working.  De-masking the registry core is not the same as
+deleting the flags.
 """
 
 from __future__ import annotations
@@ -411,11 +419,40 @@ def resolve_algorithm(algorithm: str, model: Any, *, bd3lm_requested: bool) -> s
             if entry.auto_eligible and entry.supports(model):
                 return entry.name
 
-        raise ValueError(
-            f"{type(model).__name__} does not implement any known decoding algorithm "
-            "(no _denoising_step, _model_forward_with_cache, or _sample). "
-            "Ensure the model is a supported dLLM backbone."
-        )
+        # Derived from the registry rather than naming the masked hooks: a
+        # model failing only a newly registered family's probe should not be
+        # told to implement `_sample`.  Opt-in algorithms are included — a
+        # bd3lm-capable model reaching here needs to be told bd3lm exists and
+        # how to ask for it, not that nothing works.
+        lines = []
+        available: list[str] = []
+        for entry in sorted(_ALGORITHMS, key=lambda a: a.auto_priority):
+            if entry.supports(model):
+                # Reachable, but only on request: `auto` skipped it because it
+                # is not auto-eligible.  Saying "does not support" here would
+                # be flatly wrong, and would hide the one usable option.
+                available.append(entry.name)
+                lines.append(
+                    f"  - {entry.name} ({entry.family}): supported, but never "
+                    f"selected automatically — pass algorithm={entry.name!r}."
+                )
+            else:
+                lines.append(
+                    f"  - {entry.name} ({entry.family}): "
+                    f"{entry.describe_unsupported(model)}"
+                )
+
+        if available:
+            headline = (
+                f"{type(model).__name__} supports "
+                f"{', '.join(available)}, but `auto` selects none of them."
+            )
+        else:
+            headline = (
+                f"{type(model).__name__} supports none of the registered "
+                "decoding algorithms."
+            )
+        raise ValueError(headline + "\n" + "\n".join(lines))
 
     entry = find_algorithm(algorithm)
     if entry is None:
