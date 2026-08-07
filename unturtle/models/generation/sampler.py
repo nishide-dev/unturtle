@@ -198,28 +198,57 @@ def _bd3lm_unsupported(model: Any) -> str:
     )
 
 
+def _call_sampling_loop(method: Any, request: GenerationRequest) -> Any:
+    """Invoke a sampling loop, matching whatever signature it declares.
+
+    The loops do not share one shape: ``_sample`` and ``_sample_with_cache``
+    take ``attention_mask`` as a *required positional*, ``_sample_block_diffusion``
+    takes it as a keyword with a default, and Dream's ``_sample`` additionally
+    requires two hook callables.  Binding by inspection keeps the runners
+    generic instead of encoding one backbone's argument order.
+
+    Anything the loop does not declare stays in ``kwargs`` and is forwarded, so
+    a loop with extra options still receives them.
+    """
+    import inspect
+
+    parameters = inspect.signature(method).parameters
+    kwargs = dict(request.kwargs)
+    args: list[Any] = []
+
+    for name, parameter in parameters.items():
+        if parameter.kind in (
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        ):
+            continue
+        if name in ("input_ids", "inputs"):
+            args.append(request.inputs)
+        elif name == "generation_config":
+            args.append(request.generation_config)
+        elif name in kwargs:
+            args.append(kwargs.pop(name))
+        elif parameter.default is not inspect.Parameter.empty:
+            args.append(parameter.default)
+        else:
+            # Required and unsupplied: pass None rather than TypeError-ing on
+            # a positional the caller simply did not set (e.g. attention_mask,
+            # or Dream's hook functions, which its loop defaults internally).
+            args.append(None)
+
+    return method(*args, **kwargs)
+
+
 def _run_mdlm(model: Any, request: GenerationRequest) -> Any:
-    return model._sample(
-        request.inputs,
-        generation_config=request.generation_config,
-        **request.kwargs,
-    )
+    return _call_sampling_loop(model._sample, request)
 
 
 def _run_block_decode(model: Any, request: GenerationRequest) -> Any:
-    return model._sample_with_cache(
-        request.inputs,
-        generation_config=request.generation_config,
-        **request.kwargs,
-    )
+    return _call_sampling_loop(model._sample_with_cache, request)
 
 
 def _run_bd3lm(model: Any, request: GenerationRequest) -> Any:
-    return model._sample_block_diffusion(
-        request.inputs,
-        generation_config=request.generation_config,
-        **request.kwargs,
-    )
+    return _call_sampling_loop(model._sample_block_diffusion, request)
 
 
 def _run_block_ar(model: Any, request: GenerationRequest) -> Any:
@@ -228,10 +257,12 @@ def _run_block_ar(model: Any, request: GenerationRequest) -> Any:
     The canvas family's loop belongs to upstream `transformers`; Unturtle only
     selects it.  Calling `generate` here is safe because the DiffusionGemma
     shim resolves the algorithm and then calls `super().generate` — it does not
-    re-enter dispatch.
+    re-enter dispatch.  ``algorithm`` is passed explicitly so the shim does not
+    redo the resolution this dispatch just performed.
     """
     return model.generate(
         request.inputs,
+        algorithm="block_ar",
         generation_config=request.generation_config,
         **request.kwargs,
     )
