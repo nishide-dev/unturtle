@@ -162,9 +162,17 @@ def register_integration(integration: BackboneIntegration) -> None:
 
 
 def _unregister_integration(integration: BackboneIntegration) -> None:
-    """Remove an integration.  Test/teardown helper, not a public API."""
-    if integration in _INTEGRATIONS:
-        _INTEGRATIONS.remove(integration)
+    """Remove an integration.  Test/teardown helper, not a public API.
+
+    Removes by *identity*: ``BackboneIntegration`` is a frozen dataclass, so
+    ``list.remove`` would match by value and two tests registering equal-looking
+    entries would silently unregister each other's, leaving the registry
+    permanently short for everything that runs after.
+    """
+    for index, existing in enumerate(_INTEGRATIONS):
+        if existing is integration:
+            del _INTEGRATIONS[index]
+            return
 
 
 def find_integration(model_type: str | None) -> BackboneIntegration | None:

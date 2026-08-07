@@ -58,6 +58,120 @@ class TestRegistryContents:
         assert resolve_post_load_wrapper("not-a-real-model") is None
 
 
+class TestCapabilities:
+    """#68 designates capabilities the extension point #69 will consume."""
+
+    def test_declared_capabilities_are_queryable(self):
+        from unturtle.models.integrations import find_integration
+
+        llada = find_integration("llada")
+        assert llada is not None
+        assert llada.has_capability("masked_generation")
+        assert not llada.has_capability("canvas_block_generation")
+
+    def test_diffusion_gemma_is_canvas_not_masked(self):
+        """The two generation families must not be conflated."""
+        from unturtle.models.integrations import find_integration
+
+        gemma = find_integration("diffusion_gemma")
+        assert gemma is not None
+        assert gemma.has_capability("canvas_block_generation")
+        assert not gemma.has_capability("masked_generation")
+
+    def test_capabilities_default_to_empty(self):
+        from unturtle.models.integrations import BackboneIntegration
+
+        bare = BackboneIntegration(name="bare", model_types=("bare",))
+        assert not bare.has_capability("anything")
+
+
+class TestResolverErrorHandling:
+    """Only ImportError may be swallowed; anything else is a backbone bug."""
+
+    def _integration(self, resolver):
+        from unturtle.models.integrations import BackboneIntegration
+
+        return BackboneIntegration(
+            name="explosive",
+            model_types=("explosive",),
+            _native_resolver=resolver,
+            _wrapper_resolver=resolver,
+        )
+
+    def test_import_error_is_swallowed(self):
+        def boom():
+            raise ImportError("optional dependency missing")
+
+        integration = self._integration(boom)
+        assert integration.native_model_cls is None
+        assert integration.post_load_wrapper_cls is None
+
+    @pytest.mark.parametrize("exc", [AttributeError, RuntimeError, TypeError])
+    def test_other_exceptions_propagate(self, exc):
+        """A broken backbone must fail loudly, not vanish from the map."""
+
+        def boom():
+            raise exc("backbone is broken")
+
+        integration = self._integration(boom)
+        with pytest.raises(exc):
+            _ = integration.native_model_cls
+        with pytest.raises(exc):
+            _ = integration.post_load_wrapper_cls
+
+
+class TestRegistryIsolation:
+    def test_iter_integrations_cannot_mutate_the_registry(self):
+        """Callers get a snapshot; appending to it must not register anything."""
+        from unturtle.models.integrations import iter_integrations
+        from unturtle.models.integrations import registry as reg
+
+        before = len(reg._INTEGRATIONS)
+        snapshot = iter_integrations()
+        assert isinstance(snapshot, tuple)
+        assert len(reg._INTEGRATIONS) == before
+
+    def test_unregister_removes_by_identity_not_equality(self):
+        """Equal-looking entries from two tests must not unregister each other."""
+        from unturtle.models.integrations import (
+            BackboneIntegration,
+            register_integration,
+        )
+        from unturtle.models.integrations import registry as reg
+
+        def resolver():
+            return object
+
+        # Field-for-field equal, so `list.remove` cannot tell them apart:
+        # BackboneIntegration is a frozen dataclass with value equality.
+        first = BackboneIntegration(
+            name="twin", model_types=("twin",), _native_resolver=resolver
+        )
+        second = BackboneIntegration(
+            name="twin", model_types=("twin",), _native_resolver=resolver
+        )
+        assert first == second and first is not second
+
+        register_integration(first)
+        # `register_integration` rejects the duplicate model_type, so append
+        # directly: the hazard under test is teardown, not registration.
+        reg._INTEGRATIONS.append(second)
+        try:
+            reg._unregister_integration(second)
+            assert any(i is first for i in reg.iter_integrations()), (
+                "unregistering one entry removed a different, equal-valued one"
+            )
+        finally:
+            reg._unregister_integration(first)
+            reg._unregister_integration(second)
+
+    def test_find_integration_tolerates_none(self):
+        """`config.model_type` is read defensively and may be None."""
+        from unturtle.models.integrations import find_integration
+
+        assert find_integration(None) is None
+
+
 class TestLazyImports:
     def test_registry_module_itself_imports_no_backbone(self):
         """Registrations must hold resolvers, not eagerly-imported classes.
@@ -69,10 +183,11 @@ class TestLazyImports:
         import cost of its own, so the registry stays usable from contexts
         that must not drag in transformers' diffusion_gemma.
         """
-        import importlib.util
+        import pathlib
         import subprocess
         import sys
 
+        repo_root = pathlib.Path(__file__).resolve().parents[3]
         code = (
             "import sys, importlib.util, types\n"
             "pkg = types.ModuleType('_ireg'); pkg.__path__ = "
@@ -89,13 +204,16 @@ class TestLazyImports:
             "print(','.join(sorted(leaked)))\n"
         )
         out = subprocess.run(
-            [sys.executable, "-c", code], capture_output=True, text=True, timeout=300
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            cwd=repo_root,  # the loader script uses repo-relative paths
         )
         assert out.returncode == 0, out.stderr
         assert out.stdout.strip() == "", (
             f"the registry module eagerly imported: {out.stdout.strip()}"
         )
-        assert importlib.util is not None  # keep the import meaningful
 
     def test_missing_backbone_drops_only_its_own_entry(self):
         """One unimportable backbone must not empty the whole map.

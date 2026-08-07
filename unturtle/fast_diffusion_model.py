@@ -720,6 +720,11 @@ def _dequantize_merged_model_(model: Any) -> Any:
 #: Seeded from the BackboneIntegration registry (#68) and left mutable: this
 #: is the documented seam for registering a swap at runtime, and the values
 #: stay zero-arg resolvers so building the map imports no backbone.
+#:
+#: This is a snapshot taken at import time, so an integration registered
+#: later reaches ``resolve_post_load_wrapper()`` but not this dict.  Nothing
+#: registers at runtime today; register before importing the loader, or add
+#: the key here directly, if that ever changes.
 _POST_LOAD_CLASS_SWAPS: dict[str, Any] = post_load_class_swaps()
 
 
