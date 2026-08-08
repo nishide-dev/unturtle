@@ -32,6 +32,7 @@ Public API::
 
 from .collator import MaskedDiffusionDataCollator
 from .dfm_loss import discrete_flow_matching_loss
+from .fs_dfm import blend_losses, few_step_distillation_loss, rk_teacher_logits
 from .packed_collator import PackedMaskedDiffusionDataCollator
 from .reweighting import context_adaptive_reweight
 from .schedulers import (
@@ -78,7 +79,10 @@ from .block_diffusion_trainer import (
 )
 
 __all__ = [
+    "blend_losses",
     "discrete_flow_matching_loss",
+    "few_step_distillation_loss",
+    "rk_teacher_logits",
     "BaseAlphaScheduler",
     "LinearAlphaScheduler",
     "CosineAlphaScheduler",
