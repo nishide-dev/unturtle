@@ -716,7 +716,7 @@ def _dequantize_merged_model_(model: Any) -> Any:
 _POST_LOAD_CLASS_SWAPS: dict[str, Any] = post_load_class_swaps()
 
 
-def _apply_post_load_class_swap(model: Any) -> None:
+def _apply_post_load_class_swap(model: Any, model_name: str | None = None) -> None:
     """Swap model's class to the registered wrapper, if any.
 
     When ``unsloth.FastModel`` loads a model it returns the upstream
@@ -738,6 +738,25 @@ def _apply_post_load_class_swap(model: Any) -> None:
         return
     wrapper_cls = resolver()
     if not isinstance(model, wrapper_cls):
+        # Only stamp the wrapper onto the architecture it subclasses.  The
+        # Auto* fallback can resolve a model_type to a *different* head (for
+        # diffusion_gemma, the bare composite model with encoder/decoder
+        # children); setting `__class__` there makes a chimera whose methods
+        # reference submodules the instance never had -- the first generate
+        # died with `AttributeError: ... no attribute 'model'` (#96).  An
+        # un-swapped model keeps its own contract untouched, including any
+        # instance-level generate.
+        if not isinstance(model, wrapper_cls.__bases__):
+            _logger.warning(
+                "FastDiffusionModel: not swapping %s onto %s -- the loaded "
+                "architecture is not an instance of the wrapper's upstream "
+                "base%s. The model keeps its original class; the unified "
+                "generate shim is unavailable on this load.",
+                type(model).__name__,
+                wrapper_cls.__name__,
+                f" ({wrapper_cls.__bases__[0].__name__})",
+            )
+            return
         model.__class__ = wrapper_cls
     # unsloth FastModel installs an instance-level fast-generate wrapper
     # (saving the original as `_old_generate`). It would shadow the wrapper
@@ -747,6 +766,41 @@ def _apply_post_load_class_swap(model: Any) -> None:
     # wins. This runs whether the class was just swapped or was already the
     # wrapper (covers re-entrant / double-swap scenarios).
     model.__dict__.pop("generate", None)
+
+    # unsloth's load path also skips the `PreTrainedModel.__init__` postamble
+    # that populates `generation_config`, so the swapped model's first real
+    # generate raised `AttributeError: ... no attribute 'generation_config'`
+    # (#96).  Measured on the real DiffusionGemma checkpoint: a plain
+    # transformers load carries a `DiffusionGemmaGenerationConfig`; the
+    # FastModel load has nothing in `__dict__`.  Restore it here -- the swap
+    # site owns the wrapper's generate contract.  Prefer the checkpoint's own
+    # generation config (it carries tuned sampler fields the model-config
+    # derivation would discard); fall back to upstream init's own logic.
+    # Never overwrite one that a load path did populate.
+    # Tolerant lookups rather than assuming the full PreTrainedModel surface:
+    # the restoration only makes sense for models that expose upstream's
+    # generation contract, and a wrapper family without it simply keeps
+    # whatever it had.
+    can_generate = getattr(model, "can_generate", None)
+    config_cls = getattr(model, "generation_config_class", None)
+    if (
+        "generation_config" not in model.__dict__
+        and config_cls is not None
+        and callable(can_generate)
+        and can_generate()
+    ):
+        restored = None
+        if model_name is not None:
+            try:
+                restored = config_cls.from_pretrained(model_name)
+            except (OSError, ValueError):
+                restored = None
+        if restored is None:
+            try:
+                restored = config_cls.from_model_config(model.config)
+            except NotImplementedError:
+                restored = config_cls()
+        model.generation_config = restored
 
 
 def _native_model_classes() -> dict[str, Any]:
@@ -805,6 +859,31 @@ def _load_native(
     return None
 
 
+def _automodel_loaders() -> list[tuple[str, Any]]:
+    """The Auto* fallback chain, resolved at call time.
+
+    A separate seam on purpose: unsloth **replaces**
+    ``sys.modules["transformers"]`` with a different module object at import
+    time, so a test that patches attributes on whatever ``transformers`` name
+    it holds never reaches the classes this loader resolves — measured: the
+    patched attribute was visible by direct read while the loader's own
+    from-import still produced the real classes, and an ordering mutant
+    survived a test that looked airtight.  Tests patch THIS function on the
+    unturtle module instead, which no third-party import games can bypass.
+    """
+    from transformers import (
+        AutoModel,
+        AutoModelForCausalLM,
+        AutoModelForMaskedLM,
+    )
+
+    return [
+        ("AutoModel", AutoModel),
+        ("AutoModelForMaskedLM", AutoModelForMaskedLM),
+        ("AutoModelForCausalLM", AutoModelForCausalLM),
+    ]
+
+
 def _load_via_automodel(model_name: str, load_kwargs: dict) -> Any:
     """Load a non-native (HF-registered) model_type via the AutoModel fallback chain.
 
@@ -817,17 +896,25 @@ def _load_via_automodel(model_name: str, load_kwargs: dict) -> Any:
     The primary non-native path is :func:`_load_via_fastmodel` (unsloth FastModel);
     this function is only reached when that path is unavailable or raises.
     """
-    from transformers import (
-        AutoModel,
-        AutoModelForCausalLM,
-        AutoModelForMaskedLM,
-    )
+    loaders = _automodel_loaders()
 
-    loaders = [
-        ("AutoModel", AutoModel),
-        ("AutoModelForMaskedLM", AutoModelForMaskedLM),
-        ("AutoModelForCausalLM", AutoModelForCausalLM),
-    ]
+    # A model_type with a registered wrapper loads through the wrapper class
+    # itself first.  AutoModel resolves diffusion_gemma to the bare composite
+    # model -- the wrong head for the wrapper contract (#96), and one the
+    # swap guard now refuses to stamp.  Loading via the wrapper picks the
+    # right head AND runs the normal __init__ postamble, so generation_config
+    # is populated the ordinary way.  Any failure falls through to the Auto*
+    # chain unchanged.
+    try:
+        model_type = getattr(
+            AutoConfig.from_pretrained(model_name, **load_kwargs), "model_type", None
+        )
+    except Exception:  # noqa: BLE001 -- config fetch is best-effort here
+        model_type = None
+    resolver = _POST_LOAD_CLASS_SWAPS.get(model_type)
+    if resolver is not None:
+        wrapper_cls = resolver()
+        loaders.insert(0, (wrapper_cls.__name__, wrapper_cls))
     last_exc: Exception | None = None
     for name, loader_cls in loaders:
         try:
@@ -1223,7 +1310,7 @@ class FastDiffusionModel:
             model = model_class.from_pretrained(model_name, **load_kwargs)
 
         # --- Post-load class swap (e.g. DiffusionGemma wrapper) ---
-        _apply_post_load_class_swap(model)
+        _apply_post_load_class_swap(model, model_name=model_name)
 
         # --- Diffusion patch (shared across load paths) ---
         _patch_for_diffusion(model, max_seq_length)
