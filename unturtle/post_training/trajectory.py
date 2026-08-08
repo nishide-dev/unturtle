@@ -113,6 +113,18 @@ class SupervisionState:
                 f"supervision_mask has length {self.supervision_mask.shape[-1]} "
                 f"but input_ids has {length}"
             )
+        if self.supervision_mask.device != self.input_ids.device:
+            # A split-device state is the silent variant of mispairing: the
+            # mask VALUES are right, `torch.stack` in `from_states` happily
+            # stacks each field on its own device, and nothing fails until an
+            # op finally mixes them -- far from the construction site.  Reject
+            # at the contract boundary instead (found via a rollout stitcher
+            # that allocated its mask on CPU against CUDA rows, #109 review).
+            raise ValueError(
+                f"supervision_mask is on {self.supervision_mask.device} but "
+                f"input_ids is on {self.input_ids.device}; a split-device "
+                "state stacks without error and fails far from here"
+            )
         if not 0 <= self.prompt_length <= length:
             raise ValueError(
                 f"prompt_length must satisfy 0 <= p <= {length}, "
