@@ -243,6 +243,52 @@ class TestAlignment:
         assert torch.allclose(totals, torch.ones_like(totals), atol=1e-5)
 
 
+class TestPrecision:
+    def test_a_bf16_teacher_still_yields_float32_log_probs(self):
+        """The `.float()` upcast, which every fp32 fixture makes invisible.
+
+        Mutation-verified: removing the upcast passes all the other tests,
+        because `_causal_lm()` builds fp32 and the cast is then a no-op.  The
+        realistic deployment dtype is bf16 (the reference loads with
+        `torch_dtype="auto"`), where a log_softmax over bf16 logits quantizes
+        the supervision target enough to matter.
+        """
+        from unturtle.post_training.teacher import FrozenTeacher
+
+        teacher = FrozenTeacher(_causal_lm().to(torch.bfloat16), vocab_size=64)
+
+        log_probs = teacher.log_probs(_ids())
+
+        assert log_probs.dtype == torch.float32, (
+            f"bf16 teacher produced {log_probs.dtype} targets; the upcast was "
+            "dropped and the supervision is quantized"
+        )
+
+    def test_a_config_without_vocab_size_skips_the_check(self):
+        """Deliberate, and worth pinning either way.
+
+        A distributed wrapper (the reference passes the teacher through
+        `accelerator.prepare`) may not expose `config.vocab_size`.  Hard-failing
+        there would reject a legitimate setup, so the check is best-effort —
+        but "best-effort" should be a decision, not an accident.
+        """
+        from unturtle.post_training.teacher import FrozenTeacher
+
+        # `del config.vocab_size` does not work — HF's PretrainedConfig falls
+        # back to a class default (32000) — so the wrapper is stubbed instead.
+        class _Wrapper:
+            class config:  # no vocab_size, like a distributed engine wrapper
+                pass
+
+            def requires_grad_(self, flag):
+                return self
+
+            def eval(self):
+                return self
+
+        assert FrozenTeacher(_Wrapper(), vocab_size=999) is not None
+
+
 class TestVocabularyContract:
     def test_a_mismatched_vocabulary_is_rejected(self):
         """The reference has no such check.

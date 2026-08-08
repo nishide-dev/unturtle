@@ -43,6 +43,12 @@ and *which* thing depends on the path:
   realigned, with ``logits_teacher.roll(dims=1, shifts=1)`` and no slice, so
   every position is kept and the student is left untouched.
 
+Scope: this wrapper rolls raw full-sequence logits.  The reference's
+``forward_process`` additionally re-slices out the ``xt`` region and overwrites
+block-final positions (``replace_x0_indices``, ``rl_sdar.py:1344-1346``) before
+rolling; that packed-layout surgery belongs to the caller that builds the model
+input, not here.
+
 Getting this wrong misaligns every position by one and still yields a finite,
 plausible loss.  So ``alignment`` is an explicit argument rather than a
 hardcoded slice — ``"roll"`` (the diffusion default) or ``"truncate"`` (the
@@ -84,6 +90,12 @@ def resolve_top_k_logits(value: Optional[int]) -> Optional[int]:
     """
     if value is None or value == 0:
         return None
+    if value < 0:
+        # Message names the 0 case explicitly: "must be >= 0" alone would be
+        # misleading, since 0 is accepted above and silently becomes None.
+        raise ValueError(
+            f"top_k_logits must be >= 0 (0 means full vocabulary), got {value}"
+        )
     return value
 
 
@@ -91,7 +103,13 @@ class FrozenTeacher:
     """A causal LM used only to produce supervision targets.
 
     Args:
-        model:      Any causal LM exposing ``.logits``.
+        model:      A causal LM with an HF-style forward (``input_ids`` /
+                    ``attention_mask`` keywords, ``.logits`` output).
+
+                    **Frozen and set to eval in place.**  Pass a model you do
+                    not otherwise train: a caller reusing one would find it
+                    silently frozen, and the symptom surfaces much later as a
+                    model that will not learn.
         vocab_size: The *student's* vocabulary size, checked against the
                     teacher's.  Required rather than inferred: inferring it
                     from the teacher would make the check vacuous.
