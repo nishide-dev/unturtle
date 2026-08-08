@@ -178,4 +178,161 @@ def random_mask_state(
     )
 
 
-__all__ = ["combine_rounds_one_state_per_block", "random_mask_state"]
+def replay_rounds(
+    input_ids: torch.Tensor,
+    step_map: torch.Tensor,
+    *,
+    prompt_length: int,
+    block_size: int,
+    mask_token_id: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Reconstruct a decode's intermediate states from its commit trace.
+
+    ``one_round_vectorized`` (rl_sdar.py:590-651) iterated to exhaustion, on
+    the unpacked layout.  ``step_map[i]`` is the denoising step at which
+    response position ``i`` committed its final token.  Per block, each round
+    consumes the minimum remaining step: positions committed AT that step are
+    the round's supervised set; positions committed at that step or later are
+    still masked in the round's state; earlier ones hold their final tokens.
+    Consumed steps are retired, so every response position is supervised
+    exactly once across the replay.
+
+    No sampler hook is needed -- the trace suffices, which is the reference's
+    own design (its generation loop records ``step_map`` and everything else
+    is replayed after the fact).
+
+    Args:
+        input_ids: ``[L]`` final decoded row (prompt + response).
+        step_map:  ``[L - prompt_length]`` commit step per response position.
+
+    Returns:
+        ``(states [T, L], masks [T, L])`` where ``T`` is the number of rounds
+        (the max number of distinct commit steps in any block).
+    """
+    length = input_ids.shape[-1]
+    response = length - prompt_length
+    if step_map.shape[-1] != response:
+        raise ValueError(
+            f"step_map has {step_map.shape[-1]} entries but the response "
+            f"spans {response} positions"
+        )
+    device = input_ids.device
+    remaining = step_map.clone().to(device)
+    big = torch.iinfo(remaining.dtype).max
+
+    states: list[torch.Tensor] = []
+    masks: list[torch.Tensor] = []
+    while True:
+        supervised_tail = torch.zeros(response, dtype=torch.bool, device=device)
+        still_masked_tail = torch.zeros(response, dtype=torch.bool, device=device)
+        any_selected = False
+        for start in range(0, response, block_size):
+            end = min(start + block_size, response)
+            block = remaining[start:end]
+            valid = block.ge(0)
+            if not bool(valid.any()):
+                continue
+            minimum = block.masked_fill(~valid, big).min()
+            # Supervised this round: committed exactly at the block minimum.
+            # Still masked: committed at the minimum OR LATER -- the state the
+            # decode saw just before committing these positions.
+            supervised_tail[start:end] = block.eq(minimum) & valid
+            still_masked_tail[start:end] = block.ge(minimum) & valid
+            any_selected = True
+        if not any_selected:
+            break
+
+        state = input_ids.clone()
+        state[prompt_length:][still_masked_tail] = mask_token_id
+        mask = torch.zeros(length, dtype=torch.bool, device=device)
+        mask[prompt_length:] = supervised_tail
+        states.append(state)
+        masks.append(mask)
+        # Retire the consumed minima (the reference marks them -1).
+        remaining = remaining.masked_fill(supervised_tail, -1)
+        # Progress guard: each round retires at least one position, so the
+        # replay can never exceed `response` rounds.  Without this, a retire
+        # that stopped retiring loops forever selecting the same minima --
+        # the mutant HANGS rather than fails, which no assertion can see.
+        if len(states) > response:
+            raise RuntimeError(
+                f"replay exceeded {response} rounds without exhausting the "
+                "step map; a round is not retiring the steps it consumes"
+            )
+
+    return torch.stack(states), torch.stack(masks)
+
+
+def commit_steps_from_trajectory(trajectory: torch.Tensor) -> torch.Tensor:
+    """Derive the commit trace from a recorded state sequence.
+
+    A position's commit step is one past its LAST change -- the index of the
+    state in which it first holds its final value for good.  A flip-flop
+    (A -> B -> A) therefore commits late: it was not final-valued *stably*
+    until its last change, and replaying it as early-committed would show
+    the teacher a state the decode never stabilized.  Positions that never
+    change commit at 0.
+
+    Args:
+        trajectory: ``[T + 1, ...]`` states, index 0 the initial state and
+                    index ``T`` the final one (:class:`TrajectoryRecorder`
+                    produces exactly this).
+
+    Returns:
+        Commit steps with the trajectory's trailing shape.
+    """
+    if trajectory.shape[0] < 2:
+        raise ValueError(
+            f"trajectory needs at least 2 states (initial and final), got "
+            f"{trajectory.shape[0]}"
+        )
+    changed = trajectory[1:] != trajectory[:-1]
+    step_index = torch.arange(1, trajectory.shape[0], device=trajectory.device).reshape(
+        -1, *([1] * (trajectory.dim() - 1))
+    )
+    return (changed * step_index).amax(dim=0)
+
+
+class TrajectoryRecorder:
+    """Wrap a denoiser so a solver run leaves its full state trajectory behind.
+
+    The solver hands the denoiser each pre-step state; the recorder keeps a
+    clone of every one, and :meth:`finish` appends the solver's returned
+    final state.  ``recorder -> commit_steps_from_trajectory -> replay_rounds``
+    is the mechanical path from a live ``solve_discrete_flow`` call to the
+    round states the stitcher consumes -- no hook inside the sampler.  Mind
+    the monotone-commitment caveat on :func:`replay_rounds`: for the
+    jump-process solver the replayed states are an idealized reconstruction,
+    not the recorded trajectory itself.
+
+    Single-use by design: a recorder reused across rollouts would silently
+    concatenate two prompts' trajectories into one commit trace.
+    """
+
+    def __init__(self, denoiser) -> None:
+        self._denoiser = denoiser
+        self._states: list[torch.Tensor] = []
+        self._finished = False
+
+    def __call__(self, x_t: torch.Tensor, t: torch.Tensor, h) -> torch.Tensor:
+        if self._finished:
+            raise RuntimeError("this recorder is finished; build a new one")
+        self._states.append(x_t.detach().clone())
+        return self._denoiser(x_t, t, h)
+
+    def finish(self, final_state: torch.Tensor) -> torch.Tensor:
+        """Append the solver's return and yield the ``[T + 1, ...]`` trajectory."""
+        if self._finished:
+            raise RuntimeError("finish() may only be called once per recorder")
+        self._finished = True
+        self._states.append(final_state.detach().clone())
+        return torch.stack(self._states)
+
+
+__all__ = [
+    "TrajectoryRecorder",
+    "combine_rounds_one_state_per_block",
+    "commit_steps_from_trajectory",
+    "random_mask_state",
+    "replay_rounds",
+]

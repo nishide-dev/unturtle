@@ -17,7 +17,13 @@
 
 from .buffer import SupervisionBuffer
 from .divergence import teacher_student_divergence
-from .rollout import combine_rounds_one_state_per_block, random_mask_state
+from .rollout import (
+    TrajectoryRecorder,
+    combine_rounds_one_state_per_block,
+    commit_steps_from_trajectory,
+    random_mask_state,
+    replay_rounds,
+)
 from .teacher import FrozenTeacher, resolve_top_k_logits
 from .trajectory import SupervisionBatch, SupervisionState
 
@@ -26,8 +32,11 @@ __all__ = [
     "SupervisionBatch",
     "SupervisionBuffer",
     "SupervisionState",
+    "TrajectoryRecorder",
     "combine_rounds_one_state_per_block",
+    "commit_steps_from_trajectory",
     "random_mask_state",
+    "replay_rounds",
     "resolve_top_k_logits",
     "teacher_student_divergence",
 ]
