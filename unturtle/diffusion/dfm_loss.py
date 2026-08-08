@@ -19,8 +19,9 @@ The paper derives the loss as a **Bregman divergence** (Lipman et al. 2024,
 eq. 7.31), starting from the velocity formulation.  Per token at position
 ``i``::
 
-    L_i(x_1, x_t, t) = -g(t) * [ p_{1|t}(x_t^i | x_t) - delta_{x_1^i}(x_t^i) ]
-                       - [ 1 - delta_{x_1^i}(x_t^i) ] * log p_{1|t}(x_1^i | x_t)
+    L_i(x_1, x_t, t) = -g(t) * [ p_{1|t}(x_t^i | x_t) - delta_{x_1^i}(x_t^i)
+                                 + ( 1 - delta_{x_1^i}(x_t^i) )
+                                   * log p_{1|t}(x_1^i | x_t) ]
 
 with ``p_{1|t}(x^i | z) = softmax(theta_i(z, t))`` and
 ``g(t) = kappa'(t) / (1 - kappa(t))``, which under the paper's linear
@@ -31,7 +32,11 @@ with ``p_{1|t}(x^i | z) = softmax(theta_i(z, t))`` and
 1. ``g(t)`` is not decoration.  The paper: it "naturally arises from the
    velocity formulation and ensures proper weighting across different time
    steps".  Dropping it trains a differently-weighted objective that still
-   converges, so nothing announces the change.
+   converges, so nothing announces the change.  It multiplies the **whole
+   bracket** — both terms — which is what keeps it a pure weight: a common
+   positive factor cannot move the minimizer.  Applying it to only the first
+   term makes the minimizer the interpolant ``p_t`` rather than the clean
+   posterior ``p_{1|t}``, and that shipped once (#97).
 2. The ``delta`` terms make an already-correct position behave differently:
    where ``x_t == x_1`` the log-likelihood term vanishes entirely
    (``1 - delta = 0``) and only the first term acts.  Cross-entropy would keep
@@ -42,6 +47,17 @@ with ``p_{1|t}(x^i | z) = softmax(theta_i(z, t))`` and
 The scheduler is injected rather than hardcoding ``1/(1-t)`` so the objective
 and the forward process (``unturtle.processes.DiscreteFlowProcess``) cannot
 drift onto different paths.
+
+**On sampling ``t`` near 1.**  Because ``g`` scales the whole loss and diverges
+as ``kappa -> 1``, the per-sample magnitude grows like ``1/(1-t)``.  Measured
+on random logits at vocab 6: 2.8 at ``t = 0.5``, 85 at ``t = 0.99``, 8430 at
+``t = 0.9999`` (the absolute values scale with vocabulary; the ``1/(1-t)``
+ratio does not).  That does not move the minimizer — a common positive factor
+cannot — but a single draw very close to 1 will dominate a batch's gradient.
+``DiscreteFlowProcess`` bounds ``t`` from below via ``time_epsilon`` and does
+**not** cap it from above, so callers training at scale should consider an
+upper bound too.  Left to the caller rather than clamped here: the weighting
+is the paper's, and silently truncating it would change the objective.
 
 Reimplemented from the paper.  ``apple/ml-fs-dfm`` is under the Apple Sample
 Code License and was deliberately not read (see #65).
@@ -141,7 +157,6 @@ def discrete_flow_matching_loss(
     # `kappa`, so it takes the finite-difference branch.
     t = timesteps.to(device=logits.device, dtype=torch.float32)
     g = _scale(scheduler, t).to(logits.dtype)
-    t = t.to(logits.dtype)
     if g.dim() == 1:
         g = g[:, None]
 
@@ -158,15 +173,32 @@ def discrete_flow_matching_loss(
 
     # Where the position already holds its target, `1 - delta` zeroes the
     # log-likelihood term entirely and only the first term acts.
-    # The log term is SUBTRACTED, not added -- deliberately different from the
-    # printed eq. (3.8), so do not "correct" it back.  As printed the
-    # expression is the pre-minimization Bregman quantity: `+(1-delta)*log p`
-    # is a positive log-likelihood, i.e. a reward.  Measured with it added, a
-    # model predicting `x_1` perfectly scores -4e-09 while one predicting
-    # wrongly scores -20.0, and 200 SGD steps drive the loss to -9.43 while
-    # mean p(x_1) *falls* from 0.061 to 0.008 -- it unlearns the target, and
-    # is unbounded below.  Negating it makes the two terms agree in direction.
-    per_token = -g * (prob_current - delta) - (1.0 - delta) * log_prob_target
+    #
+    # `g` multiplies the ENTIRE bracket, both terms -- eq. (3.8) reads
+    # `-g(t)[ p(x_t) - delta + (1-delta) log p(x_1) ]`.  This is what makes it
+    # a per-timestep *weight*: scaling every term by the same positive factor
+    # cannot move the minimizer, which is precisely the paper's "ensures
+    # proper weighting across different time steps".
+    #
+    # Applying `g` to only the first term silently changes what is being
+    # learned.  The relative weight of "reward mass on the current token"
+    # against "raise the target's log-likelihood" then varies with `t`, and
+    # the minimizer becomes the interpolant `p_t = (1-t) p* + t delta_{x_t}`
+    # instead of the clean posterior `p_{1|t} = p*`.  Measured on a fixed
+    # (x_t = MASK, t) with `p* = [.40 .25 .20 .10 .05 .00]`, optimizing the
+    # logits directly gave `q(MASK) = t` exactly -- 0.900 at t = 0.9, where
+    # the correct answer is 0.  End to end that leaves ~31% of sampled
+    # positions still holding the source token (#97).
+    #
+    # This is now the printed equation exactly: the bracket negated, with `g`
+    # on both terms.  An earlier version instead SUBTRACTED the log term and
+    # applied `g` only to the first, on the theory that the printed form was a
+    # pre-minimization reward (#94).  That reading was wrong -- the real defect
+    # was the misplaced `g`, and subtracting the log term merely masked half of
+    # its symptom.  With `g` correctly scaling the whole bracket the printed
+    # signs minimize properly, and the optimum is `p*` at every `t` and for
+    # every `x_t` (measured; see the test for the assertion).
+    per_token = -g * ((prob_current - delta) + (1.0 - delta) * log_prob_target)
 
     if reduction == "none":
         return per_token
