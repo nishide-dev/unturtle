@@ -15,6 +15,7 @@
 
 """Post-training methods: on-policy distillation and related objectives (#64)."""
 
+from .buffer import SupervisionBuffer
 from .divergence import teacher_student_divergence
 from .teacher import FrozenTeacher, resolve_top_k_logits
 from .trajectory import SupervisionBatch, SupervisionState
@@ -22,6 +23,7 @@ from .trajectory import SupervisionBatch, SupervisionState
 __all__ = [
     "FrozenTeacher",
     "SupervisionBatch",
+    "SupervisionBuffer",
     "SupervisionState",
     "resolve_top_k_logits",
     "teacher_student_divergence",
