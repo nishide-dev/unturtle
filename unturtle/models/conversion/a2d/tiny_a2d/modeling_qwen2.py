@@ -40,6 +40,7 @@ from transformers.modeling_outputs import BaseModelOutputWithPast
 from transformers.processing_utils import Unpack
 from transformers.utils import TransformersKwargs
 
+from ._hybrid import maybe_build_hybrid_mask
 from .generation_utils import TinyA2DGenerationMixin
 
 if transformers.utils.is_torch_flex_attn_available():
@@ -50,6 +51,16 @@ else:
 
 class TinyA2DQwen2Config(transformers.Qwen2Config):
     model_type = "tiny-a2d-qwen2"
+
+    def __init__(self, hybrid_attention: bool = False, **kwargs):
+        """`hybrid_attention` is declared rather than left to **kwargs (#63).
+
+        `PretrainedConfig` would store it either way, but an undeclared field
+        is invisible to anyone reading the class and depends on upstream
+        kwarg-stashing behaviour.
+        """
+        super().__init__(**kwargs)
+        self.hybrid_attention = hybrid_attention
 
 
 class TinyA2DQwen2Model(transformers.Qwen2Model):
@@ -62,6 +73,7 @@ class TinyA2DQwen2Model(transformers.Qwen2Model):
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        prompt_lengths: Optional[torch.Tensor] = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> BaseModelOutputWithPast:
         if (input_ids is None) ^ (inputs_embeds is not None):
@@ -109,6 +121,23 @@ class TinyA2DQwen2Model(transformers.Qwen2Model):
                     dtype=attention_mask.dtype,
                 )
                 attention_mask = torch.cat([prefix_mask, attention_mask], dim=1)
+
+            # PreDiff-LM hybrid topology (#63).  Returns None unless the
+            # model was converted *and* a prompt boundary was supplied, so an
+            # unconverted model ignores `prompt_lengths` and a converted one
+            # without it keeps its previous behaviour byte-for-byte.
+            hybrid = maybe_build_hybrid_mask(
+                self.config,
+                prompt_lengths,
+                attention_mask,
+                batch_size=inputs_embeds.shape[0],
+                seq_len=inputs_embeds.shape[1],
+                key_value_length=key_value_length,
+                dtype=self.dtype,
+                device=inputs_embeds.device,
+            )
+            if hybrid is not None:
+                attention_mask = hybrid
 
             if not (
                 isinstance(attention_mask, BlockMask)
