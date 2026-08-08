@@ -12,10 +12,11 @@ distinct failure mode, so each gets its own test:
 - without `.eval()`: dropout makes the teacher's targets stochastic, and the
   student chases noise it can never match
 
-The alignment detail: the reference applies `[:, :-1, :]` to *both* student and
-teacher, because `logits[t]` predicts token `t+1`.  A wrapper returning
-unshifted logprobs against a shifted student misaligns every position by one
-and still produces a finite, plausible loss.
+The alignment detail: the reference has *two* conventions, and the one it uses
+depends on `block_size`.  The OPD default (`block_size: 4`) realigns the
+teacher alone with `roll`; only the degenerate `block_size == 1` case slices
+both sides.  Getting this wrong misaligns every position by one and still
+produces a finite, plausible loss.
 """
 
 import pytest
@@ -132,41 +133,104 @@ class TestFreezing:
 
 
 class TestAlignment:
-    def test_log_probs_are_shifted_for_next_token_prediction(self):
-        """`logits[t]` predicts token `t+1`, so scoring drops the last position.
+    """The reference has *two* answers, and which one is right depends on the path.
 
-        The reference applies `[:, :-1, :]` to student and teacher alike.  A
-        wrapper returning `L` positions against a student's `L-1` would either
-        crash on shape or, worse, broadcast into a misalignment.
-        """
+    A causal teacher's `logits[t]` predicts token `t+1`; a diffusion student's
+    `logits[t]` predicts token `t`.  Something must realign them:
+
+    - `forward_process_causal` (`rl_sdar.py:1080`) slices `[:, :-1, :]` on both
+      sides — but runs only when `block_size == 1` (`rl_sdar.py:1555`), the
+      degenerate AR case.
+    - `forward_process` (`rl_sdar.py:1253`) is the real OPD path, since the
+      shipped config uses `block_size: 4`.  There the **teacher alone** is
+      realigned with `roll(dims=1, shifts=1)` and no slice.
+
+    My first version hardcoded the slice, i.e. the wrong path's convention.
+    Getting this wrong misaligns every position by one and still yields a
+    finite, plausible loss — which is why it is an explicit argument now.
+    """
+
+    def test_roll_is_the_default(self):
+        """The OPD path, not the block_size==1 special case."""
+        from unturtle.post_training.teacher import FrozenTeacher
+
+        assert FrozenTeacher(_causal_lm(), vocab_size=64).alignment == "roll"
+
+    def test_roll_keeps_every_position(self):
+        """Unlike truncate: the student is not shifted, so nothing is dropped."""
         from unturtle.post_training.teacher import FrozenTeacher
 
         teacher = FrozenTeacher(_causal_lm(), vocab_size=64)
-        ids = _ids(batch=2, length=8)
 
-        log_probs = teacher.log_probs(ids)
+        log_probs = teacher.log_probs(_ids(batch=2, length=8))
 
-        assert log_probs.shape == (2, 7, 64), (
-            f"expected the shifted length 7, got {log_probs.shape[1]}"
+        assert log_probs.shape == (2, 8, 64), (
+            f"roll must keep all 8 positions, got {log_probs.shape[1]}"
         )
 
-    def test_the_shift_drops_the_last_position_not_the_first(self):
-        """Direction matters: `[:, 1:, :]` is also length L-1 and is wrong.
+    def test_roll_moves_predictions_one_position_right(self):
+        """The actual realignment, not just the shape.
 
-        Changing the *last* token must not affect any returned position, since
-        that token is only ever a target, never a context for a kept logit.
+        `roll(shifts=1)` puts `logits[t]` — which predicted token `t+1` — at
+        index `t+1`, where that token lives.
         """
+        import torch.nn.functional as F
+
         from unturtle.post_training.teacher import FrozenTeacher
 
-        teacher = FrozenTeacher(_causal_lm(), vocab_size=64)
+        model = _causal_lm()
+        teacher = FrozenTeacher(model, vocab_size=64)
+        ids = _ids(batch=1, length=8)
+
+        with torch.no_grad():
+            raw = F.log_softmax(model(input_ids=ids).logits.float(), dim=-1)
+        rolled = teacher.log_probs(ids)
+
+        assert torch.allclose(rolled[:, 1:], raw[:, :-1], atol=1e-6), (
+            "position t+1 does not carry the logit that predicted token t+1"
+        )
+
+    def test_truncate_drops_the_last_position(self):
+        """The `block_size == 1` case, where both sides slice."""
+        from unturtle.post_training.teacher import FrozenTeacher
+
+        teacher = FrozenTeacher(_causal_lm(), vocab_size=64, alignment="truncate")
+
+        log_probs = teacher.log_probs(_ids(batch=2, length=8))
+
+        assert log_probs.shape == (2, 7, 64)
+
+    def test_truncate_drops_the_last_position_not_the_first(self):
+        """Direction matters: `[:, 1:, :]` is also length L-1 and is wrong."""
+        from unturtle.post_training.teacher import FrozenTeacher
+
+        teacher = FrozenTeacher(_causal_lm(), vocab_size=64, alignment="truncate")
         ids = _ids(batch=1, length=8)
         altered = ids.clone()
         altered[0, -1] = (int(ids[0, -1]) + 1) % 64
 
         assert torch.equal(teacher.log_probs(ids), teacher.log_probs(altered)), (
-            "changing the final token moved a kept logit; the shift is "
+            "changing the final token moved a kept logit; truncate is "
             "dropping the wrong end"
         )
+
+    def test_the_two_alignments_differ(self):
+        """Guards against both branches collapsing to the same thing."""
+        from unturtle.post_training.teacher import FrozenTeacher
+
+        ids = _ids(batch=1, length=8)
+        rolled = FrozenTeacher(_causal_lm(), vocab_size=64).log_probs(ids)
+        truncated = FrozenTeacher(
+            _causal_lm(), vocab_size=64, alignment="truncate"
+        ).log_probs(ids)
+
+        assert rolled.shape[1] != truncated.shape[1]
+
+    def test_an_unknown_alignment_is_rejected(self):
+        from unturtle.post_training.teacher import FrozenTeacher
+
+        with pytest.raises(ValueError, match="alignment"):
+            FrozenTeacher(_causal_lm(), vocab_size=64, alignment="shift")
 
     def test_it_returns_normalized_log_probabilities(self):
         from unturtle.post_training.teacher import FrozenTeacher
@@ -235,7 +299,7 @@ class TestTopKSentinel:
         from unturtle.post_training.teacher import FrozenTeacher, resolve_top_k_logits
 
         teacher = FrozenTeacher(_causal_lm(seed=1), vocab_size=64)
-        student_lp = torch.log_softmax(torch.randn(2, 7, 64), dim=-1)
+        student_lp = torch.log_softmax(torch.randn(2, 8, 64), dim=-1)
         teacher_lp = teacher.log_probs(_ids())
 
         via_sentinel = teacher_student_divergence(

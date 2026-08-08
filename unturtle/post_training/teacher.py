@@ -30,11 +30,23 @@ stops dropout making the supervision target stochastic — without it the
 student chases noise it can never match.  Each has a distinct failure mode, so
 each is tested separately.
 
-**The shift is load-bearing.**  ``logits[t]`` predicts token ``t+1``, so the
-reference slices ``[:, :-1, :]`` for the student *and* the teacher
-(``rl_sdar.py:1108,1112``).  A teacher returning ``L`` positions against a
-student's ``L-1`` misaligns every position by one and still yields a finite,
-plausible loss.  This wrapper owns the shift so the two cannot drift.
+**Alignment is the hazard, and the reference has two different answers.**
+A causal teacher's ``logits[t]`` predicts token ``t+1``, while a diffusion
+student's ``logits[t]`` predicts token ``t``.  Something must realign them,
+and *which* thing depends on the path:
+
+- ``forward_process_causal`` (``rl_sdar.py:1080``) slices ``[:, :-1, :]`` on
+  **both** sides.  This runs only when ``block_size == 1`` — the degenerate
+  AR case (``rl_sdar.py:1555``).
+- ``forward_process`` (``rl_sdar.py:1253``) is the real OPD path, since the
+  shipped config uses ``block_size: 4``.  There the **teacher alone** is
+  realigned, with ``logits_teacher.roll(dims=1, shifts=1)`` and no slice, so
+  every position is kept and the student is left untouched.
+
+Getting this wrong misaligns every position by one and still yields a finite,
+plausible loss.  So ``alignment`` is an explicit argument rather than a
+hardcoded slice — ``"roll"`` (the diffusion default) or ``"truncate"`` (the
+``block_size == 1`` AR case).
 
 **One thing the reference does not do:** check that student and teacher share a
 vocabulary.  A mismatch produces either a shape error deep inside the
@@ -72,8 +84,6 @@ def resolve_top_k_logits(value: Optional[int]) -> Optional[int]:
     """
     if value is None or value == 0:
         return None
-    if value < 0:
-        raise ValueError(f"top_k_logits must be >= 0, got {value}")
     return value
 
 
@@ -85,9 +95,12 @@ class FrozenTeacher:
         vocab_size: The *student's* vocabulary size, checked against the
                     teacher's.  Required rather than inferred: inferring it
                     from the teacher would make the check vacuous.
+        alignment:  ``"roll"`` (default, the OPD path: realign the teacher and
+                    keep every position) or ``"truncate"`` (the
+                    ``block_size == 1`` AR case: both sides drop a position).
     """
 
-    def __init__(self, model: Any, *, vocab_size: int) -> None:
+    def __init__(self, model: Any, *, vocab_size: int, alignment: str = "roll") -> None:
         teacher_vocab = getattr(getattr(model, "config", None), "vocab_size", None)
         if teacher_vocab is not None and teacher_vocab != vocab_size:
             raise ValueError(
@@ -96,6 +109,12 @@ class FrozenTeacher:
                 "vocabularies is not defined, and matching sizes with "
                 "different tokenizers would supervise silently wrong targets"
             )
+
+        if alignment not in ("roll", "truncate"):
+            raise ValueError(
+                f"alignment must be 'roll' or 'truncate', got {alignment!r}"
+            )
+        self.alignment = alignment
 
         model.requires_grad_(False)
         model.eval()
@@ -109,7 +128,10 @@ class FrozenTeacher:
         attention_mask: Optional[torch.Tensor] = None,
         **forward_kwargs: Any,
     ) -> torch.Tensor:
-        """Shifted teacher log-probabilities, ``[B, L-1, V]``.
+        """Teacher log-probabilities, realigned to the student's convention.
+
+        Returns ``[B, L, V]`` under ``alignment="roll"`` (the OPD default) and
+        ``[B, L-1, V]`` under ``"truncate"``.
 
         Args:
             attention_mask: The teacher's own padding mask.  Deliberately a
@@ -123,11 +145,22 @@ class FrozenTeacher:
         outputs = self.model(
             input_ids=input_ids, attention_mask=attention_mask, **forward_kwargs
         )
-        # `logits[t]` predicts token `t+1`; drop the final position so index
-        # `t` aligns with token `t`, matching the student's slice.  Upcast to
-        # float32 before the log_softmax as the reference does — a bf16
+        logits = outputs.logits
+
+        if self.alignment == "roll":
+            # The OPD path.  A causal teacher's `logits[t]` predicts token
+            # `t+1`; rolling right by one puts each prediction at the index of
+            # the token it describes, matching a diffusion student that
+            # predicts token `t` at position `t`.  Every position is kept, and
+            # the student is not touched.
+            logits = logits.roll(dims=1, shifts=1)
+        else:
+            # `block_size == 1` only: both sides drop a position instead.
+            logits = logits[:, :-1, :]
+
+        # Upcast before the log_softmax as the reference does — a bf16
         # teacher's targets are otherwise quantized enough to matter.
-        return F.log_softmax(outputs.logits[:, :-1, :].float(), dim=-1)
+        return F.log_softmax(logits.float(), dim=-1)
 
 
 __all__ = ["FrozenTeacher", "resolve_top_k_logits"]
