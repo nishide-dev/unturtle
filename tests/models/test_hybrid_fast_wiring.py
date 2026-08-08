@@ -135,7 +135,7 @@ class TestThePatchedPathUsesTheKernel:
             "reaching the patched attention"
         )
 
-    @pytest.mark.parametrize("family", ["llama", "qwen2"])
+    @pytest.mark.parametrize("family", ["llama", "qwen2", "qwen3"])
     def test_patched_and_unpatched_logits_agree(self, family):
         """The equivalence claim, end to end through a real model.
 
@@ -144,11 +144,11 @@ class TestThePatchedPathUsesTheKernel:
         mask) must produce the same logits.  This is what makes the signal
         safe to emit — either consumer yields the same answer.
 
-        qwen3 is deliberately absent: its *patched* path diverges from the
-        unpatched reference on `main` because the shared fast forward skips
-        `q_norm`/`k_norm` (#102, pre-existing).  Its wiring is pinned by the
-        patched-dense-vs-patched-fast test below instead, which is the claim
-        this PR actually makes.
+        qwen3 was originally excluded here: the shared fast forward skipped
+        its `q_norm`/`k_norm`, so the *patched* path diverged from the
+        unpatched reference by ~0.12 in fp64 regardless of hybrid attention
+        (#102).  Its presence in the parametrize is the regression pin for
+        that fix.
         """
         reference = _model(seed=3, family=family)
         patched = _patch(_model(seed=3, family=family))
@@ -529,3 +529,43 @@ class TestTheLengthGate:
         )
 
         assert TinyA2DLlamaConfig().hybrid_fast_min_seq_len == 2048
+
+
+class TestQwen3QKNorm:
+    """The fast forward must apply qwen3's per-head Q/K norms (#102).
+
+    Upstream order is projection -> norm -> RoPE.  RMSNorm weights initialize
+    to ones, and with unit weights the norm commutes with RoPE's rotations —
+    so a randomly-initialized model cannot see a norm applied on the wrong
+    side of RoPE.  The weights are perturbed away from ones here precisely so
+    that ordering becomes observable; without that, this test would pass
+    under a norm-after-RoPE implementation and prove nothing (the
+    parameters-at-default trap).
+    """
+
+    def test_patched_qwen3_matches_unpatched_with_non_unit_norm_weights(self):
+        reference = _model(seed=17, family="qwen3").double()
+        torch.manual_seed(23)
+        for layer in reference.model.layers:
+            layer.self_attn.q_norm.weight.data.uniform_(0.5, 1.5)
+            layer.self_attn.k_norm.weight.data.uniform_(0.5, 1.5)
+
+        patched = _model(seed=17, family="qwen3").double()
+        patched.load_state_dict(reference.state_dict())
+        _patch(patched)
+
+        input_ids = _batch()
+        prompt_lengths = torch.tensor([3, 3])
+
+        with torch.no_grad():
+            expected = reference(
+                input_ids=input_ids, prompt_lengths=prompt_lengths
+            ).logits
+            got = patched(input_ids=input_ids, prompt_lengths=prompt_lengths).logits
+
+        deviation = float((got - expected).abs().max())
+        assert deviation < 1e-10, (
+            f"patched qwen3 deviates by {deviation:.3e} in fp64 with non-unit "
+            "norm weights; the Q/K norms are missing or on the wrong side of "
+            "RoPE"
+        )
