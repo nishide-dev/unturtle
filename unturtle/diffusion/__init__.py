@@ -32,7 +32,13 @@ Public API::
 
 from .collator import MaskedDiffusionDataCollator
 from .dfm_loss import discrete_flow_matching_loss
-from .fs_dfm import blend_losses, few_step_distillation_loss, rk_teacher_logits
+from .fs_dfm import (
+    StepAwareWrapper,
+    blend_losses,
+    clip_step_to_path,
+    few_step_distillation_loss,
+    rk_teacher_logits,
+)
 from .packed_collator import PackedMaskedDiffusionDataCollator
 from .reweighting import context_adaptive_reweight
 from .schedulers import (
@@ -79,7 +85,9 @@ from .block_diffusion_trainer import (
 )
 
 __all__ = [
+    "StepAwareWrapper",
     "blend_losses",
+    "clip_step_to_path",
     "discrete_flow_matching_loss",
     "few_step_distillation_loss",
     "rk_teacher_logits",
