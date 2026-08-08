@@ -237,6 +237,19 @@ def TinyA2DAttention_fast_forward(
     Q = Q.view(bsz, q_len, n_heads, head_dim).transpose(1, 2)
     K = K.view(bsz, q_len, n_kv_heads, head_dim).transpose(1, 2)
     V = V.view(bsz, q_len, n_kv_heads, head_dim).transpose(1, 2)
+    # qwen3 normalizes Q/K per head between the projection and RoPE
+    # (`Qwen3Attention`: `self.q_norm(self.q_proj(x).view(...))`, RMSNorm over
+    # head_dim only).  head_dim is the last axis both before and after the
+    # transpose above, so applying the module here is exactly upstream's
+    # placement.  Guarded on the attribute because llama/qwen2 attention
+    # carries no such norms.  Skipping this silently de-normalized every
+    # patched qwen3 forward -- max logit divergence 0.12 (fp64, 1 layer)
+    # against the unpatched reference, with nothing raising (#102).
+    if hasattr(self, "q_norm"):
+        Q = self.q_norm(Q)
+    if hasattr(self, "k_norm"):
+        K = self.k_norm(K)
+
     seq_info = get_packed_info_from_kwargs(kwargs, Q.device)
 
     kv_seq_len = K.shape[-2]
