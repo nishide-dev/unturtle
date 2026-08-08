@@ -141,6 +141,80 @@ class TestSupervisionSemantics:
             )
 
 
+class TestCleanTargetsAreASeparateField:
+    """The layout deliberately differs from the reference's packed one.
+
+    Upstream, `_combine_rounds_one_state_per_block` returns
+    `torch.cat([clean_input_ids, tail])` of length `L0 + 2*L1`, while `p_mask`
+    is `L0 + L1`.  Every consumer then slices `[:, :L]` to recover the clean
+    half (`rl_sdar.py:843,848,851`).  That off-by-`L1` indexing convention,
+    re-derived at each use site, is exactly the class of error this contract
+    exists to remove — so clean targets live in their own equal-length field.
+    """
+
+    def test_clean_targets_are_optional(self):
+        assert _state().clean_input_ids is None
+
+    def test_clean_targets_must_match_the_state_length(self):
+        from unturtle.post_training.trajectory import SupervisionState
+
+        with pytest.raises(ValueError, match="clean_input_ids"):
+            SupervisionState(
+                sample_id="s0",
+                input_ids=torch.zeros(8, dtype=torch.long),
+                supervision_mask=torch.cat(
+                    [torch.zeros(3, dtype=torch.bool), torch.ones(5, dtype=torch.bool)]
+                ),
+                prompt_length=3,
+                block_size=2,
+                # The reference's packed length, which this contract rejects.
+                clean_input_ids=torch.zeros(13, dtype=torch.long),
+                round_indices=(0, 1, 0),
+            )
+
+    def test_a_state_can_carry_both_noised_and_clean(self):
+        from unturtle.post_training.trajectory import SupervisionState
+
+        state = SupervisionState(
+            sample_id="s0",
+            input_ids=torch.arange(8),
+            supervision_mask=torch.cat(
+                [torch.zeros(3, dtype=torch.bool), torch.ones(5, dtype=torch.bool)]
+            ),
+            prompt_length=3,
+            block_size=2,
+            clean_input_ids=torch.arange(8) * 2,
+            round_indices=(0, 1, 0),
+        )
+
+        assert state.clean_input_ids is not None
+        assert state.clean_input_ids.shape == state.input_ids.shape
+        # The two halves are distinguishable, which the packed layout makes
+        # depend on getting the slice offset right.
+        assert not torch.equal(state.clean_input_ids, state.input_ids)
+
+
+class TestFrozenIsNotDeep:
+    def test_frozen_prevents_reassignment_but_not_tensor_mutation(self):
+        """States the limit of `frozen=True` rather than implying more.
+
+        A reader could assume a frozen dataclass makes the state immutable.
+        It only blocks attribute rebinding — the tensors inside are still
+        writable, which is why `SupervisionBatch` relies on non-aliasing
+        rather than on this.
+        """
+        import dataclasses
+
+        state = _state()
+
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            state.prompt_length = 5
+
+        # But this is allowed, and is why non-aliasing carries the contract.
+        state.input_ids[0] = 12345
+        assert state.input_ids[0] == 12345
+
+
 class TestRoundProvenance:
     def test_per_block_round_indices_are_recorded(self):
         """Each block independently draws its own denoising round.

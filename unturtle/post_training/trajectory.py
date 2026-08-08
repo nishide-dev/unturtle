@@ -64,13 +64,27 @@ class SupervisionState:
     Args:
         sample_id:        Stable identifier surviving micro-batching.  Pairing
                           is by this, never by list position.
-        input_ids:        ``[L]`` — the exact tensor the teacher will score.
+        input_ids:        ``[L]`` — the exact tensor the teacher will score,
+                          where ``L = prompt_length + response_length``.
         supervision_mask: ``[L]`` bool — positions receiving divergence
                           supervision.  Must exclude the prompt.
         prompt_length:    Observed conditioning prefix, never supervised.
         block_size:       Denoising block width.
+        clean_input_ids:  Optional ``[L]`` clean targets ``x_1``.  The
+                          reference packs these and the noised state into one
+                          ``L0 + 2*L1`` tensor and slices ``[:, :L]`` for
+                          labels; keeping them as a separate field of matching
+                          length says the same thing without a layout
+                          convention every consumer must re-derive.
         round_indices:    One entry per response block: which denoising round
                           that block was taken from.
+
+    Note the shape contract deliberately differs from the reference's packed
+    layout.  There, ``extended_input_ids`` is ``L0 + 2*L1`` while ``p_mask`` is
+    ``L0 + L1``, so every consumer slices ``[:, :L]`` to recover the clean
+    half.  Splitting the two into equal-length fields is the same information
+    with the off-by-``L1`` indexing removed — which is precisely the class of
+    error this contract exists to prevent.
     """
 
     sample_id: str
@@ -78,6 +92,7 @@ class SupervisionState:
     supervision_mask: torch.Tensor
     prompt_length: int
     block_size: int
+    clean_input_ids: torch.Tensor | None = None
     round_indices: tuple[int, ...] = field(default=())
 
     def __post_init__(self) -> None:
@@ -99,6 +114,14 @@ class SupervisionState:
                 "supervision_mask marks positions inside the prompt; the "
                 "prompt is observed conditioning, and supervising it trains "
                 "the student to reproduce its own input"
+            )
+        if self.clean_input_ids is not None and (
+            self.clean_input_ids.shape[-1] != length
+        ):
+            raise ValueError(
+                f"clean_input_ids has length {self.clean_input_ids.shape[-1]} "
+                f"but input_ids has {length}; this contract keeps them aligned "
+                "rather than packing them into one L0+2*L1 tensor"
             )
         expected_blocks = math.ceil((length - self.prompt_length) / self.block_size)
         if self.round_indices and len(self.round_indices) != expected_blocks:
@@ -124,9 +147,6 @@ class SupervisionBatch:
         Tensors are **copied**, not aliased: a caller mutating its own tensor
         afterwards must not change what the teacher scores.
         """
-        if not states:
-            raise ValueError("cannot build a SupervisionBatch from no states")
-
         ids = [state.sample_id for state in states]
         duplicates = {i for i in ids if ids.count(i) > 1}
         if duplicates:
