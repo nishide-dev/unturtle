@@ -16,5 +16,10 @@
 """Post-training methods: on-policy distillation and related objectives (#64)."""
 
 from .divergence import teacher_student_divergence
+from .trajectory import SupervisionBatch, SupervisionState
 
-__all__ = ["teacher_student_divergence"]
+__all__ = [
+    "SupervisionBatch",
+    "SupervisionState",
+    "teacher_student_divergence",
+]
