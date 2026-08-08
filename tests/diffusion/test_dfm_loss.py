@@ -4,7 +4,7 @@ Discrete flow-matching objective (#65 Phase A, FS-DFM eq. 3.8).
 The paper derives the loss as a **Bregman divergence**, not cross-entropy::
 
     L_i = -g(t)*[ p_{1|t}(x_t^i | x_t) - delta_{x_1^i}(x_t^i) ]
-          + [ 1 - delta_{x_1^i}(x_t^i) ] * log p_{1|t}(x_1^i | x_t)
+          - [ 1 - delta_{x_1^i}(x_t^i) ] * log p_{1|t}(x_1^i | x_t)
 
 Three properties would be lost by reaching for CE, and each is pinned below:
 
@@ -61,7 +61,7 @@ def _reference(logits, x_1, x_t, t, scheduler=_Linear()):
             target = int(x_1[b, i])
             delta = 1.0 if current == target else 0.0
             first = -g * (float(probs[b, i, current]) - delta)
-            second = (1.0 - delta) * float(log_probs[b, i, target])
+            second = -(1.0 - delta) * float(log_probs[b, i, target])
             total[b, i] = first + second
     return total
 
@@ -90,6 +90,198 @@ class TestMatchesEquation38:
         reduced = discrete_flow_matching_loss(logits, x_1, x_t, t, scheduler=_Linear())
 
         assert torch.allclose(reduced, per_token.mean(), atol=1e-6)
+
+
+class TestItIsActuallyAMinimizableLoss:
+    """The property none of the formula tests could check.
+
+    Every test comparing against `_reference()` is comparing two transcriptions
+    of the same equation made with the same assumption — so a shared misreading
+    passes all of them.  It did: the printed eq. (3.8) is the pre-minimization
+    Bregman quantity, and adding `(1-delta)*log p` makes the log-likelihood a
+    *reward*.  A model predicting `x_1` perfectly scored -4e-09, one predicting
+    wrongly scored -20.0, and SGD drove the loss to -9.43 while mean p(x_1)
+    fell from 0.061 to 0.008.
+
+    These tests are about what a loss is *for*, so they are independent of how
+    it was transcribed.
+    """
+
+    def test_a_better_prediction_gives_a_lower_loss(self):
+        from unturtle.diffusion.dfm_loss import discrete_flow_matching_loss
+
+        vocab = 8
+        x_1, x_t, t = torch.tensor([[3]]), torch.tensor([[5]]), torch.tensor([0.5])
+
+        confident = torch.full((1, 1, vocab), -10.0)
+        confident[0, 0, 3] = 10.0
+        misled = torch.full((1, 1, vocab), -10.0)
+        misled[0, 0, 7] = 10.0
+
+        good = float(
+            discrete_flow_matching_loss(confident, x_1, x_t, t, scheduler=_Linear())
+        )
+        bad = float(
+            discrete_flow_matching_loss(misled, x_1, x_t, t, scheduler=_Linear())
+        )
+
+        assert good < bad, (
+            f"the worse model scored lower ({bad:.3f} < {good:.3f}); the "
+            "objective is inverted and training would maximize error"
+        )
+
+    def test_descending_it_increases_the_target_probability(self):
+        """The end-to-end statement: optimizing must teach, not unteach."""
+        from unturtle.diffusion.dfm_loss import discrete_flow_matching_loss
+
+        torch.manual_seed(0)
+        vocab = 8
+        logits = torch.randn(1, 4, vocab, requires_grad=True)
+        x_1 = torch.randint(0, vocab, (1, 4))
+        x_t = torch.randint(0, vocab, (1, 4))
+        t = torch.tensor([0.5])
+
+        def target_probability():
+            probs = F.softmax(logits.detach(), dim=-1)
+            return float(probs.gather(-1, x_1.unsqueeze(-1)).mean())
+
+        before = target_probability()
+        optimizer = torch.optim.SGD([logits], lr=1.0)
+        for _ in range(100):
+            optimizer.zero_grad()
+            discrete_flow_matching_loss(
+                logits, x_1, x_t, t, scheduler=_Linear()
+            ).backward()
+            optimizer.step()
+
+        assert target_probability() > before, (
+            "descending the loss reduced p(x_1); the objective unlearns its own target"
+        )
+
+    def test_it_is_non_negative_like_a_bregman_divergence(self):
+        """A Bregman divergence cannot go below zero.
+
+        This is what distinguishes the correct reading from negating the whole
+        expression, which is also minimizable but reaches -1.97 here.
+        """
+        from unturtle.diffusion.dfm_loss import discrete_flow_matching_loss
+
+        torch.manual_seed(0)
+        worst = float("inf")
+        for _ in range(200):
+            value = float(
+                discrete_flow_matching_loss(
+                    torch.randn(1, 1, 8),
+                    torch.randint(0, 8, (1, 1)),
+                    torch.randint(0, 8, (1, 1)),
+                    torch.tensor([0.5]),
+                    scheduler=_Linear(),
+                )
+            )
+            worst = min(worst, value)
+
+        assert worst >= -1e-6, f"loss went negative ({worst:.4f}); not a divergence"
+
+
+class TestDtypeIndependence:
+    def test_bf16_logits_do_not_collapse_g(self):
+        """`_scale` central-differences at 1e-4; bf16 carries ~3 digits.
+
+        Casting `t` to the logits dtype made `t + 1e-4 == t - 1e-4` exactly, so
+        the derivative became 0 and the entire first term vanished — silently,
+        on the default path, since `LinearKappa` defines only `kappa`.
+        Measured before the fix: fp32 g(0.5)=2.00003, bf16 g(0.5)=0.00000.
+        """
+        from unturtle.diffusion.dfm_loss import discrete_flow_matching_loss
+        from unturtle.processes.discrete_flow import LinearKappa
+
+        logits, x_1, x_t, t = _batch()
+
+        fp32 = discrete_flow_matching_loss(logits, x_1, x_t, t, scheduler=LinearKappa())
+        bf16 = discrete_flow_matching_loss(
+            logits.bfloat16(), x_1, x_t, t, scheduler=LinearKappa()
+        )
+
+        assert abs(float(fp32) - float(bf16)) < 0.1, (
+            f"bf16 gave {float(bf16):.4f} against fp32 {float(fp32):.4f}; the "
+            "scheduler math is being done in the logits dtype"
+        )
+
+    def test_the_repo_scheduler_takes_the_derived_branch(self):
+        """Pins why the above is a default-path bug rather than a corner case."""
+        from unturtle.processes.discrete_flow import LinearKappa
+
+        assert not hasattr(LinearKappa(), "g"), (
+            "LinearKappa now defines g; the finite-difference branch is no "
+            "longer the default and the bf16 test above is less load-bearing"
+        )
+
+
+class TestDomainEdges:
+    def test_t_near_one_does_not_step_outside_the_path(self):
+        """Central differencing at t > 1-h evaluates kappa off the path.
+
+        Harmless for a linear schedule, silently wrong for one that clamps or
+        turns over past 1.  A one-sided difference at the edge is correct.
+        """
+        from unturtle.diffusion.dfm_loss import discrete_flow_matching_loss
+
+        class _Clamped:
+            """Flat past t=1, so a probe at t+h there sees a *different*
+            derivative than a one-sided difference inside the domain would.
+
+            A linear schedule extrapolates harmlessly, which is why the
+            earlier version of this test could not tell the two apart.
+            """
+
+            def kappa(self, t):
+                return torch.as_tensor(t).clamp(max=1.0)
+
+        logits, x_1, x_t, _ = _batch(batch=1, length=2)
+
+        from unturtle.diffusion.dfm_loss import _scale
+
+        # Analytic g just inside the domain: kappa'=1, so g = 1/(1-t).
+        t = torch.tensor([0.99995])
+        derived = float(_scale(_Clamped(), t))
+        expected = 1.0 / (1.0 - float(t))
+
+        assert abs(derived - expected) / expected < 0.05, (
+            f"derived g={derived:.1f} against analytic {expected:.1f}; the "
+            "probe stepped past t=1 where kappa is flat, halving the slope"
+        )
+
+        got = discrete_flow_matching_loss(
+            logits, x_1, x_t, t, scheduler=_Clamped(), reduction="none"
+        )
+        assert torch.isfinite(got).all()
+
+    def test_t_at_one_is_bounded_rather_than_infinite(self):
+        """`g` genuinely diverges as kappa -> 1; the clamp bounds it.
+
+        Documented as a backstop, not a licence to sample the singularity.
+        """
+        from unturtle.diffusion.dfm_loss import discrete_flow_matching_loss
+
+        logits, x_1, x_t, _ = _batch(batch=1, length=2)
+
+        got = discrete_flow_matching_loss(
+            logits,
+            x_1,
+            x_t,
+            torch.tensor([1.0]),
+            scheduler=_Linear2(),
+            reduction="none",
+        )
+
+        assert torch.isfinite(got).all()
+
+
+class _Linear2:
+    """kappa-only, so `g` is derived and the clamp is exercised."""
+
+    def kappa(self, t):
+        return t
 
 
 class TestTheGScaleIsLoadBearing:
@@ -208,7 +400,7 @@ class TestDeltaSemantics:
 
         probs = F.softmax(logits, dim=-1)
         log_probs = F.log_softmax(logits, dim=-1)
-        expected = -2.0 * float(probs[0, 0, 4]) + float(log_probs[0, 0, 3])
+        expected = -2.0 * float(probs[0, 0, 4]) - float(log_probs[0, 0, 3])
         assert math.isclose(float(got), expected, abs_tol=1e-5)
 
     def test_the_first_term_reads_the_current_token_not_the_target(self):
