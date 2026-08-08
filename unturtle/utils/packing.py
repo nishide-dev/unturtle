@@ -535,7 +535,11 @@ def build_hybrid_prefix_attention_mask(
 
     Returns:
         Additive ``[B, 1, L, L]`` mask: ``0`` where attention is allowed,
-        ``-inf`` where it is blocked.
+        ``torch.finfo(dtype).min`` where it is blocked — **not** ``-inf``, see
+        the fill note below.  The result is therefore binary, which is what
+        makes it safe through ``run_attention``'s 4-D branch: that branch
+        converts a float mask with ``.eq(0)``, so a graded bias would be
+        promoted to hard blocking.
     """
     lengths = prompt_lengths.to(device=device, dtype=torch.int64).reshape(-1)
     if bool(((lengths < 0) | (lengths > seq_len)).any()):
