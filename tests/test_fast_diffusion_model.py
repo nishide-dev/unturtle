@@ -1700,6 +1700,296 @@ class TestPostLoadClassSwap:
         assert m.__dict__.get("generate") is sentinel
 
 
+class TestSwapRefusesIncompatibleArchitectures:
+    """Stamping the wrapper class onto a foreign architecture makes a chimera.
+
+    Observed on the real checkpoint (#96): when the unsloth path is
+    unavailable, the Auto* fallback resolves `diffusion_gemma` to the bare
+    composite model (children `encoder`/`decoder`), and the swap then set
+    `__class__` to the ForBlockDiffusion wrapper anyway — an object whose
+    class expects `self.model`/`self.lm_head` that the instance never had.
+    The first `.generate` died with `AttributeError: ... no attribute
+    'model'`.  A swap is only meaningful onto the architecture the wrapper
+    subclasses.
+    """
+
+    def test_a_foreign_architecture_is_not_swapped(self):
+        from unturtle import fast_diffusion_model as fdm
+
+        class _UpstreamHead:
+            pass
+
+        class _Wrapper(_UpstreamHead):
+            pass
+
+        class _WrongArchitecture:
+            class config:
+                model_type = "archswap"
+
+        fdm._POST_LOAD_CLASS_SWAPS["archswap"] = lambda: _Wrapper
+        try:
+            model = _WrongArchitecture()
+            sentinel = object()
+            model.generate = sentinel
+            fdm._apply_post_load_class_swap(model)
+        finally:
+            del fdm._POST_LOAD_CLASS_SWAPS["archswap"]
+
+        assert type(model) is _WrongArchitecture, (
+            "the wrapper was stamped onto an architecture it does not "
+            "subclass; the result is a chimera whose methods reference "
+            "submodules the instance never had"
+        )
+        assert model.__dict__.get("generate") is sentinel, (
+            "the unswapped model's own generate was removed"
+        )
+
+    def test_the_matching_architecture_still_swaps(self):
+        from unturtle import fast_diffusion_model as fdm
+
+        class _UpstreamHead:
+            class config:
+                model_type = "archswap2"
+
+        class _Wrapper(_UpstreamHead):
+            pass
+
+        fdm._POST_LOAD_CLASS_SWAPS["archswap2"] = lambda: _Wrapper
+        try:
+            model = _UpstreamHead()
+            fdm._apply_post_load_class_swap(model)
+        finally:
+            del fdm._POST_LOAD_CLASS_SWAPS["archswap2"]
+
+        assert type(model) is _Wrapper
+
+
+class TestAutoFallbackPrefersTheRegisteredHead:
+    """The Auto* chain must not pick a different head than the swap expects.
+
+    `AutoModel` resolves `diffusion_gemma` to the bare composite model, not
+    `...ForBlockDiffusion` — the wrong head for the wrapper contract, and
+    (with the swap guard above) a load that would end up un-swapped.  When a
+    model_type has a registered wrapper, the fallback loads through the
+    wrapper class itself first: correct head, and the normal `__init__`
+    postamble populates `generation_config` on the way.
+    """
+
+    def test_the_wrapper_class_is_tried_first(self, monkeypatch):
+        """FIRST, not merely tried.  A first draft of this test recorded only
+        the wrapper's own call, so `insert(0, ...)` mutated to `append(...)`
+        survived — and on a real checkpoint the appended variant lets
+        `AutoModel` succeed with the bare composite head before the wrapper
+        is ever reached, reintroducing the #96 chimera while the test stays
+        green.  Every loader in the chain records into ONE list here, and
+        the Auto* loaders raise so reaching them at all is observable.
+        """
+        from unturtle import fast_diffusion_model as fdm
+
+        calls = []
+
+        class _Wrapper:
+            @classmethod
+            def from_pretrained(cls, name, **kwargs):
+                calls.append(("wrapper", name))
+                instance = cls()
+                instance.config = type("C", (), {"model_type": "headswap"})()
+                return instance
+
+        def _recording_auto(auto_name):
+            class _Auto:
+                @classmethod
+                def from_pretrained(cls, name, **kwargs):
+                    calls.append((auto_name, name))
+                    raise OSError(f"{auto_name} should not be reached")
+
+            return _Auto
+
+        class _FakeAutoConfig:
+            @staticmethod
+            def from_pretrained(name, **kwargs):
+                return type("C", (), {"model_type": "headswap"})()
+
+        monkeypatch.setattr(fdm, "AutoConfig", _FakeAutoConfig, raising=False)
+        # Patch fdm's own loader seam, NOT the transformers module: unsloth
+        # replaces sys.modules["transformers"] at import time, so attribute
+        # patches on any previously-bound transformers object are invisible
+        # to the loader's from-import (measured: an insert->append ordering
+        # mutant survived a transformers-patching version of this test while
+        # the patched attribute read back correctly).
+        monkeypatch.setattr(
+            fdm,
+            "_automodel_loaders",
+            lambda: [
+                (n, _recording_auto(n))
+                for n in ("AutoModel", "AutoModelForMaskedLM", "AutoModelForCausalLM")
+            ],
+        )
+        monkeypatch.setattr(
+            fdm,
+            "_load_model_with_optional_4bit_fallback",
+            lambda loader, name, kw: loader.from_pretrained(name, **kw),
+        )
+        fdm._POST_LOAD_CLASS_SWAPS["headswap"] = lambda: _Wrapper
+        try:
+            model = fdm._load_via_automodel("org/ckpt", {})
+        finally:
+            del fdm._POST_LOAD_CLASS_SWAPS["headswap"]
+
+        assert calls[0] == ("wrapper", "org/ckpt"), (
+            f"loader order was {[c[0] for c in calls]}; the registered "
+            "wrapper class must run before any Auto* loader, which resolves "
+            "the wrong head"
+        )
+        assert [c[0] for c in calls] == ["wrapper"], (
+            "an Auto* loader was reached even though the wrapper succeeded"
+        )
+        assert type(model) is _Wrapper
+
+    def test_unregistered_model_types_keep_the_auto_chain(self, monkeypatch):
+        """No registry entry -> behaviour unchanged (Auto* chain, in order)."""
+        from unturtle import fast_diffusion_model as fdm
+
+        class _FakeAutoConfig:
+            @staticmethod
+            def from_pretrained(name, **kwargs):
+                return type("C", (), {"model_type": "nobody-registered"})()
+
+        loaded = []
+
+        class _FakeAutoModel:
+            @classmethod
+            def from_pretrained(cls, name, **kwargs):
+                loaded.append(name)
+                return object()
+
+        monkeypatch.setattr(fdm, "AutoConfig", _FakeAutoConfig, raising=False)
+        monkeypatch.setattr(
+            fdm,
+            "_load_model_with_optional_4bit_fallback",
+            lambda loader, name, kw: loader.from_pretrained(name, **kw),
+        )
+        monkeypatch.setattr(
+            fdm, "_automodel_loaders", lambda: [("AutoModel", _FakeAutoModel)]
+        )
+
+        model = fdm._load_via_automodel("org/other", {})
+
+        assert loaded == ["org/other"]
+        assert model is not None
+
+
+class TestSwapRestoresGenerationConfig:
+    """unsloth's FastModel load path skips the `PreTrainedModel.__init__`
+    postamble that populates `generation_config`, so a swapped DiffusionGemma
+    raised `AttributeError: ... no attribute 'generation_config'` on its
+    first real generate (#96).  Measured on the real checkpoint: the plain
+    transformers load carries a `DiffusionGemmaGenerationConfig`; the
+    FastModel load has nothing in `__dict__`.  The swap site owns the wrapper
+    contract, so it restores the attribute — from the checkpoint's own
+    generation config when a name is available (preserving tuned sampler
+    fields), falling back to the class's model-config derivation, exactly
+    mirroring upstream init.
+    """
+
+    @staticmethod
+    def _family(*, can_generate=True, from_pretrained_raises=False):
+        class _GenConfig:
+            def __init__(self, origin="bare"):
+                self.origin = origin
+
+            @classmethod
+            def from_pretrained(cls, name):
+                if from_pretrained_raises:
+                    raise OSError("no generation_config.json")
+                return cls(origin=f"checkpoint:{name}")
+
+            @classmethod
+            def from_model_config(cls, config):
+                return cls(origin="model_config")
+
+        class _Base:
+            generation_config_class = _GenConfig
+
+            class config:
+                model_type = "gcswap"
+
+            @classmethod
+            def can_generate(cls):
+                return can_generate
+
+        class _Wrapper(_Base):
+            pass
+
+        return _Base, _Wrapper, _GenConfig
+
+    def _swapped(self, base_cls, wrapper_cls, model_name=None):
+        from unturtle import fast_diffusion_model as fdm
+
+        fdm._POST_LOAD_CLASS_SWAPS["gcswap"] = lambda: wrapper_cls
+        try:
+            model = base_cls()
+            fdm._apply_post_load_class_swap(model, model_name=model_name)
+        finally:
+            del fdm._POST_LOAD_CLASS_SWAPS["gcswap"]
+        return model
+
+    def test_a_missing_config_is_restored_from_the_checkpoint(self):
+        base, wrapper, _ = self._family()
+
+        model = self._swapped(base, wrapper, model_name="org/ckpt")
+
+        assert "generation_config" in model.__dict__, (
+            "the swap left the instance without a generation_config; the "
+            "first generate would raise AttributeError (#96)"
+        )
+        assert model.generation_config.origin == "checkpoint:org/ckpt", (
+            "the checkpoint's own generation config (tuned sampler fields) "
+            "was not preferred"
+        )
+
+    def test_the_fallback_derives_from_the_model_config(self):
+        """No checkpoint file (or no name): mirror upstream init."""
+        base, wrapper, _ = self._family(from_pretrained_raises=True)
+
+        model = self._swapped(base, wrapper, model_name="org/ckpt")
+
+        assert model.generation_config.origin == "model_config"
+
+    def test_no_model_name_still_restores(self):
+        base, wrapper, _ = self._family()
+
+        model = self._swapped(base, wrapper, model_name=None)
+
+        assert model.generation_config.origin == "model_config"
+
+    def test_an_existing_config_is_not_overwritten(self):
+        """A load path that DID populate it (plain transformers) must win —
+        the restored default would discard checkpoint-tuned fields."""
+        base, wrapper, gen_config = self._family()
+        sentinel = gen_config(origin="already-there")
+
+        from unturtle import fast_diffusion_model as fdm
+
+        fdm._POST_LOAD_CLASS_SWAPS["gcswap"] = lambda: wrapper
+        try:
+            model = base()
+            model.generation_config = sentinel
+            fdm._apply_post_load_class_swap(model, model_name="org/ckpt")
+        finally:
+            del fdm._POST_LOAD_CLASS_SWAPS["gcswap"]
+
+        assert model.generation_config is sentinel
+
+    def test_a_non_generating_model_is_left_alone(self):
+        """Mirrors upstream: only `can_generate()` models carry the attr."""
+        base, wrapper, _ = self._family(can_generate=False)
+
+        model = self._swapped(base, wrapper, model_name="org/ckpt")
+
+        assert "generation_config" not in model.__dict__
+
+
 # ---------------------------------------------------------------------------
 # FastModel kwarg forwarding — _load_via_fastmodel
 # ---------------------------------------------------------------------------
