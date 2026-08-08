@@ -63,6 +63,39 @@ class TestIdentityIsCarried:
                 shuffled.select(sample_id).input_ids,
             ), f"{sample_id} resolved to a different state after reordering"
 
+    def test_input_order_is_preserved(self):
+        """`split()` slices positionally, so order is load-bearing.
+
+        Reordering inside `from_states` would still resolve `select()`
+        correctly — the mutant is internally consistent — but it changes which
+        states share a micro-batch, and desyncs any external parallel array
+        the caller still indexes by position (rewards, teacher logprobs: the
+        reference's `reward_list`).  Mutation-verified: sorting by `sample_id`
+        passes every other test in this file.
+        """
+        from unturtle.post_training.trajectory import SupervisionBatch
+
+        states = [_state(sid, seed=i) for i, sid in enumerate(["s3", "s1", "s2", "s0"])]
+
+        batch = SupervisionBatch.from_states(states)
+
+        assert batch.sample_ids == ("s3", "s1", "s2", "s0"), (
+            "from_states reordered its input; positional consumers would desync"
+        )
+        assert torch.equal(batch.input_ids[0], states[0].input_ids)
+
+    def test_an_empty_batch_says_so(self):
+        """An empty rollout is a plausible runtime state, not a bug here.
+
+        Without this guard the failure still occurs, but as "states have
+        differing length []" from the ragged check — sending someone hunting a
+        shape bug that does not exist.
+        """
+        from unturtle.post_training.trajectory import SupervisionBatch
+
+        with pytest.raises(ValueError, match="no states"):
+            SupervisionBatch.from_states([])
+
     def test_selecting_an_unknown_id_raises(self):
         """Silent `None` here would resurface as a shape error much later."""
         from unturtle.post_training.trajectory import SupervisionBatch
@@ -309,6 +342,23 @@ class TestNoResamplingBetweenCaptureAndScoring:
 
         assert torch.equal(state.input_ids, original), (
             "writing to the batch changed the source state; they share storage"
+        )
+
+    def test_select_returns_a_borrowed_state_not_a_copy(self):
+        """Bounds the non-aliasing guarantee to the stacked tensors.
+
+        `select()` returns the state object itself, so a caller can reach the
+        original tensor through it.  Deliberate — `states` is the single
+        ordering source of truth — but the docstring previously claimed
+        nothing hands storage back out, which was wrong.
+        """
+        from unturtle.post_training.trajectory import SupervisionBatch
+
+        state = _state()
+        batch = SupervisionBatch.from_states([state])
+
+        assert batch.select("s0") is state, (
+            "select() now copies; the borrowed-state caveat can be dropped"
         )
 
     def test_from_states_copies_rather_than_aliasing(self):

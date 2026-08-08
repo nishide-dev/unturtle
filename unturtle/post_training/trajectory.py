@@ -80,11 +80,22 @@ class SupervisionState:
                           that block was taken from.
 
     Note the shape contract deliberately differs from the reference's packed
-    layout.  There, ``extended_input_ids`` is ``L0 + 2*L1`` while ``p_mask`` is
-    ``L0 + L1``, so every consumer slices ``[:, :L]`` to recover the clean
-    half.  Splitting the two into equal-length fields is the same information
-    with the off-by-``L1`` indexing removed — which is precisely the class of
-    error this contract exists to prevent.
+    layout, and slice B will need the difference spelled out to rebuild the
+    model input.  Upstream, ``extended_input_ids`` is::
+
+        [ clean prompt+response (L0 + L1) | noised tail (L1) ]   -> L0 + 2*L1
+
+    so the noised region is **only the trailing L1**, not the whole tensor;
+    ``p_mask`` is ``L0 + L1``; ``labels = extended_input_ids[:, :L]``; and the
+    model's logits are re-sliced ``cat([logits[:, :L0], logits[:, L0+L1:]])``
+    back to ``L0 + L1``.  The duplicated tail is a scratch region for the
+    noised copy, not extra sequence.
+
+    The supervision-bearing state is therefore ``L0 + L1``.  Keeping
+    ``input_ids`` (noised) and ``clean_input_ids`` (targets) as separate
+    equal-length fields carries the same information with the off-by-``L1``
+    indexing removed — which is precisely the class of error this contract
+    exists to prevent.
     """
 
     sample_id: str
@@ -147,6 +158,13 @@ class SupervisionBatch:
         Tensors are **copied**, not aliased: a caller mutating its own tensor
         afterwards must not change what the teacher scores.
         """
+        if not states:
+            # Distinct from the ragged-length error below: an empty rollout
+            # (every sample filtered) is a plausible runtime state, and
+            # "differing length []" would send someone hunting a shape bug
+            # that does not exist.
+            raise ValueError("cannot build a SupervisionBatch from no states")
+
         ids = [state.sample_id for state in states]
         duplicates = {i for i in ids if ids.count(i) > 1}
         if duplicates:
@@ -169,8 +187,12 @@ class SupervisionBatch:
         # would be redundant (mutation-verified: removing it changes nothing).
         #
         # PyTorch has no read-only tensor flag, so non-aliasing is the
-        # enforceable half of immutability; the other half is that nothing in
-        # this class hands the underlying storage back out.
+        # enforceable half of immutability -- and it covers the *stacked*
+        # tensors only.  `select()` deliberately returns the state object
+        # itself, so `batch.select(id).input_ids.mul_(0)` does reach the
+        # caller's tensor.  That is the price of keeping `states` the single
+        # ordering source of truth; callers holding a state should treat it as
+        # borrowed.
         input_ids = torch.stack([s.input_ids for s in states])
         supervision = torch.stack([s.supervision_mask for s in states])
 
