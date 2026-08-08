@@ -31,47 +31,50 @@ benchmark different masks, and arms are interleaved with alternating order so
 thermal drift does not land entirely on whichever runs second.
 
 Measured (RTX 6000 Ada, fp32, B=2 L=512 H=512, 2 layers, 3 interleaved trials
-of 10 timed steps; negative = sparse better):
+of 10 timed steps; negative = sparse better).  ``d peak`` is total peak
+allocated; ``d activ`` subtracts the model weights, which are identical in
+both arms and therefore dilute the total:
 
-======  =======  =====================  =====================
-vocab   mask     step time              peak memory
-======  =======  =====================  =====================
-32000   0.15     **-26.1%**             **-19.2%**
-32000   0.50     **-13.9%**             +0.2%
-32000   0.75     +1.6%                  -6.1%
-128256  0.15     **-61.0%**             **-16.5%**
-128256  0.50     **-27.0%**             +0.6%
-128256  0.75     **-6.8%**              +30.7%
-======  =======  =====================  =====================
+======  ======  ===========  ==========  ===========
+vocab   mask    step time    d peak      d activ
+======  ======  ===========  ==========  ===========
+32000   0.15    **-30.5%**   -19.2%      **-40.9%**
+32000   0.50    **-13.4%**   +0.1%       +0.4%
+32000   0.75    +1.0%        +27.4%      +34.1%
+128256  0.15    **-60.4%**   -16.5%      **-37.4%**
+128256  0.50    **-24.8%**   +0.7%       +1.7%
+128256  0.75    -4.0%        -4.8%       +45.5%
+======  ======  ===========  ==========  ===========
 
 LoRA, 128256 vocab, same setup:
 
-=======  =====================  =====================
-mask     step time              peak memory
-=======  =====================  =====================
-0.15     **-49.3%**             **-17.4%**
-0.50     -4.6%                  +36.8%
-0.75     +16.0%                 +53.9%
-=======  =====================  =====================
+======  ===========  ==========  ============
+mask    step time    d peak      d activ
+======  ===========  ==========  ============
+0.15    **-48.9%**   -17.4%      **-50.3%**
+0.50    -10.2%       +36.8%      +47.5%
+0.75    +14.2%       +53.9%      +112.9%
+======  ===========  ==========  ============
 
 Three things to take from this:
 
-1. **Step time is the real win, and it is much larger than the kernel
-   benchmark in #77 suggested** — up to -61% at 128K vocab. End-to-end, the
-   ``[B, L, V]`` GEMM dominates a small model's step, so skipping most of it
-   matters more than the kernel microbenchmark showed.
-2. **Memory is roughly neutral at the ratio MDLM actually trains at** (+0.2% /
-   +0.6% at 0.50) and turns clearly negative above it. This is the #77 result
-   reproduced end-to-end: sparse projection is *not* automatically a memory
-   optimization.
-3. **LoRA is the case to be careful with.** Above ~15% masking it is worse on
-   memory than full finetune (+36.8% at 0.50), because the frozen backbone's
-   activations already dominate and the ``[M, V]`` projection plus its autograd
-   graph is close to pure overhead.
+1. **Step time is the real win, and much larger than #77's kernel benchmark
+   suggested** — up to -60% at 128K vocab.  End-to-end the ``[B, L, V]`` GEMM
+   dominates a small model's step, so skipping most of it matters more than
+   measuring the kernel alone showed.
+2. **Memory is roughly neutral at the ratio MDLM actually trains at** (+0.4% /
+   +1.7% activations at 0.50) and clearly worse above it.  This reproduces
+   #77's finding end-to-end: sparse projection is *not* automatically a memory
+   optimization.  Read the activation column — the total-peak column
+   understates both the gains and the losses because ~40% of it is weights.
+3. **LoRA is the case to be careful with.**  Above ~15% masking it is much
+   worse than full finetune (+47.5% activations at 0.50, +112.9% at 0.75): the
+   frozen backbone's activations already dominate, so the ``[M, V]``
+   projection and its autograd graph are close to pure overhead.
 
 So the flag stays **default-off**, but the honest recommendation is narrower
 and more useful than "off": enable it for large vocabularies at low mask
-ratios, where it is a large step-time win at no memory cost.
+ratios, where it is a large step-time win *and* a real memory saving.
 
 Usage::
 
@@ -240,12 +243,26 @@ def _trainer(args, model, sparse: bool):
     )
 
 
-def _measure(args, trainer, model, batch) -> tuple[float, float]:
-    """Median step time (ms) and peak allocated memory (MiB)."""
+def _measure(args, trainer, model, batch) -> tuple[float, float, float]:
+    """Median step time (ms), peak allocated MiB, and activation-only MiB.
+
+    Both memory figures are reported because they answer different questions.
+    Total peak is what an OOM cares about, but it includes the model weights —
+    identical in both arms — which *dilutes* the percentage difference.  At
+    128K vocab the weights are ~521 MiB of a ~1386 MiB peak, so a total-peak
+    percentage understates the effect on the part this flag actually changes.
+
+    The activation figure subtracts what was already allocated before the
+    timing loop (weights, gradients, the batch), leaving the transient working
+    set the sparse path exists to shrink.
+    """
     cuda = args.device == "cuda"
     if cuda:
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
+        baseline = torch.cuda.memory_allocated() / 2**20
+    else:
+        baseline = float("nan")
 
     timings: list[float] = []
     for step in range(args.warmup + args.steps):
@@ -264,7 +281,7 @@ def _measure(args, trainer, model, batch) -> tuple[float, float]:
             timings.append(elapsed * 1000)
 
     peak = torch.cuda.max_memory_allocated() / 2**20 if cuda else float("nan")
-    return statistics.median(timings), peak
+    return statistics.median(timings), peak, peak - baseline
 
 
 def main() -> None:
@@ -279,7 +296,7 @@ def main() -> None:
     print()
     header = (
         f"{'mask':>6} {'dense ms':>9} {'sparse ms':>10} {'dt':>8} "
-        f"{'dense MiB':>10} {'sparse MiB':>11} {'dmem':>8}"
+        f"{'d peak':>9} {'d activ':>9}"
     )
     print(header)
     print("-" * len(header))
@@ -290,7 +307,7 @@ def main() -> None:
 
         for trial in range(args.trials):
             order = [False, True] if trial % 2 == 0 else [True, False]
-            result: dict[bool, tuple[float, float]] = {}
+            result: dict[bool, tuple[float, float, float]] = {}
             for sparse in order:
                 model = _model(args)
                 trainer = _trainer(args, model, sparse)
@@ -302,22 +319,28 @@ def main() -> None:
 
         dense_ms = statistics.median(t[0] for t in per_trial)
         dense_mem = statistics.median(t[1] for t in per_trial)
-        sparse_ms = statistics.median(t[2] for t in per_trial)
-        sparse_mem = statistics.median(t[3] for t in per_trial)
+        dense_act = statistics.median(t[2] for t in per_trial)
+        sparse_ms = statistics.median(t[3] for t in per_trial)
+        sparse_mem = statistics.median(t[4] for t in per_trial)
+        sparse_act = statistics.median(t[5] for t in per_trial)
 
         d_time = sparse_ms / dense_ms - 1.0
         d_mem = sparse_mem / dense_mem - 1.0 if dense_mem == dense_mem else float("nan")
+        d_act = sparse_act / dense_act - 1.0 if dense_act == dense_act else float("nan")
         print(
             f"{ratio:>6.2f} {dense_ms:>9.2f} {sparse_ms:>10.2f} {d_time:>+7.1%} "
-            f"{dense_mem:>10.1f} {sparse_mem:>11.1f} {d_mem:>+7.1%}"
+            f"{d_mem:>+9.1%} {d_act:>+9.1%}"
         )
 
     print()
     print(
-        "Negative = sparse is better.  Expect the memory column to change sign\n"
-        "as the mask ratio grows: the sparse path only avoids projecting the\n"
-        "positions it skips.  MDLM training averages ~50% masking, so read the\n"
-        "0.50 row as the default-recipe answer, not the 0.15 one."
+        "Negative = sparse is better.\n"
+        "`d peak` includes model weights, identical in both arms, so it\n"
+        "understates the effect; `d activ` subtracts them and is the honest\n"
+        "figure for what this flag changes.  Both turn positive as the mask\n"
+        "ratio grows -- the sparse path only avoids projecting what it skips.\n"
+        "MDLM training averages ~50% masking, so read the 0.50 row as the\n"
+        "default-recipe answer, not the 0.15 one."
     )
 
 
