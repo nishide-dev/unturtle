@@ -694,9 +694,17 @@ class TestBackboneSupportDecision:
             outputs = backbone(input_ids=torch.randint(0, 64, (1, 8)))
 
         assert getattr(outputs, "last_hidden_state", None) is None
-        assert outputs.logits.shape[-1] != 32, (
-            "the backbone emitted a hidden-width tensor; it now looks like "
-            "hidden states and the sparse path should be reconsidered"
+        # Asserted against `embedding_size`, not `vocab_size` or `!= d_model`.
+        # LLaDA honours `vocab_size` in the config but sizes its output head by
+        # `embedding_size` (50304 here, from a `vocab_size=64` config), so this
+        # is the field that actually governs the width.  A bare `!= d_model`
+        # check would pass for a weaker reason than its message claims.
+        assert outputs.logits.shape[-1] == model.config.embedding_size, (
+            "the backbone stopped emitting output-head-width logits; if it "
+            "now returns hidden states, the sparse path should be reconsidered"
+        )
+        assert outputs.logits.shape[-1] != model.config.d_model, (
+            "output width collapsed to the hidden width"
         )
 
     def test_mdlm_dit_exposes_no_separate_backbone(self):

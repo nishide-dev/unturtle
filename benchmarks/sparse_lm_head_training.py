@@ -38,12 +38,12 @@ both arms and therefore dilute the total:
 ======  ======  ===========  ==========  ===========
 vocab   mask    step time    d peak      d activ
 ======  ======  ===========  ==========  ===========
-32000   0.15    **-30.5%**   -19.2%      **-40.9%**
-32000   0.50    **-13.4%**   +0.1%       +0.4%
-32000   0.75    +1.0%        +27.4%      +34.1%
-128256  0.15    **-60.4%**   -16.5%      **-37.4%**
-128256  0.50    **-24.8%**   +0.7%       +1.7%
-128256  0.75    -4.0%        -4.8%       +45.5%
+32000   0.15    **-32.6%**   -25.7%      **-40.9%**
+32000   0.50    **-12.6%**   +0.2%       +0.4%
+32000   0.75    +1.3%        +21.4%      +34.1%
+128256  0.15    **-62.1%**   -22.7%      **-37.4%**
+128256  0.50    **-25.7%**   +1.0%       +1.7%
+128256  0.75    -4.3%        +27.7%      +45.5%
 ======  ======  ===========  ==========  ===========
 
 LoRA, 128256 vocab, same setup:
@@ -51,9 +51,9 @@ LoRA, 128256 vocab, same setup:
 ======  ===========  ==========  ============
 mask    step time    d peak      d activ
 ======  ===========  ==========  ============
-0.15    **-48.9%**   -17.4%      **-50.3%**
-0.50    -10.2%       +36.8%      +47.5%
-0.75    +14.2%       +53.9%      +112.9%
+0.15    **-49.3%**   -25.6%      **-50.3%**
+0.50    -6.0%        +24.2%      +47.5%
+0.75    +16.1%       +57.5%      +112.9%
 ======  ===========  ==========  ============
 
 Three things to take from this:
@@ -86,6 +86,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import gc
 import statistics
 import tempfile
 import time
@@ -313,6 +314,14 @@ def main() -> None:
                 trainer = _trainer(args, model, sparse)
                 result[sparse] = _measure(args, trainer, model, batch)
                 del model, trainer
+                # `gc.collect()` is load-bearing, not hygiene: the trainer and
+                # model form a reference cycle, so `del` alone leaves the
+                # weights resident (measured 537 MiB of 553 at 128K vocab).
+                # Whichever arm runs second would then start with the previous
+                # arm's weights still allocated, and that lands in its peak —
+                # which is what corrupted the high-mask-ratio memory rows and
+                # produced a sign flip between runs.
+                gc.collect()
                 if args.device == "cuda":
                     torch.cuda.empty_cache()
             per_trial.append((*result[False], *result[True]))
