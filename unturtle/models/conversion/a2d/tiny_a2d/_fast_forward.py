@@ -43,6 +43,7 @@ from unturtle.utils.attention_dispatch import (
     SDPA,
     AttentionConfig,
     AttentionContext,
+    hybrid_prefix_attention,
     run_attention,
     select_attention_backend,
 )
@@ -264,6 +265,32 @@ def TinyA2DAttention_fast_forward(
     if past_key_values is not None:
         cache_kwargs = {"cache_position": cache_position}
         K, V = past_key_values.update(K, V, self.layer_idx, cache_kwargs)
+
+    # PreDiff-LM hybrid fast path (#63/#99).  The model forward emits
+    # `hybrid_prompt_lengths` only when the mask-free split is exactly
+    # equivalent to the dense eq.-(3) mask it also built -- no padding,
+    # uniform boundaries, not packed.  Here we re-check the conditions the
+    # model level cannot see (a cache making keys longer than queries, packed
+    # metadata arriving through another route) as defence in depth, and
+    # otherwise ignore `attention_mask` entirely: the dense mask exists for
+    # unpatched consumers, and using it would forfeit the split's ~1.4-2.1x.
+    hybrid_lengths = kwargs.get("hybrid_prompt_lengths")
+    if (
+        hybrid_lengths is not None
+        and seq_info is None
+        and past_key_values is None
+        and K.shape[-2] == q_len
+    ):
+        Kh, Vh = K, V
+        if n_groups != 1:
+            # The kernel takes matched head counts.  `repeat_interleave` is
+            # HF's `repeat_kv` mapping: kv head g feeds query heads
+            # [g*n_groups, (g+1)*n_groups).
+            Kh = K.repeat_interleave(n_groups, dim=1)
+            Vh = V.repeat_interleave(n_groups, dim=1)
+        A = hybrid_prefix_attention(Q, Kh, Vh, prompt_lengths=hybrid_lengths)
+        attn_output = A.transpose(1, 2).reshape(bsz, q_len, n_heads * head_dim)
+        return self.apply_o(self, attn_output), None
 
     # Determine attention backend.
     #

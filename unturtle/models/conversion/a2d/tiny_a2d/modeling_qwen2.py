@@ -40,7 +40,7 @@ from transformers.modeling_outputs import BaseModelOutputWithPast
 from transformers.processing_utils import Unpack
 from transformers.utils import TransformersKwargs
 
-from ._hybrid import maybe_build_hybrid_mask
+from ._hybrid import hybrid_fast_path_lengths, maybe_build_hybrid_mask
 from .generation_utils import TinyA2DGenerationMixin
 
 if transformers.utils.is_torch_flex_attn_available():
@@ -52,15 +52,32 @@ else:
 class TinyA2DQwen2Config(transformers.Qwen2Config):
     model_type = "tiny-a2d-qwen2"
 
-    def __init__(self, hybrid_attention: bool = False, **kwargs):
-        """`hybrid_attention` is declared rather than left to **kwargs (#63).
+    def __init__(
+        self,
+        hybrid_attention: bool = False,
+        hybrid_fast_min_seq_len: int = 2048,
+        **kwargs,
+    ):
+        """Both hybrid fields are declared rather than left to **kwargs (#63).
 
-        `PretrainedConfig` would store it either way, but an undeclared field
-        is invisible to anyone reading the class and depends on upstream
+        `PretrainedConfig` would store them either way, but an undeclared
+        field is invisible to anyone reading the class and depends on upstream
         kwarg-stashing behaviour.
+
+        `hybrid_fast_min_seq_len` gates the mask-free fast path (#99): below
+        this sequence length the per-layer overhead of the two-call split
+        (extra kernel launch, `cat`, output transpose) outweighs the attention
+        win, and the wiring would make forwards *slower*.  Measured on an
+        8-layer bf16 model, full forward: 0.90x at L=1024 against 1.50x at
+        L=2048 and 1.92x at L=4096 (h512/8-head; the h1024/16-head crossover
+        sits in the same range).  2048 is the conservative side of that
+        crossover; set 0 to force the fast path, or a large value to disable
+        it, without touching correctness either way — the dense mask is always
+        built.
         """
         super().__init__(**kwargs)
         self.hybrid_attention = hybrid_attention
+        self.hybrid_fast_min_seq_len = hybrid_fast_min_seq_len
 
 
 class TinyA2DQwen2Model(transformers.Qwen2Model):
@@ -137,6 +154,20 @@ class TinyA2DQwen2Model(transformers.Qwen2Model):
                 device=inputs_embeds.device,
             )
             if hybrid is not None:
+                # The dense mask above stays authoritative -- this only adds an
+                # advisory kwarg that the patched fast forward may consume to take
+                # the mask-free split (#99).  Emitted only when the split is exactly
+                # equivalent; if the kwargs pipe is ever severed, the model degrades
+                # to the dense path: slower, still correct.
+                fast_lengths = hybrid_fast_path_lengths(
+                    self.config,
+                    inputs_embeds.shape[1],
+                    prompt_lengths,
+                    attention_mask,
+                    kwargs,
+                )
+                if fast_lengths is not None:
+                    kwargs["hybrid_prompt_lengths"] = fast_lengths
                 attention_mask = hybrid
 
             if not (
