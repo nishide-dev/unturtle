@@ -419,3 +419,283 @@ class TestStatesDoNotAliasTheCallerTensor:
         assert torch.equal(state.clean_input_ids, snapshot), (
             "the caller's buffer aliases the emitted state"
         )
+
+
+class TestReplayRounds:
+    """`one_round_vectorized` (rl_sdar.py:590-651) iterated to exhaustion, on
+    the unpacked layout.
+
+    The reference reconstructs a decode's intermediate states from
+    ``(final tokens, step_map)`` — per block, each round consumes the minimum
+    remaining commit step: positions committed AT that step are this round's
+    supervised set, positions committed at that step OR LATER are still
+    masked in this round's state, earlier ones hold their final tokens.  No
+    sampler hook is needed; the trace is the per-position commit step.
+    """
+
+    @staticmethod
+    def _fixture():
+        # Response layout (PROMPT=4, RESPONSE=8, BLOCK=4):
+        #   block 0 commit steps: [0, 1, 0, 2]
+        #   block 1 commit steps: [1, 1, 3, 3]
+        clean = torch.arange(10, 10 + LENGTH)
+        step_map = torch.tensor([0, 1, 0, 2, 1, 1, 3, 3])
+        return clean, step_map
+
+    def test_rounds_replay_the_decode_block_by_block(self):
+        from unturtle.post_training.rollout import replay_rounds
+
+        clean, step_map = self._fixture()
+        # Snapshot BEFORE the call.  Review measured that a mutant removing
+        # the production `.clone()` corrupts the caller's row in place —
+        # and an expectation built from the already-corrupted `clean` agrees
+        # with the corrupted output (the co-transcribed failure mode).  All
+        # expectations below derive from this snapshot.
+        snapshot = clean.clone()
+
+        states, masks = replay_rounds(
+            clean,
+            step_map,
+            prompt_length=PROMPT,
+            block_size=BLOCK,
+            mask_token_id=MASK_ID,
+        )
+
+        assert torch.equal(clean, snapshot), (
+            "replay_rounds mutated the caller's row in place"
+        )
+
+        # Block 0 has 3 distinct steps {0,1,2}, block 1 has 2 {1,3}; rounds
+        # continue while ANY block has steps left -> 3 rounds.
+        assert states.shape == (3, LENGTH)
+
+        # Round 0: block 0 consumes step 0 (positions 4, 6 supervised; all of
+        # block 0 still masked since every step >= 0); block 1 consumes its
+        # min step 1 (positions 8, 9 supervised; whole block masked).
+        assert masks[0].tolist() == [False] * 4 + [
+            True,
+            False,
+            True,
+            False,
+            True,
+            True,
+            False,
+            False,
+        ]
+        assert (states[0, PROMPT:] == MASK_ID).tolist() == [True] * 8
+
+        # Round 1: block 0 consumes step 1 (position 5); block 1 consumes
+        # step 3 (positions 10, 11).  Earlier-committed positions now hold
+        # final tokens; later-or-equal ones are masked.
+        assert masks[1].tolist() == [False] * 4 + [
+            False,
+            True,
+            False,
+            False,
+            False,
+            False,
+            True,
+            True,
+        ]
+        expected_state_1 = snapshot.clone()
+        expected_state_1[torch.tensor([5, 7, 10, 11])] = MASK_ID
+        assert torch.equal(states[1], expected_state_1)
+
+        # Round 2: only block 0 has step 2 left (position 7); block 1 is
+        # exhausted and contributes nothing.
+        assert masks[2].tolist() == [False] * 4 + [
+            False,
+            False,
+            False,
+            True,
+            False,
+            False,
+            False,
+            False,
+        ]
+        expected_state_2 = snapshot.clone()
+        expected_state_2[7] = MASK_ID
+        assert torch.equal(states[2], expected_state_2)
+
+    def test_the_prompt_is_never_masked_or_supervised(self):
+        from unturtle.post_training.rollout import replay_rounds
+
+        clean, step_map = self._fixture()
+
+        states, masks = replay_rounds(
+            clean,
+            step_map,
+            prompt_length=PROMPT,
+            block_size=BLOCK,
+            mask_token_id=MASK_ID,
+        )
+
+        assert torch.equal(states[:, :PROMPT], clean[:PROMPT].expand(3, -1))
+        assert not bool(masks[:, :PROMPT].any())
+
+    def test_every_response_position_is_supervised_exactly_once(self):
+        """Each commit step is consumed exactly once across the replay —
+        the reference marks consumed minima as -1.  A position supervised
+        twice would double-count its gradient; one supervised never would
+        silently drop it."""
+        from unturtle.post_training.rollout import replay_rounds
+
+        clean, step_map = self._fixture()
+
+        _, masks = replay_rounds(
+            clean,
+            step_map,
+            prompt_length=PROMPT,
+            block_size=BLOCK,
+            mask_token_id=MASK_ID,
+        )
+
+        counts = masks[:, PROMPT:].sum(dim=0)
+        assert bool((counts == 1).all()), counts.tolist()
+
+    def test_replayed_rounds_feed_the_stitcher(self):
+        """The integration the module exists for: replay -> combine ->
+        contract-valid SupervisionState."""
+        from unturtle.post_training.rollout import (
+            combine_rounds_one_state_per_block,
+            replay_rounds,
+        )
+
+        clean, step_map = self._fixture()
+        states, masks = replay_rounds(
+            clean,
+            step_map,
+            prompt_length=PROMPT,
+            block_size=BLOCK,
+            mask_token_id=MASK_ID,
+        )
+
+        state = combine_rounds_one_state_per_block(
+            states,
+            masks,
+            clean,
+            sample_id="replayed",
+            prompt_length=PROMPT,
+            block_size=BLOCK,
+            generator=torch.Generator().manual_seed(0),
+        )
+
+        assert isinstance(state, SupervisionState)
+        assert all(index >= 0 for index in state.round_indices)
+
+    def test_step_map_length_must_match_the_response(self):
+        from unturtle.post_training.rollout import replay_rounds
+
+        clean, _ = self._fixture()
+
+        with pytest.raises(ValueError, match="step_map"):
+            replay_rounds(
+                clean,
+                torch.tensor([0, 1]),
+                prompt_length=PROMPT,
+                block_size=BLOCK,
+                mask_token_id=MASK_ID,
+            )
+
+
+class TestCommitStepsFromTrajectory:
+    def test_the_commit_step_is_the_last_change(self):
+        """A position's commit step is the index of the state in which it
+        first holds its final value FOR GOOD — i.e. one past its last change.
+        Positions that never change commit at 0."""
+        from unturtle.post_training.rollout import commit_steps_from_trajectory
+
+        M = MASK_ID
+        trajectory = torch.tensor(
+            [
+                [M, M, 7, M],  # state before step 0
+                [3, M, 7, M],  # pos 0 committed at step... changed between 0->1
+                [3, 5, 7, 2],
+                [3, 5, 7, 2],  # final
+            ]
+        )
+
+        steps = commit_steps_from_trajectory(trajectory)
+
+        # pos 0 last changed entering state 1 -> commit step 1
+        # pos 1 and 3 last changed entering state 2 -> commit step 2
+        # pos 2 never changed -> 0
+        assert steps.tolist() == [1, 2, 0, 2]
+
+    def test_a_flip_flop_commits_at_its_last_change(self):
+        """A -> B -> A still commits late: the position was NOT final-valued
+        for good until its last change, and replaying it as early-committed
+        would show the teacher a state the decode never stabilized."""
+        from unturtle.post_training.rollout import commit_steps_from_trajectory
+
+        trajectory = torch.tensor([[1], [2], [1], [1]])
+
+        steps = commit_steps_from_trajectory(trajectory)
+
+        assert steps.tolist() == [2]
+
+
+class TestTrajectoryRecorder:
+    def test_it_records_every_denoiser_call_plus_the_final_state(self):
+        """The recorder turns any (x_t, t, h) denoiser into a trajectory
+        source: the solver hands it each pre-step state, and the caller
+        appends the solver's return — no hook into the sampler."""
+        from unturtle.models.generation.dfm_solver import solve_discrete_flow
+        from unturtle.post_training.rollout import TrajectoryRecorder
+
+        def denoiser(x_t, t, h):
+            logits = torch.zeros(*x_t.shape, MASK_ID + 1)
+            logits[..., 3] = 10.0
+            return logits
+
+        recorder = TrajectoryRecorder(denoiser)
+        x_0 = torch.full((1, RESPONSE), MASK_ID, dtype=torch.long)
+        final = solve_discrete_flow(
+            recorder, x_0, steps=4, generator=torch.Generator().manual_seed(0)
+        )
+        trajectory = recorder.finish(final)
+
+        assert trajectory.shape == (5, 1, RESPONSE)
+        assert torch.equal(trajectory[0], x_0)
+        assert torch.equal(trajectory[-1], final)
+
+    def test_finishing_twice_is_rejected(self):
+        """A recorder reused across rollouts would silently concatenate two
+        prompts' trajectories into one step_map."""
+        from unturtle.post_training.rollout import TrajectoryRecorder
+
+        recorder = TrajectoryRecorder(lambda x, t, h: torch.zeros(*x.shape, 4))
+        recorder(torch.zeros(1, 4, dtype=torch.long), torch.tensor([0.0]), 0.5)
+        recorder.finish(torch.zeros(1, 4, dtype=torch.long))
+
+        with pytest.raises(RuntimeError, match="finish"):
+            recorder.finish(torch.zeros(1, 4, dtype=torch.long))
+
+    def test_recorded_states_are_snapshots_not_references(self):
+        """A sampler that mutates its state in place must not rewrite history.
+
+        `solve_discrete_flow` happens to allocate fresh tensors each step, so
+        a recorder that skipped the clone would pass every solver-driven test
+        (mutation-verified survivor) — but the recorder's contract is any
+        (x_t, t, h) sampler, including in-place ones.
+        """
+        from unturtle.post_training.rollout import TrajectoryRecorder
+
+        recorder = TrajectoryRecorder(lambda x, t, h: torch.zeros(*x.shape, 4))
+        state = torch.zeros(1, 4, dtype=torch.long)
+        recorder(state, torch.tensor([0.0]), 0.5)
+
+        state.fill_(9)  # in-place sampler behaviour
+
+        trajectory = recorder.finish(torch.ones(1, 4, dtype=torch.long))
+        assert torch.equal(trajectory[0], torch.zeros(1, 4, dtype=torch.long)), (
+            "mutating the passed state rewrote the recorded trajectory"
+        )
+
+
+class TestCommitStepsEdge:
+    def test_a_single_state_trajectory_is_rejected_loudly(self):
+        from unturtle.post_training.rollout import commit_steps_from_trajectory
+
+        with pytest.raises(ValueError, match="trajectory"):
+            commit_steps_from_trajectory(torch.zeros(1, 4, dtype=torch.long))
