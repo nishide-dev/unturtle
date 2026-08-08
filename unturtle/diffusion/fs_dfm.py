@@ -41,10 +41,12 @@ Reference:
 
 from __future__ import annotations
 
+import math
 from typing import Callable, Optional
 
 import torch
 import torch.nn.functional as F
+from torch import nn
 
 from unturtle.models.generation.dfm_solver import (
     cumulative_scalar,
@@ -204,8 +206,103 @@ def blend_losses(
     return (take_path * path_loss + (1.0 - take_path) * distillation_loss).mean()
 
 
+def _sinusoidal_features(x: torch.Tensor, dim: int = 16) -> torch.Tensor:
+    """Classic sin/cos features over ``[B]`` scalars in ``[0, 1]``.
+
+    Feature math runs in fp32 regardless of the module dtype -- the same
+    discipline as ``dfm_loss``'s scheduler rule -- and the caller casts the
+    fused result to the embedding dtype.  ``torch.linspace`` otherwise takes
+    the *default* dtype, which under a ``.bfloat16()`` cast left fp32
+    features against a bf16 ``fuse`` and crashed the first forward.
+    """
+    frequencies = torch.exp(
+        torch.linspace(
+            0.0, math.log(1000.0), dim // 2, device=x.device, dtype=torch.float32
+        )
+    )
+    angles = x[:, None].to(torch.float32) * frequencies[None]
+    return torch.cat([angles.sin(), angles.cos()], dim=-1)
+
+
+class StepAwareWrapper(nn.Module):
+    """Condition a time-agnostic backbone on ``(t, h)`` — App. C.1, adapted.
+
+    The paper fuses ``c = SiLU(W [phi_time(t); phi_dt(h)])`` inside its own
+    architecture.  Unturtle's masked-diffusion backbones are deliberately
+    time-agnostic (the mask count carries the corruption level), so this is
+    an **Unturtle adaptation, not a transcription**: the fused conditioning
+    vector is added to the token embeddings and the base model is called
+    through ``inputs_embeds``, leaving the backbone untouched.  Any model
+    exposing ``model.embed_tokens`` and accepting ``inputs_embeds`` (the
+    Tiny-A2D families do) qualifies.
+
+    ``forward(input_ids, timesteps, step_size) -> logits`` is also the
+    solver-denoiser contract, so a wrapped model plugs into
+    ``solve_discrete_flow`` and :func:`rk_teacher_logits` directly.
+    """
+
+    def __init__(self, base: nn.Module, feature_dim: int = 16) -> None:
+        super().__init__()
+        self.base = base
+        hidden = base.config.hidden_size
+        self.fuse = nn.Linear(2 * feature_dim, hidden)
+        self._feature_dim = feature_dim
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        timesteps: torch.Tensor,
+        step_size: float,
+    ) -> torch.Tensor:
+        embeddings = self.base.model.embed_tokens(input_ids)
+        step = torch.full_like(timesteps, float(step_size))
+        features = torch.cat(
+            [
+                _sinusoidal_features(timesteps, self._feature_dim),
+                _sinusoidal_features(step, self._feature_dim),
+            ],
+            dim=-1,
+        ).to(self.fuse.weight.dtype)
+        fused = F.silu(self.fuse(features)).to(embeddings.dtype)
+        return self.base(inputs_embeds=embeddings + fused[:, None, :]).logits
+
+
+def clip_step_to_path(
+    timesteps: torch.Tensor,
+    step_size: float,
+    *,
+    epsilon: float = 1e-3,
+) -> tuple[torch.Tensor, float]:
+    """Fit a training ``(t, h)`` draw strictly inside the path.
+
+    Training samples ``h`` up to 1 (§5.1's grid tops out at ``2^0``), but
+    eq. (4.3) and the teacher's jumps need ``t + h < 1`` strictly — at
+    ``h = 1`` no valid ``t`` exists at all.  The *sampler* absorbs the
+    endpoint in its unconditional terminal draw; training has no such escape,
+    and the paper does not spell out its handling.  **Unturtle's choice,
+    recorded as such:** rescale ``t`` into the room the step leaves,
+    ``t <- t * max(1 - h - eps, eps)``, and clip the integration width to
+    ``h_eff = min(h, 1 - max(t) - eps)``.  The model keeps seeing the
+    *nominal* ``h`` it will be conditioned on at inference; only the
+    integration (loss weight, teacher jumps) uses ``h_eff``.  The mismatch is
+    at most ``eps`` plus the rescaling of ``t``, and vanishes for every
+    ``h`` that already fits.
+
+    Returns:
+        ``(scaled_timesteps, h_eff)``.
+    """
+    if step_size <= 0:
+        raise ValueError(f"step_size must be > 0, got {step_size}")
+    scaled = timesteps * max(1.0 - step_size - epsilon, epsilon)
+    ceiling = float(scaled.max()) if scaled.numel() else 0.0
+    h_eff = min(step_size, 1.0 - ceiling - epsilon)
+    return scaled, h_eff
+
+
 __all__ = [
+    "StepAwareWrapper",
     "blend_losses",
+    "clip_step_to_path",
     "few_step_distillation_loss",
     "rk_teacher_logits",
 ]
