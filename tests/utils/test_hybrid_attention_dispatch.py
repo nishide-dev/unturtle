@@ -199,6 +199,84 @@ class TestPackedPrecedence:
         assert not bool(allowed[:3, 3:].any()), "packing boundary was not honored"
 
 
+class TestTheClaimIsScopedToBinaryMasks:
+    def test_a_soft_additive_bias_is_not_preserved(self):
+        """Bounds the "flows through unchanged" claim, which is not general.
+
+        The 4-D branch converts a float mask with `.eq(0)`, so any non-zero
+        entry becomes a hard block regardless of magnitude.  Lossless for the
+        hybrid mask — it is binary, `{0, finfo.min}` — but false for a soft
+        bias such as ALiBi or a relative-position penalty, which would be
+        silently promoted to full blocking.
+
+        Worth a test rather than a caveat because #63's next slice (an
+        optimized structured bias) is exactly where someone would hand this
+        path a non-binary tensor.
+        """
+        torch.manual_seed(0)
+        q, k, v = (torch.randn(1, 1, 4, D) for _ in range(3))
+        soft = torch.zeros(1, 1, 4, 4)
+        soft[0, 0, 0, 1] = -2.0  # a partial penalty, not a block
+
+        config = AttentionConfig(backend=SDPA, n_kv_heads=1, n_groups=1, causal=False)
+        context = AttentionContext(
+            bsz=1,
+            q_len=4,
+            kv_seq_len=4,
+            n_heads=1,
+            head_dim=D,
+            requires_grad=False,
+            seq_info=None,
+            attention_mask=soft,
+            causal_mask=None,
+        )
+
+        got = run_attention(config=config, context=context, Q=q, K=k, V=v)
+        as_additive = F.scaled_dot_product_attention(q, k, v, attn_mask=soft).transpose(
+            1, 2
+        )
+
+        assert not torch.allclose(got, as_additive, atol=1e-5), (
+            "a soft bias now survives; if the 4-D branch stopped binarising, "
+            "the hybrid mask could carry graded penalties too"
+        )
+
+
+class TestBackendDowngrade:
+    """Supplying a mask costs Flash/xFormers — the real price of this path.
+
+    `run_attention` switches to SDPA whenever `context.attention_mask is not
+    None` (`attention_dispatch.py:130-135`).  So the reference topology works
+    today, but only on SDPA: handing it a `[B, 1, L, L]` mask silently gives
+    up the fast backends.
+
+    That is exactly what #63's "optimized lowering" slice exists to fix — a
+    structured bias the fast paths can consume instead of a dense mask.
+    Pinned so the cost is a known quantity rather than a benchmark surprise.
+    """
+
+    @pytest.mark.parametrize("requested", ["FLASH_DENSE", "FLASH_VARLEN", "XFORMERS"])
+    def test_a_caller_mask_yields_the_sdpa_result(self, requested):
+        from unturtle.utils import attention_dispatch as dispatch
+
+        Q, K, V = _qkv()
+        mask = _hybrid()
+
+        def run(backend):
+            config = AttentionConfig(
+                backend=backend, n_kv_heads=H, n_groups=1, causal=False
+            )
+            return run_attention(config=config, context=_context(mask), Q=Q, K=K, V=V)
+
+        assert torch.allclose(
+            run(getattr(dispatch, requested)), run(SDPA), atol=1e-6
+        ), (
+            f"backend={requested} with a caller mask did not produce the SDPA "
+            "result; if a fast path now consumes 4-D masks, #63's optimized "
+            "lowering slice should be re-scoped"
+        )
+
+
 class TestConventions:
     def test_the_mask_uses_the_additive_convention_sdpa_expects(self):
         mask = _hybrid()
