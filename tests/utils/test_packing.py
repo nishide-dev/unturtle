@@ -13,6 +13,10 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import multiprocessing
+import os
+import subprocess
+import sys
 from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -32,6 +36,63 @@ from unturtle.utils.packing import (
     enable_sample_packing,
     mask_packed_sequence_boundaries,
 )
+
+
+def _isolated(test_name):
+    """Run the calling test in a fresh interpreter, once.
+
+    Returns True in the parent (after asserting the child passed) and False
+    in the child, so the caller writes::
+
+        if _isolated("test_x"):
+            return
+        <real body>
+
+    Two irreversible pieces of process-global state force this (#90):
+
+    - ``FastLanguageModel.from_pretrained`` patches transformers' Llama
+      internals **in place** (RoPE caches keyed by device index, among
+      others).  Any later test constructing a Llama-family model on CPU then
+      dies inside unsloth's patched rotary embedding
+      (``multi_gpu_sin_cached[None]``).  The patch cannot be torn down; the
+      only real isolation is a process boundary.
+    - the child also switches the multiprocessing start method to ``spawn``
+      so unsloth's trainer patch leaves ``dataset_num_proc=None`` alone and
+      ``datasets.map`` stays in-process (see the note in
+      ``_build_packed_training_setup``).  Both settings die with the child.
+
+    Preferred over a pytest-forked dependency per the issue's guidance, and
+    over ordering markers because ad-hoc subsets are exactly where this bit.
+    """
+    if os.environ.get("_UNTURTLE_PACKING_ISOLATED") == "1":
+        # Consume the guard immediately: a value inherited from an OUTER
+        # environment (someone exporting it manually) would otherwise turn
+        # every guarded test in this process into an in-process run and
+        # silently restore the pollution (review reproduced exactly that,
+        # 11 downstream failures).  Deleting it here means a stale value can
+        # affect at most the one test that read it.
+        del os.environ["_UNTURTLE_PACKING_ISOLATED"]
+        multiprocessing.set_start_method("spawn", force=True)
+        return False
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            f"{__file__}::{test_name}",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+        ],
+        env={**os.environ, "_UNTURTLE_PACKING_ISOLATED": "1"},
+        capture_output=True,
+        text=True,
+        timeout=900,
+    )
+    assert result.returncode == 0, (
+        f"isolated run of {test_name} failed:\n{result.stdout}\n{result.stderr}"
+    )
+    return True
 
 
 def _build_packed_training_setup(tmp_path, device):
@@ -72,7 +133,16 @@ def _build_packed_training_setup(tmp_path, device):
         max_steps=1,
         fp16=device.type == "cuda" and not torch.cuda.is_bf16_supported(),
         bf16=device.type == "cuda" and torch.cuda.is_bf16_supported(),
-        dataset_num_proc=1,
+        # `None` + a non-fork start method keeps `datasets.map` in-process.
+        # Any integer (even 1) routes the map through a multiprocess pool,
+        # whose dill serialization of the tokenize function walks its
+        # reachable globals and chokes on torch's `ConfigModuleInstance`
+        # (#90); and unsloth's patched trainer rewrites `None` back to a
+        # cpu-count value whenever the start method is `fork` -- which is why
+        # `_isolated` also flips the start method to `spawn` inside the
+        # subprocess.  The workers are entirely incidental to what these
+        # tests assert.
+        dataset_num_proc=None,
         output_dir=str(tmp_path),
         packing=True,
     )
@@ -281,6 +351,8 @@ def test_enable_sample_packing():
 
 
 def test_enable_sample_packing_trl_collator(tmp_path):
+    if _isolated("test_enable_sample_packing_trl_collator"):
+        return
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     model, _, trainer, _ = _build_packed_training_setup(tmp_path, device)
 
@@ -343,6 +415,17 @@ def test_enable_padding_free_metadata():
 
 
 def test_packing_sdpa(tmp_path):
+    if _isolated("test_packing_sdpa"):
+        return
+    # Deterministic loss routing.  unsloth's forward picks the loss entry
+    # point from this env var: "0" (the import-time default) routes small
+    # batches through `unsloth_fused_ce_loss`, where the
+    # `fast_cross_entropy_loss` capture below never fires -- and unsloth's
+    # own vision/rl code toggles the var globally, so whether this test's
+    # assertion held used to depend on WHICH TESTS RAN BEFORE IT (#90's
+    # third mechanism).  Pinning it selects the observable path on purpose;
+    # the setting dies with the isolated child process.
+    os.environ["UNSLOTH_RETURN_LOGITS"] = "1"
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     model, batch, trainer, llama_mod = _build_packed_training_setup(tmp_path, device)
 

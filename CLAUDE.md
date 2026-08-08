@@ -143,7 +143,7 @@ Notes:
 
 ```bash
 # focused fast tests
-uv run python -m pytest tests/diffusion/ tests/models/ tests/test_fast_diffusion_model.py tests/test_e2e_integration.py -m "not slow" -v
+uv run python -m pytest tests/diffusion/ tests/models/ tests/utils/ tests/test_fast_diffusion_model.py tests/test_e2e_integration.py -m "not slow" -v
 
 # full suite
 uv run python -m pytest tests/ -v
