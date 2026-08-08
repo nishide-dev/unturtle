@@ -3,8 +3,8 @@ Discrete flow-matching objective (#65 Phase A, FS-DFM eq. 3.8).
 
 The paper derives the loss as a **Bregman divergence**, not cross-entropy::
 
-    L_i = -g(t)*[ p_{1|t}(x_t^i | x_t) - delta_{x_1^i}(x_t^i) ]
-          - [ 1 - delta_{x_1^i}(x_t^i) ] * log p_{1|t}(x_1^i | x_t)
+    L_i = -g(t)*[ p_{1|t}(x_t^i | x_t) - delta_{x_1^i}(x_t^i)
+                  + ( 1 - delta_{x_1^i}(x_t^i) ) * log p_{1|t}(x_1^i | x_t) ]
 
 Three properties would be lost by reaching for CE, and each is pinned below:
 
@@ -48,7 +48,20 @@ def _batch(batch=2, length=4, vocab=6, seed=0):
 
 
 def _reference(logits, x_1, x_t, t, scheduler=_Linear()):
-    """Equation (3.8), written out position by position."""
+    """Equation (3.8), written out position by position.
+
+    Note `g` scales the **whole bracket**, both terms:
+
+        -g(t) * [ p(x_t) - delta + (1 - delta) * log p(x_1) ]
+
+    An earlier version of this reference applied `g` to the first term only,
+    matching an implementation that did the same — so the two agreed on being
+    wrong and every test here passed while the objective's minimizer was the
+    interpolant `p_t` rather than the clean posterior `p_{1|t}` (#97).  That is
+    the standing hazard with a reference transcribed from the same line as the
+    code, and the reason `TestTheOptimum` below asserts what the loss
+    *converges to* rather than what it evaluates to.
+    """
     probs = F.softmax(logits, dim=-1)
     log_probs = F.log_softmax(logits, dim=-1)
     batch, length, _ = logits.shape
@@ -60,9 +73,10 @@ def _reference(logits, x_1, x_t, t, scheduler=_Linear()):
             current = int(x_t[b, i])
             target = int(x_1[b, i])
             delta = 1.0 if current == target else 0.0
-            first = -g * (float(probs[b, i, current]) - delta)
-            second = -(1.0 - delta) * float(log_probs[b, i, target])
-            total[b, i] = first + second
+            bracket = (float(probs[b, i, current]) - delta) + (1.0 - delta) * float(
+                log_probs[b, i, target]
+            )
+            total[b, i] = -g * bracket
     return total
 
 
@@ -97,14 +111,15 @@ class TestItIsActuallyAMinimizableLoss:
 
     Every test comparing against `_reference()` is comparing two transcriptions
     of the same equation made with the same assumption — so a shared misreading
-    passes all of them.  It did: the printed eq. (3.8) is the pre-minimization
-    Bregman quantity, and adding `(1-delta)*log p` makes the log-likelihood a
-    *reward*.  A model predicting `x_1` perfectly scored -4e-09, one predicting
-    wrongly scored -20.0, and SGD drove the loss to -9.43 while mean p(x_1)
-    fell from 0.061 to 0.008.
+    passes all of them.  It did, twice: first a genuinely inverted objective
+    (a model predicting `x_1` perfectly scored -4e-09 while a wrong one scored
+    -20.0, and SGD drove mean p(x_1) from 0.061 down to 0.008), and later a
+    misplaced `g` that left the loss minimizable but moved its minimizer.
 
     These tests are about what a loss is *for*, so they are independent of how
-    it was transcribed.
+    it was transcribed.  They catch an inversion — but note they only check
+    *ordering* between candidates, which a displaced minimum preserves.  That
+    is why `TestTheOptimum` exists as well.
     """
 
     def test_a_better_prediction_gives_a_lower_loss(self):
@@ -162,7 +177,8 @@ class TestItIsActuallyAMinimizableLoss:
         """A Bregman divergence cannot go below zero.
 
         This is what distinguishes the correct reading from negating the whole
-        expression, which is also minimizable but reaches -1.97 here.
+        expression, which is also minimizable but reaches -9.76 over the same
+        200 cases.
         """
         from unturtle.diffusion.dfm_loss import discrete_flow_matching_loss
 
@@ -180,7 +196,15 @@ class TestItIsActuallyAMinimizableLoss:
             )
             worst = min(worst, value)
 
-        assert worst >= -1e-6, f"loss went negative ({worst:.4f}); not a divergence"
+        # Tolerance is relative to `g`, not absolute: the loss scales with
+        # `g(t)`, so float error does too.  At t=0.5 here g=2, but a test
+        # parametrized over t would breach a fixed 1e-6 near t=1 on rounding
+        # alone (measured -1.39e-06 at t=0.99999).
+        tolerance = 1e-6 * _Linear().g(0.5)
+        assert worst >= -tolerance, (
+            f"loss went negative ({worst:.4g}, tolerance {-tolerance:.4g}); "
+            "not a divergence"
+        )
 
 
 class TestDtypeIndependence:
@@ -400,7 +424,8 @@ class TestDeltaSemantics:
 
         probs = F.softmax(logits, dim=-1)
         log_probs = F.log_softmax(logits, dim=-1)
-        expected = -2.0 * float(probs[0, 0, 4]) - float(log_probs[0, 0, 3])
+        # g(0.5) = 2 scales both terms, not just the first.
+        expected = -2.0 * (float(probs[0, 0, 4]) + float(log_probs[0, 0, 3]))
         assert math.isclose(float(got), expected, abs_tol=1e-5)
 
     def test_the_first_term_reads_the_current_token_not_the_target(self):
@@ -510,3 +535,88 @@ class TestGradients:
 
         assert logits.grad is not None
         assert torch.isfinite(logits.grad).all()
+
+
+class TestTheOptimum:
+    """What the loss *converges to*, not what it evaluates to.
+
+    Every other test in this file compares the implementation against a
+    reference, or compares two hand-built predictions.  Neither can see a
+    displaced minimum: a reference transcribed from the same equation shares
+    the misreading, and two candidates that both move the wrong way are still
+    correctly ordered relative to each other.
+
+    That gap shipped twice on this one equation — an inverted sign (#94) and
+    then a misplaced `g` whose minimizer was the interpolant `p_t` instead of
+    the clean posterior `p_{1|t}` (#97).  The second one left an end-to-end
+    model with 31% of sampled positions still holding the source token.
+
+    So these tests descend the loss and ask where it lands.
+    """
+
+    @staticmethod
+    def _optimum(x_t_token, t, target, *, vocab=6, samples=4000, iters=900):
+        """Minimize over raw logits at a fixed ``(x_t, t)`` and return the fit."""
+        from unturtle.diffusion.dfm_loss import discrete_flow_matching_loss
+
+        generator = torch.Generator().manual_seed(0)
+        x_1 = torch.multinomial(
+            target.expand(samples, vocab), 1, generator=generator
+        ).reshape(1, samples)
+        x_t = torch.full((1, samples), x_t_token)
+
+        logits = torch.zeros(1, 1, vocab, requires_grad=True)
+        optimizer = torch.optim.Adam([logits], lr=0.05)
+        for _ in range(iters):
+            loss = discrete_flow_matching_loss(
+                logits.expand(1, samples, vocab),
+                x_1,
+                x_t,
+                torch.tensor([t]),
+                scheduler=_Linear(),
+            )
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+        return F.softmax(logits.detach(), dim=-1)[0, 0]
+
+    def test_the_minimizer_is_the_clean_posterior_at_every_t(self):
+        """`p_{1|t}` is the distribution over CLEAN data, so it cannot vary with `t`.
+
+        The bug this pins produced `q(x_t) = t` exactly — 0.9 at `t = 0.9`,
+        where the correct answer is the data distribution regardless of `t`.
+        Because `g` is a common positive factor over the whole bracket, a
+        correct implementation's optimum is independent of `t`; that
+        independence is the assertion.
+        """
+        target = torch.tensor([0.40, 0.25, 0.20, 0.10, 0.05, 0.0])
+
+        for t in (0.1, 0.5, 0.9):
+            fitted = self._optimum(5, t, target)
+
+            distance = 0.5 * float((fitted - target).abs().sum())
+            assert distance < 0.05, (
+                f"at t={t} the loss is minimized by "
+                f"{[round(v, 3) for v in fitted.tolist()]}, which is "
+                f"{distance:.4f} in total variation from the data distribution "
+                f"{target.tolist()}; the objective is not learning p_1|t"
+            )
+
+    def test_the_minimizer_does_not_favour_whatever_the_position_holds(self):
+        """The specific failure: mass piling onto `x_t` because the first term pays.
+
+        Checked on a token that carries real probability mass, not just on the
+        mask id — with `p*(x_t) = 0` the log term gives `x_t` no pull at all,
+        so a mask-only check sees a different (and weaker) version of this.
+        """
+        target = torch.tensor([0.30, 0.25, 0.20, 0.13, 0.07, 0.05])
+
+        for held in (0, 2, 5):
+            fitted = self._optimum(held, 0.9, target)
+
+            assert abs(float(fitted[held]) - float(target[held])) < 0.05, (
+                f"holding token {held} at t=0.9, the optimum assigns it "
+                f"{float(fitted[held]):.3f} against a true {float(target[held]):.3f}; "
+                "the first term is biasing the prediction toward the current state"
+            )
