@@ -618,6 +618,113 @@ class TestRejectsUnimplementedOptions:
         assert torch.allclose(sparse, dense, atol=1e-6)
 
 
+class TestBackboneSupportDecision:
+    """Which real backbones take the sparse path, and why not (#61).
+
+    The existing fallback tests use a stub carrying only a `model_type`, so
+    they never exercise a real backbone's structure.  These pin the actual
+    decision against the real models, so "unsupported" stays a deliberate
+    choice rather than drifting into an untested accident.
+
+    Both exclusions are **structural, not an oversight**:
+
+    - LLaDA's `get_decoder()` returns a distinct module, but that module emits
+      `logits` (vocab-width) with no `last_hidden_state`.  Routing it through
+      the standard resolver would double-apply the output head.
+    - MDLM-DiT's `get_decoder()` returns the model *itself*, so there is no
+      separate backbone to run without the head at all.
+    """
+
+    def _llada(self):
+        from unturtle.models.backbones.llada.configuration_llada import LLaDAConfig
+        from unturtle.models.backbones.llada.modeling_llada import LLaDAModelLM
+
+        return LLaDAModelLM(
+            LLaDAConfig(
+                vocab_size=64,
+                d_model=32,
+                n_heads=2,
+                n_layers=1,
+                max_sequence_length=32,
+                rope=True,
+            )
+        )
+
+    def _mdlm_dit(self):
+        from unturtle.models.backbones.mdlm_dit.configuration_mdlm_dit import (
+            MDLMDiTConfig,
+        )
+        from unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit import (
+            MDLMDiTForMaskedDiffusionLM,
+        )
+
+        return MDLMDiTForMaskedDiffusionLM(
+            MDLMDiTConfig(
+                vocab_size=64,
+                hidden_size=32,
+                num_hidden_layers=1,
+                num_attention_heads=2,
+                max_position_embeddings=32,
+            )
+        )
+
+    def test_llada_is_not_supported(self):
+        from unturtle.kernels.sparse_masked_loss import supports_sparse_masked_loss
+
+        assert supports_sparse_masked_loss(self._llada()) is False
+
+    def test_mdlm_dit_is_not_supported(self):
+        from unturtle.kernels.sparse_masked_loss import supports_sparse_masked_loss
+
+        assert supports_sparse_masked_loss(self._mdlm_dit()) is False
+
+    def test_llada_backbone_returns_logits_not_hidden_states(self):
+        """The concrete reason LLaDA is excluded, pinned as a fact.
+
+        If a future LLaDA change starts returning `last_hidden_state`, this
+        fails and the support decision should be revisited — which is the
+        point of asserting the cause rather than only the conclusion.
+        """
+        model = self._llada().eval()
+        backbone = model.get_decoder()
+
+        assert backbone is not model, "LLaDA should expose a distinct backbone"
+
+        with torch.no_grad():
+            outputs = backbone(input_ids=torch.randint(0, 64, (1, 8)))
+
+        assert getattr(outputs, "last_hidden_state", None) is None
+        assert outputs.logits.shape[-1] != 32, (
+            "the backbone emitted a hidden-width tensor; it now looks like "
+            "hidden states and the sparse path should be reconsidered"
+        )
+
+    def test_mdlm_dit_exposes_no_separate_backbone(self):
+        """MDLM-DiT's concrete reason: `get_decoder()` is the model itself."""
+        model = self._mdlm_dit()
+
+        assert model.get_decoder() is model, (
+            "MDLM-DiT now exposes a separate decoder; if it returns hidden "
+            "states, the sparse path becomes available"
+        )
+
+    def test_the_resolver_refuses_llada_loudly_if_ever_registered(self):
+        """Defence in depth: a mistaken registration must raise, not corrupt.
+
+        `standard_sparse_output` resolves for LLaDA (it has the required
+        accessors), so only the call-time check stands between a wrong
+        registration and a silently double-applied output head.
+        """
+        from unturtle.models.integrations.sparse_output import standard_sparse_output
+
+        model = self._llada().eval()
+        access = standard_sparse_output(model)
+
+        assert access is not None, "structural resolution is expected to succeed"
+        with pytest.raises(TypeError, match="last_hidden_state"):
+            access.hidden_states(model, input_ids=torch.randint(0, 64, (1, 8)))
+
+
 class TestFallback:
     def test_reports_unsupported_models(self):
         """Callers need to know when to take the dense path."""
