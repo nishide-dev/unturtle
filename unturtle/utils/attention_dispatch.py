@@ -375,6 +375,172 @@ def run_attention(
     return out.transpose(1, 2).contiguous()
 
 
+def hybrid_prefix_attention(
+    Q: Tensor,
+    K: Tensor,
+    V: Tensor,
+    *,
+    prompt_lengths: Tensor,
+    attention_mask: Optional[Tensor] = None,
+) -> Tensor:
+    """PreDiff-LM eq. (3) attention without materializing its mask (#63).
+
+    Equation (3) splits **by query row** into two independent blocks::
+
+        prompt queries -> prompt keys   causal        (target keys blocked)
+        target queries -> all keys      bidirectional
+
+    A prompt query never attends to a target key, so the prompt rows are
+    exactly a causal attention over the prompt prefix *alone*; a target query
+    attends to everything, so the target rows are exactly an unmasked attention
+    over the full sequence.  Neither call needs a bias tensor, which is the
+    whole point: a caller-supplied mask forces SDPA (see `run_attention`), so
+    the dense form gives up Flash and xFormers and allocates an ``L x L`` bias
+    per row.
+
+    Measured on CUDA (bf16, 16 heads, head_dim 64, Lp = L/4), arms interleaved
+    with `gc.collect()` between them, median of 5 replicates.  Two baselines,
+    because they answer different questions:
+
+        B x L      build+attn   hoisted   fast ms   vs build   vs hoisted
+        4 x 1024        0.260     0.173     0.122      2.20x        1.42x
+        4 x 2048        0.847     0.678     0.327      2.72x        2.07x
+        8 x 2048        1.912     1.849     0.882      2.58x        2.10x
+        2 x 4096        2.083     1.669     0.827      2.98x        2.02x
+
+    "build+attn" rebuilds the mask inside the timed region; "hoisted" reuses a
+    prebuilt one, isolating the attention win alone.
+
+    **The hoisted column is the fair per-layer comparison.**
+    `TinyA2D*Model.forward` builds the mask *once per forward* and shares it
+    across every layer, so the build cost amortizes over `num_hidden_layers`
+    and the rebuild column flatters this change.  The honest attention-only
+    number is **~1.4-2.1x**; the larger figure additionally counts avoiding one
+    `L x L` construction per forward, which is a real saving but not an
+    attention one and is divided by the layer count in practice.
+
+    Peak activation memory falls too (120 -> 85 MiB at 4 x 2048, 184 -> 85 MiB
+    at 2 x 4096), which is the un-materialized bias.
+
+    **Uniform vs ragged prompt lengths.**  The split point is a slice index, so
+    one boundary shared by the batch takes two batched calls.  Ragged
+    boundaries would need ``2B`` calls, which is slower than a single dense
+    SDPA call, so those fall back to the dense mask.  The *answer* is identical
+    either way -- verified to 2.2e-16 -- only the speed differs.
+
+    **Not yet wired into the Tiny-A2D forwards.**  Those build the dense mask
+    in ``TinyA2D*Model.forward`` and hand it down through every decoder layer,
+    so routing them here needs ``prompt_lengths`` threaded through the layer
+    stack -- a change across three shipped model families, separable from the
+    kernel and deliberately left to its own slice.  Recovering the boundary
+    from the mask instead was considered and rejected: it is derivable for
+    ``0 < Lp < L`` but silently yields ``L - 1`` for an all-prompt row (the
+    last causal row blocks nothing), and it re-derives what the caller already
+    knew.
+
+    Args:
+        Q, K, V:         ``[B, H, L, D]``.
+        prompt_lengths:  ``[B]`` prompt prefix length per row.
+        attention_mask:  Optional ``[B, L]`` padding mask.  Padding breaks the
+                         pure row split (an excluded key is excluded for every
+                         query), so this also takes the dense path.
+
+    Returns:
+        ``[B, H, L, D_v]`` — the trailing dim follows ``V``, since the output
+        is a weighted sum of value vectors.
+
+        Agrees with attending through
+        :func:`build_hybrid_prefix_attention_mask` to 0.0 in fp32/fp16/bf16
+        and 4.4e-16 in fp64.  Not *mathematically* identical, though: the
+        dense path blocks with ``finfo.min``, a large finite penalty rather
+        than ``-inf``, so it admits a ~1e-38-weight contribution from blocked
+        keys that this path omits entirely.  Where they differ, this one is
+        the more correct.
+    """
+    lengths = prompt_lengths.reshape(-1)
+    seq_len = Q.shape[-2]
+    batch_size = Q.shape[0]
+
+    # Validate BEFORE branching, so the fast and dense paths agree on errors
+    # as well as on answers.  `build_hybrid_prefix_attention_mask` raises for
+    # an out-of-range boundary; without this the same call would raise or
+    # silently clamp depending only on whether the batch happened to have
+    # uniform lengths -- the two branches drifting apart in exactly the way
+    # the fallback design exists to prevent.  (Measured before the check:
+    # Lp=-1 silently returned full bidirectional attention and Lp>L returned
+    # full causal.)
+    if lengths.shape[0] != batch_size:
+        raise ValueError(
+            f"prompt_lengths has {lengths.shape[0]} entries but the batch has "
+            f"{batch_size} rows; one boundary broadcast across the batch would "
+            "split every other row in the wrong place"
+        )
+    if lengths.numel() and bool(((lengths < 0) | (lengths > seq_len)).any()):
+        raise ValueError(
+            f"prompt_lengths must satisfy 0 <= Lp <= seq_len={seq_len}, got "
+            f"{lengths.tolist()}"
+        )
+
+    # `B == 0` is a legitimate degenerate shape; there is no row to split and
+    # `lengths[0]` below would raise an opaque IndexError.  The result takes
+    # **V's** head_dim, not Q's -- attention output is a weighted sum of value
+    # vectors, so `Q.clone()` here returned the wrong trailing dim whenever
+    # `D_v != D_qk`.  Invisible while every test builds Q/K/V with equal dims.
+    if batch_size == 0:
+        return V.new_empty((0, V.shape[1], seq_len, V.shape[3]))
+
+    # `bool(...)` on a CUDA tensor forces a device sync: measured 28 us in
+    # isolation against 14 us for the same check on CPU.  In situ it costs far
+    # less than that suggests -- scaling queued GPU work does not scale the
+    # gap (measured at queue depths 1/4/16: -0.22, -0.32, +0.99 ms, i.e. noise
+    # around zero), because the sync overlaps with work already in flight.
+    # Callers that own the boundary can avoid it outright by keeping the small
+    # `[B]` `prompt_lengths` on CPU; the slice index below is a Python int
+    # either way.  Not cached here: this function is stateless and the tensor
+    # may change between calls.
+    uniform = bool((lengths == lengths[0]).all()) if lengths.numel() else True
+    if attention_mask is not None or not uniform:
+        # Padding and ragged boundaries both break the batched two-call form.
+        # Falling back keeps one implementation of the semantics rather than
+        # two that can drift apart.
+        mask = build_hybrid_prefix_attention_mask(
+            prompt_lengths=lengths,
+            seq_len=seq_len,
+            dtype=Q.dtype,
+            device=Q.device,
+            attention_mask=attention_mask,
+        )
+        return scaled_dot_product_attention(Q, K, V, attn_mask=mask)
+
+    prompt_len = int(lengths[0])
+
+    # The degenerate ends are not special cases bolted on -- they are what the
+    # split reduces to, and returning early avoids a zero-length SDPA call
+    # (which some backends reject outright).
+    if prompt_len <= 0:
+        return scaled_dot_product_attention(Q, K, V)
+    if prompt_len >= seq_len:
+        return scaled_dot_product_attention(Q, K, V, is_causal=True)
+
+    # K/V are sliced to the prompt as well as Q.  That slice is *not* needed
+    # for correctness -- `is_causal` with `q_len < kv_len` aligns top-left in
+    # torch, so keys past the prompt are already blocked for these rows, and
+    # passing full K/V is bit-identical (verified at several shapes; a mutant
+    # removing the slice cannot be killed by any test).  It is a performance
+    # choice: the prompt block becomes `Lp x Lp` instead of `Lp x L`, which is
+    # part of where the measured speedup comes from.  Do not "simplify" it
+    # away, and do not rely on the top-left alignment for correctness either --
+    # it is a torch convention, not a guarantee this code should lean on.
+    prompt = scaled_dot_product_attention(
+        Q[:, :, :prompt_len],
+        K[:, :, :prompt_len],
+        V[:, :, :prompt_len],
+        is_causal=True,
+    )
+    target = scaled_dot_product_attention(Q[:, :, prompt_len:], K, V)
+    return torch.cat((prompt, target), dim=2)
+
+
 __all__ = [
     "AttentionConfig",
     "AttentionContext",
@@ -388,6 +554,7 @@ __all__ = [
     "build_sdpa_packed_bidirectional_attention_mask",
     "build_hybrid_prefix_attention_mask",
     "build_xformers_block_bidirectional_mask",
+    "hybrid_prefix_attention",
     "build_xformers_block_causal_mask",
     "run_attention",
     "select_attention_backend",
