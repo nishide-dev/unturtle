@@ -132,4 +132,78 @@ def maybe_build_hybrid_mask(
     return hybrid
 
 
-__all__ = ["maybe_build_hybrid_mask"]
+_PACKED_KWARG_KEYS = ("packed_seq_lengths", "seq_lengths", "block_attention_mask")
+
+
+def hybrid_fast_path_lengths(
+    config: Any,
+    seq_len: int,
+    prompt_lengths: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    kwargs: dict,
+) -> Optional[torch.Tensor]:
+    """Return CPU ``[B]`` lengths when the mask-free split is exactly
+    equivalent to the dense eq.-(3) mask, else ``None``.
+
+    Consumed by the model forwards to decide whether to add
+    ``hybrid_prompt_lengths`` to the kwargs travelling down the layer stack.
+    The signal is advisory: the dense mask is still built and handed down, so
+    an unpatched attention (or a future transformers version that filters
+    unknown kwargs) simply keeps the dense path — the failure direction is
+    speed, never semantics.
+
+    Equivalence requires all of:
+
+    - **No padding.**  An excluded key is excluded for every query, which
+      breaks the pure row split.  ``attention_mask`` here is the caller's mask
+      *before* the hybrid replacement — 2-D all-ones (or the all-ones tensor
+      the forward substitutes for ``None``) qualifies; a 2-D mask with any
+      zero, a prebuilt 4-D mask, or a ``BlockMask`` does not.
+    - **No packed metadata.**  Packed isolation lives in a block mask the
+      split cannot express; any of ``packed_seq_lengths`` / ``seq_lengths`` /
+      ``block_attention_mask`` vetoes the signal.
+    - **Uniform boundaries.**  The split point is a slice index.  Ragged
+      boundaries are suppressed *here* rather than left to the kernel's own
+      fallback, because that fallback rebuilds the dense mask per layer —
+      once per forward is the whole budget.
+
+    The returned tensor is moved to CPU once, so the kernel's per-layer
+    uniformity check (`bool(...)` on the lengths) does not force a device
+    sync on every layer.
+
+    Range validation is deliberately absent: ``maybe_build_hybrid_mask``
+    already rejected out-of-range boundaries before this runs, and the kernel
+    validates again for direct callers.
+    """
+    # Below the measured crossover the two-call split is a net LOSS: the
+    # extra kernel launch, `cat` and output transpose outweigh the attention
+    # win (full forward 0.90x at L=1024 vs 1.50x at L=2048 on an 8-layer bf16
+    # model).  The gate is a declared config field, not a buried constant, so
+    # a caller on different hardware can move it -- in either direction the
+    # dense mask is still built, so this only ever trades speed.
+    if seq_len < getattr(config, "hybrid_fast_min_seq_len", 2048):
+        return None
+
+    if any(kwargs.get(key) is not None for key in _PACKED_KWARG_KEYS):
+        return None
+
+    # The ndim check states the contract; on realistic inputs it is
+    # belt-and-braces over the padding check below (mutation-verified: an
+    # additive 4-D mask uses 0 for "allowed", which is falsy, so any mask
+    # admitting at least one position already fails `.all()`.  The only 4-D
+    # input this line uniquely rejects is a degenerate all-blocked mask, and a
+    # BlockMask would raise loudly on `.all()`).  Kept because "2-D all-ones
+    # only" is the readable eligibility rule, not because a test can isolate
+    # it.
+    if not (isinstance(attention_mask, torch.Tensor) and attention_mask.ndim == 2):
+        return None
+    if not bool(attention_mask.all()):
+        return None
+
+    lengths = prompt_lengths.reshape(-1).detach().to("cpu")
+    if lengths.numel() and not bool((lengths == lengths[0]).all()):
+        return None
+    return lengths
+
+
+__all__ = ["hybrid_fast_path_lengths", "maybe_build_hybrid_mask"]
