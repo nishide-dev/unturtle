@@ -52,6 +52,16 @@ else:
 class TinyA2DQwen2Config(transformers.Qwen2Config):
     model_type = "tiny-a2d-qwen2"
 
+    def __init__(self, hybrid_attention: bool = False, **kwargs):
+        """`hybrid_attention` is declared rather than left to **kwargs (#63).
+
+        `PretrainedConfig` would store it either way, but an undeclared field
+        is invisible to anyone reading the class and depends on upstream
+        kwarg-stashing behaviour.
+        """
+        super().__init__(**kwargs)
+        self.hybrid_attention = hybrid_attention
+
 
 class TinyA2DQwen2Model(transformers.Qwen2Model):
     def forward(
@@ -122,6 +132,7 @@ class TinyA2DQwen2Model(transformers.Qwen2Model):
                 attention_mask,
                 batch_size=inputs_embeds.shape[0],
                 seq_len=inputs_embeds.shape[1],
+                key_value_length=key_value_length,
                 dtype=self.dtype,
                 device=inputs_embeds.device,
             )

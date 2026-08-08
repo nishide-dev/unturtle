@@ -48,6 +48,7 @@ def maybe_build_hybrid_mask(
     *,
     batch_size: int,
     seq_len: int,
+    key_value_length: int,
     dtype: torch.dtype,
     device: torch.device,
 ) -> Optional[torch.Tensor]:
@@ -69,6 +70,25 @@ def maybe_build_hybrid_mask(
     if not getattr(config, "hybrid_attention", False) or prompt_lengths is None:
         return None
 
+    if key_value_length != seq_len:
+        # A KV cache makes attention rectangular ([q_len, kv_len]) while the
+        # reference mask is square: equation (3) is defined over one sequence,
+        # not over a query window against a longer key history.  Building the
+        # square mask anyway would silently mis-align every row.
+        #
+        # Rejected rather than approximated because #63's scope is training,
+        # and the masked-diffusion generation path never supplies
+        # `prompt_lengths` — so this is only reachable by deliberately pairing
+        # hybrid attention with incremental decoding, which needs a rectangular
+        # formulation this slice does not define.
+        raise ValueError(
+            "hybrid_attention does not support a KV cache: attention is "
+            f"rectangular (q_len={seq_len}, kv_len={key_value_length}) while "
+            "the eq.-(3) mask is square. Pass use_cache=False for hybrid "
+            "training, or omit prompt_lengths to fall back to bidirectional "
+            "attention."
+        )
+
     lengths = prompt_lengths.reshape(-1)
     if lengths.shape[0] != batch_size:
         raise ValueError(
@@ -87,13 +107,29 @@ def maybe_build_hybrid_mask(
         if isinstance(attention_mask, torch.Tensor) and attention_mask.ndim == 2
         else None
     )
-    return build_hybrid_prefix_attention_mask(
+    hybrid = build_hybrid_prefix_attention_mask(
         prompt_lengths=lengths,
         seq_len=seq_len,
         dtype=dtype,
         device=device,
         attention_mask=padding,
     )
+
+    # A prebuilt 4-D mask carries topology the hybrid mask knows nothing
+    # about — most importantly packed block-diagonal isolation.  Returning the
+    # hybrid mask alone would *replace* it, letting packed samples attend
+    # across their boundaries: attention still runs, the loss still decreases,
+    # and cross-sample contamination is invisible.  So intersect instead.
+    if isinstance(attention_mask, torch.Tensor) and attention_mask.ndim == 4:
+        blocked = torch.finfo(dtype).min
+        existing = attention_mask.to(device=device, dtype=dtype)
+        hybrid = torch.where(
+            (existing == 0) & (hybrid == 0),
+            torch.zeros_like(hybrid),
+            torch.full_like(hybrid, blocked),
+        )
+
+    return hybrid
 
 
 __all__ = ["maybe_build_hybrid_mask"]

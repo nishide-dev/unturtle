@@ -126,9 +126,7 @@ class TestHybridChangesAttention:
 
         with torch.no_grad():
             first = model(**batch, prompt_lengths=torch.tensor([prompt_len])).logits
-            second = model(
-                **altered, prompt_lengths=torch.tensor([prompt_len])
-            ).logits
+            second = model(**altered, prompt_lengths=torch.tensor([prompt_len])).logits
 
         assert torch.equal(first[:, :prompt_len], second[:, :prompt_len]), (
             "prompt logits changed when the target changed, so the "
@@ -147,9 +145,7 @@ class TestHybridChangesAttention:
 
         with torch.no_grad():
             first = model(**batch, prompt_lengths=torch.tensor([prompt_len])).logits
-            second = model(
-                **altered, prompt_lengths=torch.tensor([prompt_len])
-            ).logits
+            second = model(**altered, prompt_lengths=torch.tensor([prompt_len])).logits
 
         assert not torch.allclose(
             first[:, prompt_len:], second[:, prompt_len:], atol=1e-5
@@ -195,6 +191,87 @@ class TestPaddingComposes:
         )
 
 
+class TestPrebuilt4DMasksAreIntersected:
+    """A 4-D caller mask carries topology the hybrid mask does not know about.
+
+    Most importantly packed block-diagonal isolation.  Replacing it with the
+    hybrid mask would let packed samples attend across their boundaries —
+    attention still runs, the loss still decreases, and the contamination is
+    invisible.  This is the failure mode CLAUDE.md flags for packed metadata.
+    """
+
+    def _packed_mask(self, seq_len=8, split=4):
+        from unturtle.models.conversion.a2d.tiny_a2d._hybrid import (
+            maybe_build_hybrid_mask,
+        )
+
+        blocked = torch.finfo(torch.float32).min
+        packed = torch.zeros(1, 1, seq_len, seq_len)
+        packed[0, 0, :split, split:] = blocked
+        packed[0, 0, split:, :split] = blocked
+
+        class _Config:
+            hybrid_attention = True
+
+        return packed, maybe_build_hybrid_mask(
+            _Config(),
+            torch.tensor([2]),
+            packed,
+            batch_size=1,
+            seq_len=seq_len,
+            key_value_length=seq_len,
+            dtype=torch.float32,
+            device=torch.device("cpu"),
+        )
+
+    def test_packed_boundaries_survive(self):
+        _, combined = self._packed_mask()
+        allowed = combined[0, 0] == 0
+
+        assert not bool(allowed[:4, 4:].any()), (
+            "the hybrid mask replaced the packed mask; samples would attend "
+            "across their boundaries"
+        )
+        assert not bool(allowed[4:, :4].any())
+
+    def test_the_hybrid_topology_still_applies_inside_a_sample(self):
+        """Intersection, not replacement in the other direction either."""
+        _, combined = self._packed_mask()
+        allowed = combined[0, 0] == 0
+
+        # prompt_lengths=2, so position 0 is prompt and 2..3 are target.
+        assert not bool(allowed[0, 2:4].any()), (
+            "prompt->target was reopened when intersecting with the packed mask"
+        )
+        assert bool(allowed[0, 0]), "prompt lost sight of itself"
+
+
+class TestTheLMHeadPathIsExplicit:
+    def test_prompt_lengths_reaches_the_inner_model_through_the_lm_head(self):
+        """Pins the path a `transformers` kwarg-filtering change could break.
+
+        `prompt_lengths` is declared on `TinyA2D*Model.forward`, and reaches it
+        through the LM head's generic `**kwargs` forwarding.  If upstream ever
+        filters unknown kwargs, hybrid attention would silently stop applying
+        with no error at all — so assert the effect, not just the call.
+        """
+        prompt_len = 3
+        batch = _batch(batch_size=1, seq_len=8)
+        model = _model(hybrid=True, seed=7)
+
+        altered = dict(batch)
+        altered["input_ids"] = batch["input_ids"].clone()
+        altered["input_ids"][0, prompt_len:] = 5
+
+        with torch.no_grad():
+            first = model(**batch, prompt_lengths=torch.tensor([prompt_len])).logits
+            second = model(**altered, prompt_lengths=torch.tensor([prompt_len])).logits
+
+        assert torch.equal(first[:, :prompt_len], second[:, :prompt_len]), (
+            "prompt_lengths did not reach the inner model through the LM head"
+        )
+
+
 class TestValidation:
     def test_a_prompt_longer_than_the_sequence_is_rejected(self):
         model = _model(hybrid=True)
@@ -209,6 +286,69 @@ class TestValidation:
 
         with pytest.raises(ValueError, match="prompt_lengths"):
             model(**_batch(batch_size=2, seq_len=8), prompt_lengths=torch.tensor([3]))
+
+
+class TestKVCache:
+    """Hybrid attention and a KV cache are incompatible, loudly.
+
+    A cache makes attention rectangular (`[q_len, kv_len]`) while eq. (3) is
+    defined over one sequence.  Building the square mask anyway would silently
+    mis-align every row — so the combination raises rather than approximating.
+
+    This is only reachable deliberately: the masked-diffusion generation path
+    never supplies `prompt_lengths`, which is why generation is unaffected and
+    is asserted below.
+    """
+
+    def _cached(self):
+        model = _model(hybrid=True, seed=7)
+        with torch.no_grad():
+            first = model(**_batch(batch_size=1, seq_len=8), use_cache=True)
+        return model, first.past_key_values
+
+    def test_incremental_decoding_with_prompt_lengths_raises(self):
+        model, cache = self._cached()
+
+        with pytest.raises(ValueError, match="KV cache"), torch.no_grad():
+            model(
+                input_ids=torch.randint(1, 64, (1, 1)),
+                attention_mask=torch.ones(1, 9, dtype=torch.long),
+                past_key_values=cache,
+                prompt_lengths=torch.tensor([3]),
+                use_cache=True,
+            )
+
+    def test_generation_without_prompt_lengths_is_unaffected(self):
+        """The path that actually runs: no prompt_lengths, so no hybrid mask."""
+        model, cache = self._cached()
+
+        with torch.no_grad():
+            out = model(
+                input_ids=torch.randint(1, 64, (1, 1)),
+                attention_mask=torch.ones(1, 9, dtype=torch.long),
+                past_key_values=cache,
+                use_cache=True,
+            )
+
+        assert out.logits.shape == (1, 1, 64)
+
+
+class TestConfigRoundTrip:
+    def test_the_flag_survives_save_and_reload(self):
+        """A flag that vanished on reload would silently revert a converted
+        model to uniform bidirectional — the failure #63 warns about, in the
+        other direction."""
+        import tempfile
+
+        from unturtle.models.conversion.a2d.tiny_a2d.modeling_llama import (
+            TinyA2DLlamaConfig,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            _config(hybrid=True).save_pretrained(directory)
+            reloaded = TinyA2DLlamaConfig.from_pretrained(directory)
+
+        assert reloaded.hybrid_attention is True
 
 
 class TestLoRA:
@@ -240,9 +380,7 @@ class TestLoRA:
 
         with torch.no_grad():
             first = model(**batch, prompt_lengths=torch.tensor([prompt_len])).logits
-            second = model(
-                **altered, prompt_lengths=torch.tensor([prompt_len])
-            ).logits
+            second = model(**altered, prompt_lengths=torch.tensor([prompt_len])).logits
 
         assert torch.equal(first[:, :prompt_len], second[:, :prompt_len]), (
             "under LoRA the prompt->target block stopped being enforced"

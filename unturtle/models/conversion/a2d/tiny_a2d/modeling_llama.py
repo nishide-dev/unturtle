@@ -53,6 +53,16 @@ else:
 class TinyA2DLlamaConfig(transformers.LlamaConfig):
     model_type = "tiny-a2d-llama"
 
+    def __init__(self, hybrid_attention: bool = False, **kwargs):
+        """`hybrid_attention` is declared rather than left to **kwargs (#63).
+
+        `PretrainedConfig` would store it either way, but an undeclared field
+        is invisible to anyone reading the class and depends on upstream
+        kwarg-stashing behaviour.
+        """
+        super().__init__(**kwargs)
+        self.hybrid_attention = hybrid_attention
+
 
 class TinyA2DLlamaModel(transformers.LlamaModel):
     def forward(
@@ -123,6 +133,7 @@ class TinyA2DLlamaModel(transformers.LlamaModel):
             attention_mask,
             batch_size=inputs_embeds.shape[0],
             seq_len=inputs_embeds.shape[1],
+            key_value_length=key_value_length,
             dtype=self.dtype,
             device=inputs_embeds.device,
         )
