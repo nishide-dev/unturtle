@@ -34,6 +34,7 @@ Usage::
 """
 
 from .generation_utils import TinyA2DGenerationConfig, TinyA2DGenerationMixin
+from .loading import ar_head_classes, convert_ar_model, load_tiny_a2d_from_ar
 from .modeling_llama import (
     TinyA2DLlamaConfig,
     TinyA2DLlamaLMHeadModel,
@@ -51,6 +52,9 @@ from .modeling_qwen3 import (
 )
 
 __all__ = [
+    "ar_head_classes",
+    "convert_ar_model",
+    "load_tiny_a2d_from_ar",
     "TinyA2DGenerationConfig",
     "TinyA2DGenerationMixin",
     "TinyA2DLlamaConfig",
