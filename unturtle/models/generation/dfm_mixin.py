@@ -80,11 +80,15 @@ class DiscreteFlowGenerationMixin:
                 (batch_size, seq_len), mask_token_id, dtype=torch.long, device=device
             )
         if source == "uniform":
+            # Drawn on the generator's device then transferred: a CUDA model
+            # with a CPU generator (or vice versa) must not make the source
+            # draw and the solver's draws demand contradictory devices.
             return torch.randint(
                 0,
                 self.config.vocab_size,
                 (batch_size, seq_len),
                 generator=generator,
+                device=device if generator is None else generator.device,
             ).to(device)
         raise ValueError(f"unknown source {source!r}; choose 'mask' or 'uniform'")
 
@@ -114,13 +118,17 @@ class DiscreteFlowGenerationMixin:
             generator=generator,
             device=device,
         )
-        return solve_discrete_flow(
-            self.dfm_denoiser,
-            x_0,
-            steps=steps,
-            temperature=temperature,
-            generator=generator,
-        )
+        # no_grad at the CALL SITE, not only inside the default seam: an
+        # FS-DFM override that forgot it would otherwise pay ~2.7x activation
+        # memory per step (measured) for gradients nothing consumes.
+        with torch.no_grad():
+            return solve_discrete_flow(
+                self.dfm_denoiser,
+                x_0,
+                steps=steps,
+                temperature=temperature,
+                generator=generator,
+            )
 
     def generate(  # type: ignore[override]
         self,
@@ -128,12 +136,30 @@ class DiscreteFlowGenerationMixin:
         algorithm: str = "auto",
         **kwargs: Any,
     ) -> torch.Tensor:
-        from .sampler import GenerationRequest, dispatch_generation
+        """Route ``dfm`` here; delegate everything else down the MRO.
 
+        This mixin is designed to be ADOPTED by masked models, whose own
+        ``generate`` carries a config/flag preamble this signature does not
+        (dropping it resolved ``mdlm`` correctly and then crashed in the
+        call convention — the #120 review's Critical).  So: resolve first,
+        run only ``dfm`` through the registry request, and hand any other
+        algorithm to ``super().generate`` untouched.  On a standalone model
+        the non-dfm resolve raises before delegation, so plain
+        ``PreTrainedModel`` supers are never reached with masked kwargs.
+        """
+        from .sampler import GenerationRequest, dispatch_generation, resolve_algorithm
+
+        resolved = resolve_algorithm(
+            algorithm,
+            self,
+            bd3lm_requested=bool(kwargs.get("use_block_diffusion", False)),
+        )
+        if resolved != "dfm":
+            return super().generate(inputs, algorithm=algorithm, **kwargs)
         return dispatch_generation(
             self,
             GenerationRequest(inputs=inputs, kwargs=kwargs),
-            algorithm,
+            resolved,
         )
 
 
