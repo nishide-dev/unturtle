@@ -19,10 +19,12 @@ these names are intentionally not re-exported from top-level ``unturtle``.
 """
 
 from .base import AlphaSchedule, ForwardProcess, ProcessOutput
+from .continuous_flow import ContinuousFlowProcess
 from .discrete_flow import DiscreteFlowProcess, KappaSchedule, LinearKappa
 from .masked import MaskedDiffusionProcess
 
 __all__ = [
+    "ContinuousFlowProcess",
     "DiscreteFlowProcess",
     "KappaSchedule",
     "LinearKappa",
