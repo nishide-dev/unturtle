@@ -259,6 +259,28 @@ def _run_bd3lm(model: Any, request: GenerationRequest) -> Any:
     return _call_sampling_loop(model._sample_block_diffusion, request)
 
 
+def _supports_flowlm(model: Any) -> bool:
+    """True for the FlowLM continuous prototype (#66).
+
+    Attribute-based so this module never imports ``unturtle.models.latent``
+    (registrations are declared centrally; families do not self-register).
+    """
+    return getattr(model, "supports_flowlm_generation", False) is True
+
+
+def _flowlm_unsupported(model: Any) -> str:
+    return (
+        f"model {type(model).__name__} does not support 'flowlm' "
+        "(continuous average-velocity sampling; requires a FlowLM prototype "
+        "model with a codec and denoiser). Masked-diffusion models should "
+        "use 'mdlm' / 'block_decode' / 'bd3lm' instead."
+    )
+
+
+def _run_flowlm(model: Any, request: GenerationRequest) -> Any:
+    return model._generate_flowlm(**request.kwargs)
+
+
 def _run_block_ar(model: Any, request: GenerationRequest) -> Any:
     """Delegate to the model's own (upstream) generate.
 
@@ -322,6 +344,17 @@ _ALGORITHMS: list[GenerationAlgorithm] = [
         auto_priority=40,
         unsupported_message=_mdlm_unsupported,
         runner=_run_mdlm,
+    ),
+    GenerationAlgorithm(
+        name="flowlm",
+        family="continuous_flow",
+        supports=_supports_flowlm,
+        # No masked flags: a continuous family is never described in
+        # use_cache/use_block_diffusion terms (#66 acceptance criterion).
+        flags={},
+        auto_priority=50,
+        unsupported_message=_flowlm_unsupported,
+        runner=_run_flowlm,
     ),
 ]
 
