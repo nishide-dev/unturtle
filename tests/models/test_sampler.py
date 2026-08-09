@@ -83,7 +83,11 @@ class _BD3LMOnly:
 def test_known_algorithms_present() -> None:
     assert set(DISCRETE_ALGORITHMS) == {"mdlm", "block_decode", "bd3lm"}
     assert set(CANVAS_ALGORITHMS) == {"block_ar"}
-    assert set(ALL_ALGORITHMS) == set(DISCRETE_ALGORITHMS) | set(CANVAS_ALGORITHMS)
+    # The continuous_flow family (#66) is in neither historical table — those
+    # tables exist for masked/canvas callers — but it is registered.
+    assert set(ALL_ALGORITHMS) == set(DISCRETE_ALGORITHMS) | set(CANVAS_ALGORITHMS) | {
+        "flowlm"
+    }
 
 
 def test_algorithm_to_flags_mdlm() -> None:
