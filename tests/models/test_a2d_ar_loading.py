@@ -151,6 +151,19 @@ class TestMaskTokenEstablishment:
         with pytest.raises(ValueError, match="mask_token_id"):
             convert_ar_model(_tiny_ar(vocab=32), mask_token_id=32)
 
+    def test_a_mislabeled_instance_is_rejected_at_convert(self):
+        """The DI entry has no `architectures` field to check, so the chimera
+        guard there is the instance's actual class.  A Llama head whose config
+        claims `qwen2` (the in-memory analogue of #107's spoofed checkpoint)
+        must be rejected, not class-stamped into a Qwen2 wrapper."""
+        from unturtle.models.conversion.a2d.tiny_a2d.loading import convert_ar_model
+
+        ar = _tiny_ar()
+        ar.config.model_type = "qwen2"
+
+        with pytest.raises(ValueError, match="Qwen2ForCausalLM"):
+            convert_ar_model(ar, mask_token_id=31)
+
 
 class TestCheckpointResolution:
     def test_a_saved_checkpoint_loads_through_the_concrete_head(self, tmp_path):
