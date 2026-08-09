@@ -1,0 +1,361 @@
+"""
+AR-checkpoint loading for the Tiny-A2D conversion (#63).
+
+Turning a pretrained AR checkpoint into a Tiny-A2D diffusion model is the
+conversion recipe's loading half: same architecture, same tensors, different
+*behaviour* (bidirectional attention, masked-diffusion objective).  The
+regression properties here are the ones #63 fixed from #107's loader
+post-mortem:
+
+- the intended upstream head is what actually gets loaded — asserted against
+  the checkpoint's ``architectures``, not merely a matching ``model_type``
+  (a spoofed model_type produced a chimera in #107);
+- converted initialization preserves the AR checkpoint tensors bit-for-bit,
+  BEFORE the intentional adaptation (which is behavioural, not structural);
+- an incompatible or unmapped architecture is rejected loudly, never
+  class-stamped;
+- head resolution goes through an Unturtle-owned seam
+  (``ar_head_classes()``), the #107 pattern — never a transformers
+  monkeypatch, and never a generic Auto* loader.
+"""
+
+import pytest
+import torch
+
+
+def _tiny_ar(vocab=32, seed=0, **config_overrides):
+    from transformers import LlamaConfig, LlamaForCausalLM
+
+    torch.manual_seed(seed)
+    return LlamaForCausalLM(
+        LlamaConfig(
+            vocab_size=vocab,
+            hidden_size=32,
+            intermediate_size=64,
+            num_hidden_layers=2,
+            num_attention_heads=2,
+            num_key_value_heads=2,
+            max_position_embeddings=64,
+            **config_overrides,
+        )
+    )
+
+
+class TestConvertPreservesTheCheckpoint:
+    def test_every_ar_tensor_survives_bit_for_bit(self):
+        """The conversion is behavioural; the tensors must be untouched.
+
+        A silent re-init anywhere (a post_init re-run, a tied weight rebuilt)
+        yields a model that trains fine and benchmarks as if conversion from
+        pretrained weights buys nothing — the matched benchmark this issue
+        plans would be comparing noise.
+        """
+        from unturtle.models.conversion.a2d.tiny_a2d.loading import convert_ar_model
+
+        ar = _tiny_ar()
+        reference = {k: v.clone() for k, v in ar.state_dict().items()}
+
+        converted = convert_ar_model(ar, mask_token_id=31)
+
+        converted_state = converted.state_dict()
+        assert set(converted_state) == set(reference)
+        for name, tensor in reference.items():
+            assert torch.equal(converted_state[name], tensor), (
+                f"{name} changed during conversion"
+            )
+
+    def test_the_converted_model_is_the_tiny_a2d_class(self):
+        from unturtle.models.conversion.a2d.tiny_a2d.loading import convert_ar_model
+        from unturtle.models.conversion.a2d.tiny_a2d.modeling_llama import (
+            TinyA2DLlamaLMHeadModel,
+        )
+
+        converted = convert_ar_model(_tiny_ar(), mask_token_id=31)
+
+        assert type(converted) is TinyA2DLlamaLMHeadModel
+        assert converted.config.model_type == "tiny-a2d-llama"
+        assert converted.config.mask_token_id == 31
+
+    def test_attention_became_bidirectional(self):
+        """The one *intentional* behavioural change, observed not assumed.
+
+        In the AR model a suffix edit cannot move a prefix position's logits;
+        in the converted model it must.  This is what separates "loaded the
+        weights" from "converted the model".
+        """
+        from unturtle.models.conversion.a2d.tiny_a2d.loading import convert_ar_model
+
+        ar = _tiny_ar().eval()
+        converted = convert_ar_model(_tiny_ar(), mask_token_id=31).eval()
+
+        ids = torch.randint(0, 31, (1, 8))
+        edited = ids.clone()
+        edited[0, -1] = (ids[0, -1] + 1) % 31
+
+        with torch.no_grad():
+            ar_moved = not torch.allclose(
+                ar(input_ids=ids).logits[0, 0], ar(input_ids=edited).logits[0, 0]
+            )
+            converted_moved = not torch.allclose(
+                converted(input_ids=ids).logits[0, 0],
+                converted(input_ids=edited).logits[0, 0],
+            )
+
+        assert not ar_moved, "the AR reference is not causal; fixture broken"
+        assert converted_moved, (
+            "a suffix edit did not reach a prefix position; the converted "
+            "model is still causal"
+        )
+
+    def test_hybrid_flag_is_carried_onto_the_config(self):
+        from unturtle.models.conversion.a2d.tiny_a2d.loading import convert_ar_model
+
+        converted = convert_ar_model(
+            _tiny_ar(), mask_token_id=31, hybrid_attention=True
+        )
+
+        assert converted.config.hybrid_attention is True
+
+    def test_the_checkpoint_dtype_survives_conversion(self):
+        """`torch.equal` compares values across dtypes, so the bit-for-bit
+        test above cannot see a bf16→fp32 widening.  Constructing the TinyA2D
+        model in the default dtype and letting `load_state_dict` cast would
+        silently double the memory of every converted checkpoint — an 8B bf16
+        model becomes 32GB of fp32."""
+        from unturtle.models.conversion.a2d.tiny_a2d.loading import convert_ar_model
+
+        ar = _tiny_ar().to(torch.bfloat16)
+
+        converted = convert_ar_model(ar, mask_token_id=31)
+
+        dtypes = {p.dtype for p in converted.parameters()}
+        assert dtypes == {torch.bfloat16}, (
+            f"conversion changed parameter dtypes: {dtypes}"
+        )
+
+
+class TestMaskTokenEstablishment:
+    def test_omitting_the_id_extends_the_vocabulary_by_one(self):
+        """No AR checkpoint carries a mask token; the default mints one.
+
+        The new row must not disturb any original row — the preservation
+        property extends to the resize.
+        """
+        from unturtle.models.conversion.a2d.tiny_a2d.loading import convert_ar_model
+
+        ar = _tiny_ar(vocab=32)
+        original_embed = ar.get_input_embeddings().weight.detach().clone()
+
+        converted = convert_ar_model(ar)
+
+        assert converted.config.vocab_size == 33
+        assert converted.config.mask_token_id == 32
+        grown = converted.get_input_embeddings().weight.detach()
+        assert torch.equal(grown[:32], original_embed), (
+            "extending the vocabulary disturbed the original embedding rows"
+        )
+
+    def test_the_minted_row_is_the_exact_mean_of_the_originals(self):
+        """The mint's numerics, pinned — not just the shapes around them.
+
+        transformers' `resize_token_embeddings(mean_resizing=True)` already
+        writes a *distributionally* similar row (mean plus sampled noise), so
+        a broken or deleted init here stays invisible to every shape and
+        preservation assertion.  Exact equality is what separates the recipe's
+        deterministic choice from upstream's stochastic one — on both the
+        input embedding and the (untied) output head, whose init is a separate
+        branch."""
+        from unturtle.models.conversion.a2d.tiny_a2d.loading import convert_ar_model
+
+        ar = _tiny_ar(vocab=32)
+        assert not ar.config.tie_word_embeddings, "fixture must exercise both inits"
+        embed_ref = ar.get_input_embeddings().weight.detach().clone()
+        head_ref = ar.get_output_embeddings().weight.detach().clone()
+
+        converted = convert_ar_model(ar)
+
+        embed = converted.get_input_embeddings().weight.detach()
+        head = converted.get_output_embeddings().weight.detach()
+        assert torch.equal(embed[32], embed_ref.mean(dim=0))
+        assert torch.equal(head[32], head_ref.mean(dim=0))
+
+    def test_a_tied_checkpoint_stays_tied_through_the_mint(self):
+        """The resize and the row writes must not silently untie the head.
+
+        On a tied model the output head IS the embedding tensor; the mint must
+        write the shared row once (through the embedding) and leave the tie
+        intact, or the converted model doubles its head memory and the two
+        copies drift apart under training."""
+        from unturtle.models.conversion.a2d.tiny_a2d.loading import convert_ar_model
+
+        ar = _tiny_ar(vocab=32, tie_word_embeddings=True)
+        embed_ref = ar.get_input_embeddings().weight.detach().clone()
+
+        converted = convert_ar_model(ar)
+
+        embed = converted.get_input_embeddings().weight
+        head = converted.get_output_embeddings().weight
+        assert head.data_ptr() == embed.data_ptr(), "conversion untied the head"
+        assert torch.equal(embed.detach()[32], embed_ref.mean(dim=0))
+        assert torch.equal(embed.detach()[:32], embed_ref)
+
+    def test_an_explicit_id_reuses_the_vocabulary(self):
+        from unturtle.models.conversion.a2d.tiny_a2d.loading import convert_ar_model
+
+        converted = convert_ar_model(_tiny_ar(vocab=32), mask_token_id=5)
+
+        assert converted.config.vocab_size == 32
+        assert converted.config.mask_token_id == 5
+
+    def test_an_out_of_range_id_is_rejected(self):
+        from unturtle.models.conversion.a2d.tiny_a2d.loading import convert_ar_model
+
+        with pytest.raises(ValueError, match="mask_token_id"):
+            convert_ar_model(_tiny_ar(vocab=32), mask_token_id=32)
+
+    def test_a_mislabeled_instance_is_rejected_at_convert(self):
+        """The DI entry has no `architectures` field to check, so the chimera
+        guard there is the instance's actual class.  A Llama head whose config
+        claims `qwen2` (the in-memory analogue of #107's spoofed checkpoint)
+        must be rejected, not class-stamped into a Qwen2 wrapper."""
+        from unturtle.models.conversion.a2d.tiny_a2d.loading import convert_ar_model
+
+        ar = _tiny_ar()
+        ar.config.model_type = "qwen2"
+
+        with pytest.raises(ValueError, match="Qwen2ForCausalLM"):
+            convert_ar_model(ar, mask_token_id=31)
+
+
+class TestCheckpointResolution:
+    def test_a_saved_checkpoint_loads_through_the_concrete_head(self, tmp_path):
+        from unturtle.models.conversion.a2d.tiny_a2d.loading import (
+            load_tiny_a2d_from_ar,
+        )
+
+        ar = _tiny_ar()
+        ar.save_pretrained(tmp_path / "ar")
+        reference = {k: v.clone() for k, v in ar.state_dict().items()}
+
+        converted = load_tiny_a2d_from_ar(str(tmp_path / "ar"), mask_token_id=31)
+
+        state = converted.state_dict()
+        for name, tensor in reference.items():
+            assert torch.equal(state[name], tensor)
+
+    def test_a_spoofed_model_type_is_rejected_via_architectures(self, tmp_path):
+        """`model_type` alone proved nothing in #107; `architectures` is the
+        contract that names the concrete head.  A checkpoint whose config
+        claims `llama` but whose architectures field names a different head
+        must be rejected BEFORE any weights load."""
+        import json
+
+        from unturtle.models.conversion.a2d.tiny_a2d.loading import (
+            load_tiny_a2d_from_ar,
+        )
+
+        ar = _tiny_ar()
+        ar.save_pretrained(tmp_path / "spoof")
+        config_path = tmp_path / "spoof" / "config.json"
+        payload = json.loads(config_path.read_text())
+        payload["architectures"] = ["SomethingElseForCausalLM"]
+        config_path.write_text(json.dumps(payload))
+
+        with pytest.raises(ValueError, match="architectures"):
+            load_tiny_a2d_from_ar(str(tmp_path / "spoof"), mask_token_id=31)
+
+    def test_a_checkpoint_declaring_no_architectures_gets_its_own_error(self, tmp_path):
+        """Still rejected — an absent field proves nothing about the head —
+        but the diagnosis differs: 'declares no architectures' points at the
+        checkpoint's config, not at a spoofed value.  Hand-written configs
+        omit the field often enough for the distinction to save debugging
+        time."""
+        import json
+
+        from unturtle.models.conversion.a2d.tiny_a2d.loading import (
+            load_tiny_a2d_from_ar,
+        )
+
+        ar = _tiny_ar()
+        ar.save_pretrained(tmp_path / "bare")
+        config_path = tmp_path / "bare" / "config.json"
+        payload = json.loads(config_path.read_text())
+        payload.pop("architectures", None)
+        config_path.write_text(json.dumps(payload))
+
+        with pytest.raises(ValueError, match="declares no architectures"):
+            load_tiny_a2d_from_ar(str(tmp_path / "bare"), mask_token_id=31)
+
+    def test_an_unmapped_model_type_is_rejected_not_auto_loaded(self, tmp_path):
+        """No Tiny-A2D recipe exists for gpt2; falling through to a generic
+        Auto* loader would produce exactly the #107 chimera."""
+        import json
+
+        from unturtle.models.conversion.a2d.tiny_a2d.loading import (
+            load_tiny_a2d_from_ar,
+        )
+
+        ar = _tiny_ar()
+        ar.save_pretrained(tmp_path / "odd")
+        config_path = tmp_path / "odd" / "config.json"
+        payload = json.loads(config_path.read_text())
+        payload["model_type"] = "gpt2"
+        config_path.write_text(json.dumps(payload))
+
+        with pytest.raises(ValueError, match="model_type"):
+            load_tiny_a2d_from_ar(str(tmp_path / "odd"), mask_token_id=31)
+
+    def test_resolution_goes_through_the_unturtle_seam(self, tmp_path, monkeypatch):
+        """The #107 pattern: tests patch `ar_head_classes` on the unturtle
+        module, never the transformers module (unsloth replaces
+        sys.modules['transformers'], making such patches silently inert)."""
+        from unturtle.models.conversion.a2d.tiny_a2d import loading
+
+        ar = _tiny_ar()
+        ar.save_pretrained(tmp_path / "seam")
+        seen = []
+        real = loading.ar_head_classes
+
+        def spy():
+            mapping = real()
+            seen.append(sorted(mapping))
+            return mapping
+
+        monkeypatch.setattr(loading, "ar_head_classes", spy)
+
+        loading.load_tiny_a2d_from_ar(str(tmp_path / "seam"), mask_token_id=31)
+
+        assert seen, "resolution bypassed the seam"
+        assert "llama" in seen[0]
+
+    def test_the_seam_is_consulted_live_not_early_bound(self, tmp_path, monkeypatch):
+        """The spy above proves the seam is *called*; this proves *the loader's
+        own resolution* honors what it returns.  An early-bound alias
+        (module-level `_x = ar_head_classes` at import time) would keep the spy
+        green while making every monkeypatch of the seam silently inert — the
+        exact unsloth failure shape (#107) this seam exists to avoid.
+
+        The patched seam claims llama needs the Qwen2 head, so a live loader
+        must reject this llama checkpoint at the pre-weight `architectures`
+        check.  An empty-mapping patch would not discriminate: the delegated
+        `convert_ar_model` raises the same "model_type" error post-hoc, after
+        the weights already loaded through the stale mapping."""
+        from unturtle.models.conversion.a2d.tiny_a2d import loading
+
+        ar = _tiny_ar()
+        ar.save_pretrained(tmp_path / "live")
+        swapped = dict(loading.ar_head_classes())
+        swapped["llama"] = swapped["qwen2"]
+        monkeypatch.setattr(loading, "ar_head_classes", lambda: swapped)
+
+        with pytest.raises(ValueError, match="architectures"):
+            loading.load_tiny_a2d_from_ar(str(tmp_path / "live"), mask_token_id=31)
+
+    def test_convert_resolution_is_also_live(self, monkeypatch):
+        """Same property for the DI entry, which resolves independently."""
+        from unturtle.models.conversion.a2d.tiny_a2d import loading
+
+        monkeypatch.setattr(loading, "ar_head_classes", dict)
+
+        with pytest.raises(ValueError, match="model_type"):
+            loading.convert_ar_model(_tiny_ar(), mask_token_id=31)
