@@ -141,9 +141,7 @@ class TestTheObjective:
         losses = flowlm_loss(target + 1.0, target, auxiliary_losses=aux)
 
         assert losses["rounding_ce"] is aux["rounding_ce"]
-        assert torch.allclose(
-            losses["total"], losses["x0_mse"] + losses["rounding_ce"]
-        )
+        assert torch.allclose(losses["total"], losses["x0_mse"] + losses["rounding_ce"])
 
     def test_the_reference_regularizer_carries_the_inverse_square_time_weight(self):
         """Paper §3.3: `reg * ||pred_diffu - pred_flow||^2 / t^2` — verified
@@ -176,9 +174,20 @@ class TestTheObjective:
         target = torch.zeros(1, 1, 1)
 
         with pytest.raises(ValueError, match="timesteps"):
-            flowlm_loss(
-                target, target, reference_pred=target, reg_rate=1.0
-            )
+            flowlm_loss(target, target, reference_pred=target, reg_rate=1.0)
+
+    def test_an_auxiliary_loss_named_total_is_rejected(self):
+        """`losses["total"] = total` would silently overwrite the named
+        entry after summing it — the caller logging per-term losses loses
+        the term while the sum quietly includes it.  The dict's whole point
+        is that the trainer can log terms it does not understand, so a
+        swallowed name defeats the design."""
+        from unturtle.models.latent import flowlm_loss
+
+        target = torch.zeros(1, 1, 1)
+
+        with pytest.raises(ValueError, match="total"):
+            flowlm_loss(target, target, auxiliary_losses={"total": torch.tensor(1.0)})
 
 
 class TestTheAverageVelocitySolver:
@@ -208,6 +217,36 @@ class TestTheAverageVelocitySolver:
             )
             assert torch.allclose(final, anchor, atol=1e-5), (
                 f"{steps}-step sampling did not land on the prediction"
+            )
+
+    def test_a_half_precision_model_can_sample(self):
+        """The initial noise must be drawn in the model's dtype: `randn`
+        defaults to fp32 and `.to(device)` does not cast, so a bf16/fp16
+        model (the unsloth/LoRA default) hit a dtype mismatch in the first
+        linear."""
+        from unturtle.models.latent import FlowLMModel
+
+        model = FlowLMModel(_config()).half().eval()
+
+        ids = model.generate(
+            batch_size=2, num_steps=2, generator=torch.Generator().manual_seed(3)
+        )
+
+        assert ids.shape == (2, LENGTH)
+
+    def test_a_prompt_is_rejected_rather_than_silently_ignored(self):
+        """The prototype is unconditional (documented); a caller passing
+        inputs must get an error, not a batch-size-1 unconditional sample —
+        the registry's no-silent-fallback posture."""
+        from unturtle.models.latent import FlowLMModel
+
+        model = FlowLMModel(_config()).eval()
+
+        with pytest.raises(ValueError, match="unconditional"):
+            model.generate(
+                torch.randint(0, VOCAB, (2, LENGTH)),
+                algorithm="flowlm",
+                num_steps=1,
             )
 
     def test_one_step_generation_is_the_prediction_itself(self):
@@ -268,9 +307,7 @@ class TestTheGenerationFamilyRegistration:
 
         model = FlowLMModel(_config())
 
-        assert (
-            resolve_algorithm("auto", model, bd3lm_requested=False) == "flowlm"
-        )
+        assert resolve_algorithm("auto", model, bd3lm_requested=False) == "flowlm"
 
     def test_generation_dispatches_through_the_registry(self):
         from unturtle.models.latent import FlowLMModel
@@ -348,11 +385,16 @@ def test_the_prototype_trains_and_few_step_samples_recover_the_data():
         optimizer.step()
 
     model.eval()
-    for steps in (4, 2, 1):
+    # Thresholds from a 20-seed sweep after training: 4- and 2-step sampling
+    # hit 64/64 on EVERY seed (assert equality, not a fake margin); 1-step
+    # ranges 56-64, so its bound sits below the measured minimum instead of
+    # inside the noise band.
+    for steps, minimum in ((4, 64), (2, 64), (1, 55)):
         sampled = model.generate(
             batch_size=64, num_steps=steps, generator=torch.Generator().manual_seed(7)
         )
         hits = int((sampled == pattern).all(dim=1).sum())
-        assert hits >= 58, (
-            f"{steps}-step sampling recovered only {hits}/64 rows exactly"
+        assert hits >= minimum, (
+            f"{steps}-step sampling recovered only {hits}/64 rows exactly "
+            f"(measured floor {minimum})"
         )

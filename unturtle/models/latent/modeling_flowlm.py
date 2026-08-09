@@ -131,8 +131,13 @@ class FlowLMDenoiser(PreTrainedModel):
         **_: Any,
     ) -> FlowLMDenoiserOutput:
         positions = torch.arange(latents.shape[1], device=latents.device)
+        # Sinusoidal features are computed in fp32 for precision, then cast to
+        # the module dtype BEFORE the MLP — a half-precision model would
+        # otherwise reject the fp32 features at its first linear.
         time_embedding = self.time_mlp(
-            _sinusoidal_time_embedding(timesteps, self.config.hidden_size)
+            _sinusoidal_time_embedding(timesteps, self.config.hidden_size).to(
+                self.dtype
+            )
         ).to(latents.dtype)
         hidden = (
             latents + self.position_embedding(positions) + time_embedding.unsqueeze(1)
@@ -186,9 +191,15 @@ class FlowLMModel(PreTrainedModel):
         denoise = denoise_fn if denoise_fn is not None else self.denoiser
         device = next(self.parameters()).device
 
+        # Allocation follows the generator's device (torch rejects a mismatch)
+        # and the noise is drawn in the model's dtype: `randn` defaults to
+        # fp32 and `.to(device)` alone would not cast, so a bf16/fp16 model
+        # would hit a dtype mismatch in the first linear.
         latents = torch.randn(
-            (batch_size, length, self.config.hidden_size), generator=generator
-        ).to(device)
+            (batch_size, length, self.config.hidden_size),
+            generator=generator,
+            device=device if generator is None else generator.device,
+        ).to(device=device, dtype=next(self.parameters()).dtype)
         dt = 1.0 / steps
         for k in range(steps, 0, -1):
             t = k / steps
@@ -221,6 +232,7 @@ class FlowLMModel(PreTrainedModel):
 
     def _generate_flowlm(
         self,
+        inputs: Any = None,
         *,
         batch_size: int = 1,
         num_steps: int | None = None,
@@ -228,6 +240,12 @@ class FlowLMModel(PreTrainedModel):
         generator: torch.Generator | None = None,
         **_: Any,
     ) -> torch.Tensor:
+        if inputs is not None:
+            raise ValueError(
+                "the FlowLM prototype is unconditional and cannot consume a "
+                "prompt; silently ignoring it would sample from the wrong "
+                "distribution. Pass batch_size/seq_len instead."
+            )
         latents = self.sample_latents(
             batch_size=batch_size,
             num_steps=num_steps,

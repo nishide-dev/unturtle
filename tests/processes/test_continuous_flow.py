@@ -103,9 +103,7 @@ class TestThePathMatchesAlgorithmOne:
 
         batch = _batch()
 
-        out = ContinuousFlowProcess()(
-            batch, generator=torch.Generator().manual_seed(5)
-        )
+        out = ContinuousFlowProcess()(batch, generator=torch.Generator().manual_seed(5))
 
         assert torch.equal(out.model_inputs["attention_mask"], batch["attention_mask"])
 
@@ -119,7 +117,9 @@ class TestThePathMatchesAlgorithmOne:
         first = process(batch, generator=torch.Generator().manual_seed(6))
         second = process(batch, generator=torch.Generator().manual_seed(6))
 
-        assert torch.equal(first.model_inputs["latents"], second.model_inputs["latents"])
+        assert torch.equal(
+            first.model_inputs["latents"], second.model_inputs["latents"]
+        )
         assert torch.equal(
             first.objective_inputs["timesteps"], second.objective_inputs["timesteps"]
         )

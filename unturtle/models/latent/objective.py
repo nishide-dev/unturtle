@@ -53,7 +53,11 @@ def flowlm_loss(
 
     if auxiliary_losses:
         for name, value in auxiliary_losses.items():
-            if name in losses:
+            # "total" is checked explicitly: it is not in `losses` yet at
+            # this point, and letting it through would sum the term but then
+            # silently overwrite its named entry — a caller logging per-term
+            # losses loses the term while the sum quietly includes it.
+            if name in losses or name in ("total", "reference_reg"):
                 raise ValueError(f"auxiliary loss name collides: {name!r}")
             losses[name] = value
 

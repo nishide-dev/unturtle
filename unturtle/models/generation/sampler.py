@@ -278,7 +278,9 @@ def _flowlm_unsupported(model: Any) -> str:
 
 
 def _run_flowlm(model: Any, request: GenerationRequest) -> Any:
-    return model._generate_flowlm(**request.kwargs)
+    # inputs is forwarded so the (unconditional) prototype can REJECT a
+    # prompt rather than silently ignoring it.
+    return model._generate_flowlm(request.inputs, **request.kwargs)
 
 
 def _run_block_ar(model: Any, request: GenerationRequest) -> Any:
