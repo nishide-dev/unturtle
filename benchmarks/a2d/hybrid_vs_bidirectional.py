@@ -159,7 +159,11 @@ def build_eval_pack(rows, tokenizer, t_grid, mask_seed, device):
         labels.append(row["labels"] + [-100] * pad)
     input_ids = torch.tensor(input_ids)
     labels = torch.tensor(labels)
-    attention_mask = (labels != -100).long() | (input_ids != pad_id).long()
+    # Length-derived, not id-derived: comparing against pad_id would silently
+    # drop a real prompt token that happens to equal it (pad == eos is common),
+    # arm-symmetric but wrong in absolute terms.
+    lengths = torch.tensor([len(row["input_ids"]) for row in rows])
+    attention_mask = (torch.arange(max_len).unsqueeze(0) < lengths.unsqueeze(1)).long()
     supervised = labels != -100
 
     generator = torch.Generator().manual_seed(mask_seed)

@@ -14,15 +14,19 @@ checkpoint tensor bit-for-bit; the *choice* is what happens to attention:
 ## When to choose hybrid
 
 **Default to hybrid for prompt/response (SFT-style) adaptation from a
-pretrained AR checkpoint.** The matched benchmark
+pretrained AR checkpoint** — on the evidence measured so far: one backbone
+(Qwen3-0.6B), one dataset (GSM8K), and a masked-CE NLL proxy rather than
+downstream task accuracy. Within that scope the matched benchmark
 (`benchmarks/a2d/hybrid_vs_bidirectional.py` — frozen reference run in its
-docstring; Qwen3-0.6B on GSM8K, same init / data / noise / compute) shows
-hybrid ahead at every
-checkpoint, every masking rate, on both seeds — final NLL 2.11 vs 2.53 —
-at identical training cost (~same steps/s, same peak memory). The step-0 gap
-(7.8 vs 14.8 before any training) is the mechanism: the causal prompt keeps
-the AR pretraining usable instead of asking training to relearn it under a
-topology the weights never saw.
+docstring; same init / data / noise / compute) is unambiguous: hybrid ahead
+at every checkpoint, every masking rate, on both seeds — final NLL 2.11 vs
+2.53 — at identical training cost (~same steps/s, same peak memory). The
+step-0 gap (7.8 vs 14.8 before any gradient step) measures *topology fit*,
+not learned quality: the causal prompt keeps the AR pretraining usable
+instead of asking training to relearn it under a topology the weights never
+saw. Note the two arms score under their own inference topologies (the
+models a user would actually run), so the hybrid arm conditions on strictly
+more structure by design.
 
 Choose **uniform bidirectional** when:
 
