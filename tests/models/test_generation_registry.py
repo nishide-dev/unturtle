@@ -50,6 +50,7 @@ class TestRegistryContents:
             "block_ar",
             "flowlm",
             "ladiff",
+            "dfm",
         }
 
     def test_families_are_distinguished(self):
@@ -349,6 +350,7 @@ class TestBackwardCompatibleTables:
             "block_ar",
             "flowlm",
             "ladiff",
+            "dfm",
         }
         for name, flags in ALL_ALGORITHMS.items():
             assert flags == algorithm_to_flags(name)
