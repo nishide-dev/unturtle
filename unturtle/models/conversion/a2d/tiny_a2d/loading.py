@@ -145,7 +145,10 @@ def convert_ar_model(
     )
     config.mask_token_id = mask_token_id
 
-    converted = model_cls(config)
+    # model_cls(config) constructs in torch's default dtype, and
+    # load_state_dict casts *source to destination* — without the explicit
+    # cast a bf16 checkpoint silently widens to fp32, doubling its memory.
+    converted = model_cls(config).to(next(ar_model.parameters()).dtype)
     # strict=True: the Tiny-A2D module tree mirrors upstream exactly, so any
     # missing or unexpected key is a structural drift worth failing on.
     converted.load_state_dict(ar_model.state_dict(), strict=True)
@@ -181,6 +184,13 @@ def load_tiny_a2d_from_ar(
     upstream_cls = entry[0]
 
     declared = getattr(checkpoint_config, "architectures", None) or []
+    if not declared:
+        raise ValueError(
+            "checkpoint config declares no architectures, so the concrete "
+            "head cannot be proven (#107) and the checkpoint is rejected; "
+            f"add {upstream_cls.__name__!r} to the config's architectures "
+            "if this head is what the weights really are"
+        )
     if upstream_cls.__name__ not in declared:
         raise ValueError(
             f"checkpoint architectures {declared!r} do not include "

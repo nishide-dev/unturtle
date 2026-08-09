@@ -23,7 +23,7 @@ import pytest
 import torch
 
 
-def _tiny_ar(vocab=32, seed=0):
+def _tiny_ar(vocab=32, seed=0, **config_overrides):
     from transformers import LlamaConfig, LlamaForCausalLM
 
     torch.manual_seed(seed)
@@ -36,6 +36,7 @@ def _tiny_ar(vocab=32, seed=0):
             num_attention_heads=2,
             num_key_value_heads=2,
             max_position_embeddings=64,
+            **config_overrides,
         )
     )
 
@@ -115,6 +116,23 @@ class TestConvertPreservesTheCheckpoint:
 
         assert converted.config.hybrid_attention is True
 
+    def test_the_checkpoint_dtype_survives_conversion(self):
+        """`torch.equal` compares values across dtypes, so the bit-for-bit
+        test above cannot see a bf16→fp32 widening.  Constructing the TinyA2D
+        model in the default dtype and letting `load_state_dict` cast would
+        silently double the memory of every converted checkpoint — an 8B bf16
+        model becomes 32GB of fp32."""
+        from unturtle.models.conversion.a2d.tiny_a2d.loading import convert_ar_model
+
+        ar = _tiny_ar().to(torch.bfloat16)
+
+        converted = convert_ar_model(ar, mask_token_id=31)
+
+        dtypes = {p.dtype for p in converted.parameters()}
+        assert dtypes == {torch.bfloat16}, (
+            f"conversion changed parameter dtypes: {dtypes}"
+        )
+
 
 class TestMaskTokenEstablishment:
     def test_omitting_the_id_extends_the_vocabulary_by_one(self):
@@ -136,6 +154,50 @@ class TestMaskTokenEstablishment:
         assert torch.equal(grown[:32], original_embed), (
             "extending the vocabulary disturbed the original embedding rows"
         )
+
+    def test_the_minted_row_is_the_exact_mean_of_the_originals(self):
+        """The mint's numerics, pinned — not just the shapes around them.
+
+        transformers' `resize_token_embeddings(mean_resizing=True)` already
+        writes a *distributionally* similar row (mean plus sampled noise), so
+        a broken or deleted init here stays invisible to every shape and
+        preservation assertion.  Exact equality is what separates the recipe's
+        deterministic choice from upstream's stochastic one — on both the
+        input embedding and the (untied) output head, whose init is a separate
+        branch."""
+        from unturtle.models.conversion.a2d.tiny_a2d.loading import convert_ar_model
+
+        ar = _tiny_ar(vocab=32)
+        assert not ar.config.tie_word_embeddings, "fixture must exercise both inits"
+        embed_ref = ar.get_input_embeddings().weight.detach().clone()
+        head_ref = ar.get_output_embeddings().weight.detach().clone()
+
+        converted = convert_ar_model(ar)
+
+        embed = converted.get_input_embeddings().weight.detach()
+        head = converted.get_output_embeddings().weight.detach()
+        assert torch.equal(embed[32], embed_ref.mean(dim=0))
+        assert torch.equal(head[32], head_ref.mean(dim=0))
+
+    def test_a_tied_checkpoint_stays_tied_through_the_mint(self):
+        """The resize and the row writes must not silently untie the head.
+
+        On a tied model the output head IS the embedding tensor; the mint must
+        write the shared row once (through the embedding) and leave the tie
+        intact, or the converted model doubles its head memory and the two
+        copies drift apart under training."""
+        from unturtle.models.conversion.a2d.tiny_a2d.loading import convert_ar_model
+
+        ar = _tiny_ar(vocab=32, tie_word_embeddings=True)
+        embed_ref = ar.get_input_embeddings().weight.detach().clone()
+
+        converted = convert_ar_model(ar)
+
+        embed = converted.get_input_embeddings().weight
+        head = converted.get_output_embeddings().weight
+        assert head.data_ptr() == embed.data_ptr(), "conversion untied the head"
+        assert torch.equal(embed.detach()[32], embed_ref.mean(dim=0))
+        assert torch.equal(embed.detach()[:32], embed_ref)
 
     def test_an_explicit_id_reuses_the_vocabulary(self):
         from unturtle.models.conversion.a2d.tiny_a2d.loading import convert_ar_model
@@ -201,6 +263,28 @@ class TestCheckpointResolution:
 
         with pytest.raises(ValueError, match="architectures"):
             load_tiny_a2d_from_ar(str(tmp_path / "spoof"), mask_token_id=31)
+
+    def test_a_checkpoint_declaring_no_architectures_gets_its_own_error(self, tmp_path):
+        """Still rejected — an absent field proves nothing about the head —
+        but the diagnosis differs: 'declares no architectures' points at the
+        checkpoint's config, not at a spoofed value.  Hand-written configs
+        omit the field often enough for the distinction to save debugging
+        time."""
+        import json
+
+        from unturtle.models.conversion.a2d.tiny_a2d.loading import (
+            load_tiny_a2d_from_ar,
+        )
+
+        ar = _tiny_ar()
+        ar.save_pretrained(tmp_path / "bare")
+        config_path = tmp_path / "bare" / "config.json"
+        payload = json.loads(config_path.read_text())
+        payload.pop("architectures", None)
+        config_path.write_text(json.dumps(payload))
+
+        with pytest.raises(ValueError, match="declares no architectures"):
+            load_tiny_a2d_from_ar(str(tmp_path / "bare"), mask_token_id=31)
 
     def test_an_unmapped_model_type_is_rejected_not_auto_loaded(self, tmp_path):
         """No Tiny-A2D recipe exists for gpt2; falling through to a generic
