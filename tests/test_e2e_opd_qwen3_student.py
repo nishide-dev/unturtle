@@ -118,6 +118,38 @@ class TestQwen3ConversionMatchesTheReferenceRecipe:
         assert student_moved, "the converted qwen3 student is still causal"
 
 
+@pytest.mark.slow
+@pytest.mark.gpu
+def test_the_real_qwen3_checkpoint_converts_on_the_reference_mask_id():
+    """The exact reference pairing: Qwen/Qwen3-0.6B with mask id 151669 —
+    the unused padded-vocab slot `divelab/Qwen3-0.6B-a2d-init` maps
+    `<|MASK|>` to.  Vocabulary must stay 151936 (GPU-aligned; no resize) and
+    a masked forward must run under the converted topology."""
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA required")
+    from unturtle.models.conversion.a2d.tiny_a2d import load_tiny_a2d_from_ar
+    from unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen3 import (
+        TinyA2DQwen3LMHeadModel,
+    )
+
+    student = load_tiny_a2d_from_ar(
+        "Qwen/Qwen3-0.6B", mask_token_id=151669, torch_dtype=torch.bfloat16
+    ).to("cuda")
+
+    assert type(student) is TinyA2DQwen3LMHeadModel
+    assert student.config.vocab_size == 151936
+    assert student.config.mask_token_id == 151669
+    assert next(student.parameters()).dtype == torch.bfloat16
+
+    ids = torch.randint(0, 151000, (1, 32), device="cuda")
+    masked = ids.clone()
+    masked[0, 16:] = 151669
+    with torch.no_grad():
+        logits = student(input_ids=masked).logits
+    assert logits.shape == (1, 32, 151936)
+    assert bool(torch.isfinite(logits).all())
+
+
 def _monotone_block_decode(model, prompts):
     """Copied from tests/test_e2e_opd_cycle.py (#111): greedy unmask, one
     position per step, block-sequential — monotone by construction, so
