@@ -311,6 +311,12 @@ class TestTheDistillationObjective:
                 assert set(losses) == {"meanflow_mse", "pure_fm_mse", "total"}, (
                     f"keys drifted at fraction={fraction} seed={seed}: {sorted(losses)}"
                 )
+                for name, value in losses.items():
+                    assert torch.is_tensor(value) and bool(torch.isfinite(value)), (
+                        f"{name} is not a finite tensor at fraction={fraction} "
+                        f"seed={seed}: {value!r} — zero-filled means a TENSOR "
+                        "zero, or float(v) in a logger crashes"
+                    )
 
     def test_r_never_exceeds_t(self):
         """eq. 13 integrates from r to t with r <= t; a draw with r > t
@@ -436,9 +442,9 @@ def test_distillation_learns_the_average_velocity_end_to_end():
     **What is asserted, and what deliberately is not.**  The mechanism must
     work: the student's u(z, 1, 0) error against the rolled-out teacher
     displacement falls well below half its untrained value (measured
-    1.30 -> 0.50 at these settings, monotone across checkpoints), and
+    1.30 -> 0.48 at these settings, monotone across checkpoints), and
     1-step distilled guidance stays in its measured stability band
-    (30-32/64 intact rows at lr 3e-4; a plain floor of 24 sits below it).
+    (30-34/64 intact rows at lr 3e-4; a plain floor of 24 sits below it).
     Teacher PARITY is deliberately NOT asserted: at this scale the teacher's
     own 1-step x0 jump already reaches 44/64 (the trajectory is short and
     nearly straight), so distillation's value-add is structurally small,
