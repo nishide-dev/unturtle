@@ -104,6 +104,9 @@ class DiscreteFlowGenerationMixin:
         generator: torch.Generator | None = None,
         **_: Any,
     ) -> torch.Tensor:
+        # Generator-device contract, inherited from the solver: its per-step
+        # draws happen on the state's device, so a generator must live on the
+        # MODEL's device (a CPU generator on a CUDA model raises in torch).
         if inputs is not None:
             raise ValueError(
                 "DFM generation is unconditional in this slice; a prompt "
