@@ -89,6 +89,16 @@ class TestTheCodecBoundary:
         rounded = codec.decode(codec.encode(ids)).argmax(dim=-1)
 
         assert torch.equal(rounded, ids), "rounding does not invert encoding"
+        # The argmax alone cannot see an off-target CE: with a weight-tied
+        # head, Cauchy-Schwarz makes cyclic dominance (every E_i . E_{i+1}
+        # beating E_i . E_i) unattainable, so argmax stays identity even
+        # under a shifted-target loss.  The convergence VALUE can see it —
+        # the identity target is achievable (CE -> ~0), a shifted target has
+        # a strictly positive floor.
+        assert float(loss) < 0.2, (
+            f"rounding CE converged to {float(loss):.3f}; the target is not "
+            "the identity this loss exists to teach"
+        )
 
 
 class TestTheDenoiser:
