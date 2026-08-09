@@ -20,6 +20,12 @@ generation algorithm registers in ``unturtle.models.generation.sampler``
 """
 
 from .codec import Codec, EmbeddingRoundingCodec
+from .meanflow import (
+    MeanFlowDenoiser,
+    MeanFlowOutput,
+    meanflow_distillation_loss,
+    sample_meanflow_latents,
+)
 from .modeling_flowlm import (
     FlowLMConfig,
     FlowLMDenoiser,
@@ -50,4 +56,8 @@ __all__ = [
     "LatentConditionedMDLM",
     "PerceiverLiteEncoder",
     "latent_autoencoder_loss",
+    "MeanFlowDenoiser",
+    "MeanFlowOutput",
+    "meanflow_distillation_loss",
+    "sample_meanflow_latents",
 ]
