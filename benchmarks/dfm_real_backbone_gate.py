@@ -26,9 +26,11 @@ tiny-control's two directional results survive on a real backbone
 
 Protocol mirrors the tiny control (`tests/test_e2e_fs_dfm_shortcut.py`):
 BOTH arms train the `StepAwareWrapper`-wrapped converted model from the
-same init — arm A keeps ``h`` pinned in both phases (constant conditioning
-carries no step information: ordinary DFM), arm B switches to the shortcut
-objective (RK-4 teacher over EMA weights, eq. 4.5 blend) in phase 2.
+same init (`build_gate_model` re-seeds the global RNG so the fresh
+``fuse`` head matches across arms) — arm A keeps ``h`` pinned in both
+phases (constant conditioning carries no step information: ordinary DFM),
+arm B switches to the shortcut objective (RK-4 teacher over EMA weights,
+eq. 4.5 blend) in phase 2.
 Step-matched on purpose; the shortcut branch's RK-4 teacher makes it
 ~1.64x FLOPs per step (#106), so a win here is per-step, and the
 FLOP-matched question belongs to the full-scale reproduction (step 3).
@@ -51,6 +53,10 @@ Frozen verdict (2026-08-10, RTX 6000 Ada, 4 runs; raw JSON archived under
 dev/local/): **the directional gate is NOT decidable at this budget, and the
 run measured why.**
 
+- (Entropy figures are CORPUS-pooled over the batch's tokens — ceiling
+  ln(8192) = 9.01 nats here, not ln(vocab) — and the distinct fraction is
+  per-row; neither sees inter-sample mode collapse, which the unique-rows
+  guard below now covers for future runs.)
 - Judge NLL alone is gamed by degeneracy — the paper's own GenPPL caveat,
   now measured here: the best NLL points are repetition (shortcut 1-step
   NLL 3.02 at distinct 0.22 / entropy 2.07; ordinary 32-step NLL 3.08 at
@@ -61,6 +67,11 @@ run measured why.**
 - Seed instability confirms it: seed 0 (1500/600) showed ordinary
   7.52->3.08 over NFE and a shortcut 1-step "win"; seed 1 inverted both.
   Every low-NLL point the sweeps produced was a low-entropy point.
+- Confound note (review-found, recorded rather than rerun since it cannot
+  rescue an undecidable verdict): the frozen runs predate the per-arm
+  global-RNG pin, so the two arms' fresh ``fuse`` heads differed at init —
+  the A-vs-B rows above mix the objective effect with that init difference.
+  The per-arm facts (degeneracy, NFE instability) are unaffected.
 - Teacher-quality dependence: with an undertrained base (600/300) the
   shortcut arm degraded at every NFE; longer pretraining (1500/600) moved
   it — the distillation is gated by base quality, as in the tiny control.
@@ -84,7 +95,7 @@ import argparse
 import copy
 import json
 import time
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import torch
@@ -164,6 +175,13 @@ def assert_bf16(module, label):
 
 
 def build_gate_model(args):
+    # Pin the global RNG here: `StepAwareWrapper.fuse` (and HF init_weights)
+    # draw from it at construction, and anything that ran since the last
+    # seeding (peft init, the other arm's construction) would otherwise hand
+    # the two arms DIFFERENT conditioning-head inits — the one parameter the
+    # A/B comparison must hold fixed.  (The frozen runs predate this pin;
+    # see the docstring's confound note.)
+    torch.manual_seed(args.seed)
     converted = load_tiny_a2d_from_ar(
         args.model, mask_token_id=MASK_ID, torch_dtype=torch.bfloat16
     )
@@ -282,7 +300,10 @@ def quality_curve(model, wrapper, judge, args, *, label):
         elapsed = time.perf_counter() - start
         # Degeneracy guards (the DiLaDiff paper's own GenPPL caveat):
         # repetitive text scores LOW judge NLL, so the NLL is only readable
-        # next to a diversity measure.
+        # next to diversity measures.  Three, because each is blind alone:
+        # per-row distinct fraction (intra-sample repetition), CORPUS-pooled
+        # unigram entropy over the batch (skew), and unique-rows fraction
+        # (inter-sample mode collapse, which the first two cannot see).
         distinct = (
             float(
                 torch.tensor(
@@ -294,10 +315,12 @@ def quality_curve(model, wrapper, judge, args, *, label):
         counts = torch.bincount(samples.reshape(-1)).float()
         frequencies = counts[counts > 0] / counts.sum()
         entropy = float(-(frequencies * frequencies.log()).sum())
+        unique_rows = len({tuple(row.tolist()) for row in samples}) / samples.shape[0]
         curve[steps] = {
             "judge_nll": judge_nll(judge, samples),
             "distinct_fraction": distinct,
-            "unigram_entropy": entropy,
+            "pooled_unigram_entropy": entropy,
+            "unique_rows_fraction": unique_rows,
             "sample_seconds": elapsed,
         }
         print(
@@ -384,10 +407,6 @@ def main() -> None:
         device=args.device,
     )
     curve_a = quality_curve(model_a, wrapper_a, judge, args, label="ordinary")
-    state_a = {
-        name: parameter.detach().clone()
-        for name, parameter in wrapper_a.named_parameters()
-    }
     del model_a, wrapper_a
     torch.cuda.empty_cache()
 
@@ -446,7 +465,6 @@ def main() -> None:
             f"{steps:5d}  {curve_a[steps]['judge_nll']:8.3f}  "
             f"{curve_b[steps]['judge_nll']:8.3f}"
         )
-    del state_a
 
 
 if __name__ == "__main__":
