@@ -283,6 +283,29 @@ def _run_flowlm(model: Any, request: GenerationRequest) -> Any:
     return model._generate_flowlm(request.inputs, **request.kwargs)
 
 
+def _supports_dfm(model: Any) -> bool:
+    """True for models that opted into discrete flow-matching sampling (#65).
+
+    Opt-in on purpose: any masked model could run the jump process
+    mechanically, but DFM quality is only tiny-control-validated, and the
+    registry must not present a research path as a supported capability.
+    """
+    return getattr(model, "supports_dfm_generation", False) is True
+
+
+def _dfm_unsupported(model: Any) -> str:
+    return (
+        f"model {type(model).__name__} does not support 'dfm' (discrete "
+        "flow-matching jump-process sampling; requires "
+        "DiscreteFlowGenerationMixin). Masked-diffusion models should use "
+        "'mdlm' / 'block_decode' / 'bd3lm' instead."
+    )
+
+
+def _run_dfm(model: Any, request: GenerationRequest) -> Any:
+    return model._generate_dfm(request.inputs, **request.kwargs)
+
+
 def _supports_ladiff(model: Any) -> bool:
     """True for the LaDiff latent-guided prototype (#117); attribute-based
     (this module never imports ``unturtle.models.latent``)."""
@@ -388,6 +411,17 @@ _ALGORITHMS: list[GenerationAlgorithm] = [
         auto_priority=60,
         unsupported_message=_ladiff_unsupported,
         runner=_run_ladiff,
+    ),
+    GenerationAlgorithm(
+        name="dfm",
+        family="discrete_flow",
+        supports=_supports_dfm,
+        # The family the registry docstring reserved from day one; no masked
+        # booleans — the jump process is its own loop (#65).
+        flags={},
+        auto_priority=70,
+        unsupported_message=_dfm_unsupported,
+        runner=_run_dfm,
     ),
 ]
 

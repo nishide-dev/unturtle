@@ -88,6 +88,7 @@ def test_known_algorithms_present() -> None:
     assert set(ALL_ALGORITHMS) == set(DISCRETE_ALGORITHMS) | set(CANVAS_ALGORITHMS) | {
         "flowlm",
         "ladiff",
+        "dfm",
     }
 
 
