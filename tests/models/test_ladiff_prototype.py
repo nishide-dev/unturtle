@@ -222,10 +222,16 @@ class TestTheAutoencoderObjective:
         """`p_dropout^z = 1` replaces the latent with pure noise every time —
         the mechanism that preserves an unconditional decoding mode.  If any
         encoder gradient survives at p=1, the dropout is not actually
-        replacing the latent."""
+        replacing the latent.
+
+        The channel is opened first (non-zero projection): on a fresh codec
+        the zero-init projection blocks encoder gradients by itself, and a
+        severed dropout would pass this test for the wrong reason."""
         from unturtle.models.latent import latent_autoencoder_loss
 
         codec, ids = self._setup()
+        with torch.no_grad():
+            codec.decoder.latent_proj.weight.normal_(std=0.05)
 
         losses = latent_autoencoder_loss(
             codec,
