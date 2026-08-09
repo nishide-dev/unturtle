@@ -244,10 +244,36 @@ class HybridPromptCollator:
     """
 
     def __init__(self, base_collator: Any) -> None:
+        # Deferred import: `unturtle.diffusion` is a heavier package than this
+        # wiring module and must not become an import-time dependency of the
+        # model family.
+        from unturtle.diffusion.packed_collator import (
+            PackedMaskedDiffusionDataCollator,
+        )
+
+        if isinstance(base_collator, PackedMaskedDiffusionDataCollator):
+            raise ValueError(
+                "HybridPromptCollator does not support packed collators: a "
+                "packed row holds several samples, so one per-row boundary "
+                "applies sample A's prompt split to every sample in the row, "
+                "and the packed block mask arrives as a kwarg the dense "
+                "eq.-(3) intersection never sees (cross-sample attention). "
+                "Wrapping would also hide the packed collator's type from "
+                "DiffusionTrainer's own packed-collator guards. Use the "
+                "unpacked MaskedDiffusionDataCollator for hybrid training."
+            )
         self.base_collator = base_collator
 
     def __call__(self, features: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
         batch = self.base_collator(features)
+        packed_keys = [key for key in _PACKED_KWARG_KEYS if key in batch]
+        if packed_keys:
+            raise ValueError(
+                "HybridPromptCollator received a packed batch "
+                f"(carries {packed_keys}); one per-row prompt boundary cannot "
+                "express per-sample splits inside a packed row, so hybrid "
+                "training requires unpacked batches"
+            )
         labels = batch.get("labels")
         if labels is None:
             raise ValueError(

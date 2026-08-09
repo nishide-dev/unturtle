@@ -190,6 +190,45 @@ class TestHybridPromptCollator:
         with pytest.raises(ValueError, match="labels"):
             wrapped([{}, {}])
 
+    def test_a_packed_base_collator_is_rejected_at_construction(self):
+        """A packed row holds several samples, so one first-supervised-position
+        boundary per row is sample A's boundary applied to everyone: sample
+        B's prompt lands on the bidirectional side of the split, and the
+        packed `block_attention_mask` arrives as a separate kwarg the dense
+        eq.-(3) intersection never sees — cross-sample attention, loss still
+        decreasing.  Refusing at construction is the earliest loud moment."""
+        from unturtle.diffusion.packed_collator import (
+            PackedMaskedDiffusionDataCollator,
+        )
+        from unturtle.models.conversion.a2d.tiny_a2d import HybridPromptCollator
+
+        packed = PackedMaskedDiffusionDataCollator(
+            tokenizer=_tokenizer(), mask_token_id=1
+        )
+
+        with pytest.raises(ValueError, match="packed"):
+            HybridPromptCollator(packed)
+
+    def test_a_packed_batch_from_any_base_is_rejected_at_call(self):
+        """The isinstance check above cannot see a custom packing collator;
+        the batch keys can.  This is also what keeps the wrapper from
+        laundering a packed collator past `DiffusionTrainer`'s own
+        isinstance-based packed-collator guards: the run still fails loudly at
+        the first batch instead of training on row-mean timesteps."""
+        from unturtle.models.conversion.a2d.tiny_a2d import HybridPromptCollator
+
+        def custom_packing_base(features):
+            return {
+                "input_ids": torch.ones(1, 8, dtype=torch.long),
+                "labels": torch.full((1, 8), -100),
+                "packed_seq_lengths": [[4, 4]],
+            }
+
+        wrapped = HybridPromptCollator(custom_packing_base)
+
+        with pytest.raises(ValueError, match="packed"):
+            wrapped([{}])
+
 
 class TestHybridTrainingEndToEnd:
     def _train(self, model, collator, tmp_path, steps=24):
