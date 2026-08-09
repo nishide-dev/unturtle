@@ -43,7 +43,14 @@ class TestRegistryContents:
         from unturtle.models.generation.sampler import iter_algorithms
 
         names = {a.name for a in iter_algorithms()}
-        assert names == {"mdlm", "block_decode", "bd3lm", "block_ar", "flowlm"}
+        assert names == {
+            "mdlm",
+            "block_decode",
+            "bd3lm",
+            "block_ar",
+            "flowlm",
+            "ladiff",
+        }
 
     def test_families_are_distinguished(self):
         """`bd3lm` and `block_ar` are both 'block' but are not the same family."""
@@ -341,6 +348,7 @@ class TestBackwardCompatibleTables:
             "bd3lm",
             "block_ar",
             "flowlm",
+            "ladiff",
         }
         for name, flags in ALL_ALGORITHMS.items():
             assert flags == algorithm_to_flags(name)
