@@ -33,6 +33,7 @@ Usage::
     )
 """
 
+from ._hybrid import HybridPromptCollator, prompt_lengths_from_labels
 from .generation_utils import TinyA2DGenerationConfig, TinyA2DGenerationMixin
 from .loading import ar_head_classes, convert_ar_model, load_tiny_a2d_from_ar
 from .modeling_llama import (
@@ -55,6 +56,8 @@ __all__ = [
     "ar_head_classes",
     "convert_ar_model",
     "load_tiny_a2d_from_ar",
+    "HybridPromptCollator",
+    "prompt_lengths_from_labels",
     "TinyA2DGenerationConfig",
     "TinyA2DGenerationMixin",
     "TinyA2DLlamaConfig",

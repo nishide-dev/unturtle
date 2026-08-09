@@ -206,4 +206,87 @@ def hybrid_fast_path_lengths(
     return lengths
 
 
-__all__ = ["hybrid_fast_path_lengths", "maybe_build_hybrid_mask"]
+def prompt_lengths_from_labels(labels: torch.Tensor) -> torch.Tensor:
+    """Derive the eq.-(3) prompt boundary from SFT-convention labels.
+
+    The boundary is the **first supervised position** (``labels != -100``) of
+    each row; a fully unsupervised row maps to the row length (all prompt — it
+    contributes no loss, and ``p = L`` keeps it validly causal rather than
+    silently flipping it to fully bidirectional).  Later ``-100`` holes inside
+    the target are a labels concern, not a topology concern, so they do not
+    move the boundary.
+
+    Under right padding the leading ``-100`` run is exactly the prompt.  Under
+    left padding the pad region lands on the prompt-causal side of the split,
+    which is harmless: padding is excluded by the ``attention_mask``
+    intersection in :func:`maybe_build_hybrid_mask` either way.
+    """
+    if labels.ndim != 2:
+        raise ValueError(f"labels must be 2-D [batch, seq], got {labels.ndim}-D")
+    supervised = labels != -100
+    boundary = torch.argmax(supervised.long(), dim=1)
+    return torch.where(
+        supervised.any(dim=1),
+        boundary,
+        torch.full_like(boundary, labels.shape[1]),
+    )
+
+
+class HybridPromptCollator:
+    """Ride the prompt boundary on batches from an existing collator.
+
+    ``DiffusionTrainer`` ships every batch key to ``model(**inputs)``, so the
+    only missing link for hybrid training is *who puts* ``prompt_lengths`` in
+    the batch.  This wrapper is that link: purely additive (every base key
+    passes through untouched), computed on the **padded** labels so the
+    boundary is correct for whatever padding the base collator applied, and
+    harmless on non-hybrid models, which ignore the key by contract.
+    """
+
+    def __init__(self, base_collator: Any) -> None:
+        # Deferred import: `unturtle.diffusion` is a heavier package than this
+        # wiring module and must not become an import-time dependency of the
+        # model family.
+        from unturtle.diffusion.packed_collator import (
+            PackedMaskedDiffusionDataCollator,
+        )
+
+        if isinstance(base_collator, PackedMaskedDiffusionDataCollator):
+            raise ValueError(
+                "HybridPromptCollator does not support packed collators: a "
+                "packed row holds several samples, so one per-row boundary "
+                "applies sample A's prompt split to every sample in the row, "
+                "and the packed block mask arrives as a kwarg the dense "
+                "eq.-(3) intersection never sees (cross-sample attention). "
+                "Wrapping would also hide the packed collator's type from "
+                "DiffusionTrainer's own packed-collator guards. Use the "
+                "unpacked MaskedDiffusionDataCollator for hybrid training."
+            )
+        self.base_collator = base_collator
+
+    def __call__(self, features: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
+        batch = self.base_collator(features)
+        packed_keys = [key for key in _PACKED_KWARG_KEYS if key in batch]
+        if packed_keys:
+            raise ValueError(
+                "HybridPromptCollator received a packed batch "
+                f"(carries {packed_keys}); one per-row prompt boundary cannot "
+                "express per-sample splits inside a packed row, so hybrid "
+                "training requires unpacked batches"
+            )
+        labels = batch.get("labels")
+        if labels is None:
+            raise ValueError(
+                "HybridPromptCollator needs `labels` in the collated batch to "
+                "derive the prompt boundary; the base collator produced none"
+            )
+        batch["prompt_lengths"] = prompt_lengths_from_labels(labels)
+        return batch
+
+
+__all__ = [
+    "HybridPromptCollator",
+    "hybrid_fast_path_lengths",
+    "maybe_build_hybrid_mask",
+    "prompt_lengths_from_labels",
+]
