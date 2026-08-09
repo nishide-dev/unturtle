@@ -243,3 +243,27 @@ class TestCheckpointResolution:
 
         assert seen, "resolution bypassed the seam"
         assert "llama" in seen[0]
+
+    def test_the_seam_is_consulted_live_not_early_bound(self, tmp_path, monkeypatch):
+        """The spy above proves the seam is *called*; this proves the loader
+        *honors* what it returns.  An early-bound alias (module-level
+        `_x = ar_head_classes` at import time) would keep the spy green while
+        making every monkeypatch of the seam silently inert — the exact
+        unsloth failure shape (#107) this seam exists to avoid."""
+        from unturtle.models.conversion.a2d.tiny_a2d import loading
+
+        ar = _tiny_ar()
+        ar.save_pretrained(tmp_path / "live")
+        monkeypatch.setattr(loading, "ar_head_classes", dict)
+
+        with pytest.raises(ValueError, match="model_type"):
+            loading.load_tiny_a2d_from_ar(str(tmp_path / "live"), mask_token_id=31)
+
+    def test_convert_resolution_is_also_live(self, monkeypatch):
+        """Same property for the DI entry, which resolves independently."""
+        from unturtle.models.conversion.a2d.tiny_a2d import loading
+
+        monkeypatch.setattr(loading, "ar_head_classes", dict)
+
+        with pytest.raises(ValueError, match="model_type"):
+            loading.convert_ar_model(_tiny_ar(), mask_token_id=31)
