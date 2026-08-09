@@ -173,16 +173,22 @@ class TestTheAutoencoderObjective:
         assert losses["reconstruction_ce"].requires_grad
 
     def test_the_ce_is_computed_over_masked_positions_exactly(self):
-        """Exact-equality pin using a stub codec that 'predicts' the
-        corrupted input verbatim: visible positions would contribute ~0 CE,
-        so averaging them in dilutes the loss — the masked-only value is
-        recomputed by replaying the seeded mask draw and must match to the
-        bit."""
+        """Exact-equality pin using a stub codec whose per-position CE is
+        NON-uniform (position-keyed logit magnitudes): a stub that scores
+        every masked position identically makes the total a constant, and
+        the replay stops pinning WHICH positions were masked — the review
+        demonstrated an RNG-order mutant surviving exactly that way.  With
+        position-dependent values, the sum is sensitive to the mask set, so
+        the replayed seeded draw must match the loss's own draw to the bit."""
         from types import SimpleNamespace
 
         import torch.nn.functional as F
 
         from unturtle.models.latent import latent_autoencoder_loss
+
+        def _positional_logits(input_ids):
+            scale = 3.0 + torch.arange(LENGTH).view(1, -1, 1).float()
+            return F.one_hot(input_ids, VOCAB).float() * scale
 
         class _EchoCodec:
             config = SimpleNamespace(mask_token_id=MASK_ID)
@@ -191,7 +197,7 @@ class TestTheAutoencoderObjective:
                 return torch.zeros(ids.shape[0], 1, 4, requires_grad=True)
 
             def decode(self, latents, input_ids, **_):
-                return F.one_hot(input_ids, VOCAB).float() * 9.0
+                return _positional_logits(input_ids)
 
         ids = torch.randint(0, VOCAB - 1, (4, LENGTH))
 
@@ -202,7 +208,7 @@ class TestTheAutoencoderObjective:
             generator=torch.Generator().manual_seed(5),
         )
 
-        # Replay the loss's own seeded corruption draw.
+        # Replay the loss's own seeded corruption draw, in its RNG order.
         replay = torch.Generator().manual_seed(5)
         t = torch.rand(4, 1, generator=replay).clamp_min(1e-3)
         masked = torch.rand(4, LENGTH, generator=replay) < t
@@ -210,12 +216,10 @@ class TestTheAutoencoderObjective:
         if bool(dead.any()):
             masked[dead, 0] = True
         corrupted = ids.masked_fill(masked, MASK_ID)
-        expected = F.cross_entropy(
-            (F.one_hot(corrupted, VOCAB).float() * 9.0)[masked], ids[masked]
-        )
+        expected = F.cross_entropy(_positional_logits(corrupted)[masked], ids[masked])
         assert torch.equal(losses["reconstruction_ce"], expected), (
-            "the CE does not match the masked-positions-only value; visible "
-            "positions are leaking into the objective"
+            "the CE does not match the replayed masked-positions-only value; "
+            "either visible positions leak in or the mask draw diverged"
         )
 
     def test_full_latent_dropout_cuts_the_encoder_out_of_the_graph(self):
@@ -273,6 +277,32 @@ class TestTheAutoencoderObjective:
             if p.grad is not None
         )
         assert total > 0, "no gradient reached the encoder without dropout"
+
+    @pytest.mark.gpu
+    def test_the_loss_runs_on_cuda_inputs(self):
+        """The mask draws must land on the input's device: a CPU generator
+        with CUDA inputs requires drawing on CPU and transferring (drawing
+        directly on CUDA from a CPU generator is itself an error), and an
+        untransferred CPU mask raises on `masked_fill` against CUDA ids."""
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA required")
+        from unturtle.models.latent import (
+            LatentAutoencoderCodec,
+            LatentConditionedMDLM,
+            latent_autoencoder_loss,
+        )
+
+        config = _config()
+        decoder = LatentConditionedMDLM(config).to("cuda")
+        codec = LatentAutoencoderCodec(config, decoder).to("cuda")
+        ids = torch.randint(0, VOCAB - 1, (4, LENGTH), device="cuda")
+
+        losses = latent_autoencoder_loss(
+            codec, ids, generator=torch.Generator().manual_seed(7)
+        )
+
+        assert losses["total"].device.type == "cuda"
+        assert bool(torch.isfinite(losses["total"]))
 
     def test_a_seeded_generator_reproduces_the_loss(self):
         from unturtle.models.latent import latent_autoencoder_loss

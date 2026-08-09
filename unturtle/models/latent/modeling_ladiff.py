@@ -225,8 +225,11 @@ def latent_autoencoder_loss(
     mask_id = codec.config.mask_token_id
     rows, length = input_ids.shape
 
+    # Drawn on the generator's device (CPU by default) then transferred —
+    # drawing directly on CUDA from a CPU generator is itself an error, and
+    # an untransferred CPU mask raises on `masked_fill` against CUDA ids.
     t = torch.rand(rows, 1, generator=generator).clamp_min(1e-3)
-    masked = torch.rand(rows, length, generator=generator) < t
+    masked = (torch.rand(rows, length, generator=generator) < t).to(input_ids.device)
     # Every row must supervise something.
     dead = ~masked.any(dim=1)
     if bool(dead.any()):
