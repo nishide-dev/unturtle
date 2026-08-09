@@ -6,10 +6,13 @@ needed 200 DFM warm-start steps to escape bistability.  The reference
 (OPDLM `convert_qwen_to_bd3lm.py`, `divelab/Qwen3-0.6B-a2d-init`) never
 trains from random init: **the student is the frozen teacher's own
 checkpoint, converted** — weights bit-preserved, attention bidirectional,
-vocabulary untouched, and the mask token reusing an unused slot in the
-padded vocab region (`<|MASK|>` = id 151669 for Qwen3-0.6B; the config vocab
-151936 exceeds the BPE vocab, so no resize).  This file pins that protocol
-on Unturtle's machinery:
+and the mask token reusing an unused slot in the padded vocab region
+(`<|MASK|>` = id 151669 for Qwen3-0.6B).  The reference targets a fixed
+GPU-aligned vocab of 151936 and resizes *only if* the source differs
+(`convert_qwen_to_bd3lm.py:40-42`); Qwen3-0.6B already ships exactly that
+size, so the shipped pairing performs no resize — but the mechanism is
+"resize to the target when needed", not "never resize".  This file pins
+that protocol on Unturtle's machinery:
 
 - ``convert_ar_model`` on a tiny Qwen3 reproduces the reference recipe's
   observable properties (class, bit-for-bit weights including the
@@ -153,7 +156,12 @@ def test_the_real_qwen3_checkpoint_converts_on_the_reference_mask_id():
 def _monotone_block_decode(model, prompts):
     """Copied from tests/test_e2e_opd_cycle.py (#111): greedy unmask, one
     position per step, block-sequential — monotone by construction, so
-    `replay_rounds` reconstructs exactly the states this decode visited."""
+    `replay_rounds` reconstructs exactly the states this decode visited.
+
+    Deliberately NOT shared with the original: the helper closes over
+    module constants that differ on purpose (`MASK_ID` is the last in-vocab
+    id there, an unused padded slot here).  Unifying the copies without
+    parameterizing those would silently break the padded-vocab semantics."""
     batch = prompts.shape[0]
     ids = torch.full((batch, LENGTH), MASK_ID, dtype=torch.long)
     ids[:, :PROMPT] = prompts
