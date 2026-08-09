@@ -283,6 +283,25 @@ def _run_flowlm(model: Any, request: GenerationRequest) -> Any:
     return model._generate_flowlm(request.inputs, **request.kwargs)
 
 
+def _supports_ladiff(model: Any) -> bool:
+    """True for the LaDiff latent-guided prototype (#117); attribute-based
+    (this module never imports ``unturtle.models.latent``)."""
+    return getattr(model, "supports_ladiff_generation", False) is True
+
+
+def _ladiff_unsupported(model: Any) -> str:
+    return (
+        f"model {type(model).__name__} does not support 'ladiff' "
+        "(latent-guided decoding; requires a LaDiff prototype bundling a "
+        "codec, latent prior and latent-conditioned masked decoder)."
+    )
+
+
+def _run_ladiff(model: Any, request: GenerationRequest) -> Any:
+    # inputs forwarded so the prototype can reject a prompt loudly.
+    return model._generate_ladiff(request.inputs, **request.kwargs)
+
+
 def _run_block_ar(model: Any, request: GenerationRequest) -> Any:
     """Delegate to the model's own (upstream) generate.
 
@@ -357,6 +376,18 @@ _ALGORITHMS: list[GenerationAlgorithm] = [
         auto_priority=50,
         unsupported_message=_flowlm_unsupported,
         runner=_run_flowlm,
+    ),
+    GenerationAlgorithm(
+        name="ladiff",
+        family="latent_guided",
+        supports=_supports_ladiff,
+        # Hybrid family (continuous latent prior guiding a discrete masked
+        # loop) — still no masked booleans; the discrete loop is the
+        # prototype's own, not a flagged variant of the masked family.
+        flags={},
+        auto_priority=60,
+        unsupported_message=_ladiff_unsupported,
+        runner=_run_ladiff,
     ),
 ]
 

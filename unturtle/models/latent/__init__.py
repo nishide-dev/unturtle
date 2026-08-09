@@ -26,6 +26,14 @@ from .modeling_flowlm import (
     FlowLMDenoiserOutput,
     FlowLMModel,
 )
+from .modeling_ladiff import (
+    LaDiffConfig,
+    LaDiffModel,
+    LatentAutoencoderCodec,
+    LatentConditionedMDLM,
+    PerceiverLiteEncoder,
+    latent_autoencoder_loss,
+)
 from .objective import flowlm_loss
 
 __all__ = [
@@ -36,4 +44,10 @@ __all__ = [
     "FlowLMDenoiserOutput",
     "FlowLMModel",
     "flowlm_loss",
+    "LaDiffConfig",
+    "LaDiffModel",
+    "LatentAutoencoderCodec",
+    "LatentConditionedMDLM",
+    "PerceiverLiteEncoder",
+    "latent_autoencoder_loss",
 ]
