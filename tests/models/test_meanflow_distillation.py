@@ -251,6 +251,67 @@ class TestTheDistillationObjective:
             for p in student.parameters()
         ), "no gradient reached the student"
 
+    def test_the_loss_works_with_an_eval_mode_student(self):
+        """`nn.TransformerEncoderLayer` takes a fused fast path when the
+        module is in eval mode AND grad is disabled — exactly the state
+        inside the target's no_grad block — and that kernel has no
+        forward-AD formula (the SDPA math-backend guard sits BELOW it and
+        never gets a say).  A caller who evaluates mid-loop and forgets
+        `train()` must not crash the next loss call."""
+        from unturtle.models.latent import (
+            FlowLMDenoiser,
+            MeanFlowDenoiser,
+            meanflow_distillation_loss,
+        )
+
+        teacher = FlowLMDenoiser(_flow_config()).eval()
+        student = MeanFlowDenoiser(_flow_config()).eval()
+
+        losses = meanflow_distillation_loss(
+            student,
+            teacher,
+            torch.randn(4, NUM_LATENTS, HIDDEN),
+            num_timesteps=4,
+            time_scale=1000.0,
+            generator=torch.Generator().manual_seed(8),
+        )
+
+        assert bool(torch.isfinite(losses["total"]))
+
+    def test_both_named_terms_are_always_present(self):
+        """The dict is the logging contract: a fixed-schema metrics writer
+        indexing `losses["pure_fm_mse"]` must not KeyError on the ~34% of
+        small batches whose Bernoulli draw produced no pure row (measured
+        at rows=4, fraction=0.25).  Empty branches emit zeros."""
+        from unturtle.models.latent import meanflow_distillation_loss
+
+        teacher = _AnchorTeacher(torch.zeros(1, NUM_LATENTS, HIDDEN))
+
+        class ZeroStub:
+            def __call__(self, latents, timesteps, target_timesteps):
+                class Out:
+                    velocity = torch.zeros_like(latents)
+
+                return Out()
+
+            def parameters(self):
+                return iter(())
+
+        for fraction in (0.0, 0.25, 1.0):
+            for seed in range(6):
+                losses = meanflow_distillation_loss(
+                    ZeroStub(),
+                    teacher,
+                    torch.randn(4, NUM_LATENTS, HIDDEN),
+                    num_timesteps=4,
+                    time_scale=1000.0,
+                    pure_fm_fraction=fraction,
+                    generator=torch.Generator().manual_seed(seed),
+                )
+                assert set(losses) == {"meanflow_mse", "pure_fm_mse", "total"}, (
+                    f"keys drifted at fraction={fraction} seed={seed}: {sorted(losses)}"
+                )
+
     def test_r_never_exceeds_t(self):
         """eq. 13 integrates from r to t with r <= t; a draw with r > t
         would ask the student for a backward average velocity the objective
@@ -285,6 +346,50 @@ class TestTheDistillationObjective:
         assert seen, "the student was never called"
         for t_scaled, r_scaled in seen:
             assert bool((r_scaled <= t_scaled + 1e-5).all()), "sampled r exceeded t"
+
+    def test_the_pure_fm_fraction_actually_sets_r_equal_to_t(self):
+        """The paper's named stabilizer ("25% pure flow-matching loss,
+        t = r") must be live: at fraction 1.0 every recorded r equals t, at
+        0.0 essentially none do.  The optimum tests cannot see this — the
+        straight-flow stub zeroes BOTH branches, so a deleted `torch.where`
+        survived the first battery through them."""
+        from unturtle.models.latent import meanflow_distillation_loss
+
+        teacher = _AnchorTeacher(torch.zeros(1, NUM_LATENTS, HIDDEN))
+
+        def record(fraction, seed):
+            seen = []
+
+            class RecordingStub:
+                def __call__(self, latents, timesteps, target_timesteps):
+                    seen.append((timesteps.clone(), target_timesteps.clone()))
+
+                    class Out:
+                        velocity = torch.zeros_like(latents)
+
+                    return Out()
+
+                def parameters(self):
+                    return iter(())
+
+            meanflow_distillation_loss(
+                RecordingStub(),
+                teacher,
+                torch.randn(32, NUM_LATENTS, HIDDEN),
+                num_timesteps=4,
+                time_scale=1000.0,
+                pure_fm_fraction=fraction,
+                generator=torch.Generator().manual_seed(seed),
+            )
+            t_scaled, r_scaled = seen[0]
+            return (r_scaled == t_scaled).float().mean()
+
+        assert float(record(1.0, seed=9)) == 1.0, (
+            "fraction 1.0 did not force r = t on every row"
+        )
+        assert float(record(0.0, seed=9)) < 0.1, (
+            "fraction 0.0 still produced r = t rows"
+        )
 
 
 class TestFewStepSampling:
@@ -331,7 +436,7 @@ def test_distillation_learns_the_average_velocity_end_to_end():
     **What is asserted, and what deliberately is not.**  The mechanism must
     work: the student's u(z, 1, 0) error against the rolled-out teacher
     displacement falls well below half its untrained value (measured
-    1.11 -> 0.46 at these settings, monotone across checkpoints), and
+    1.30 -> 0.50 at these settings, monotone across checkpoints), and
     1-step distilled guidance stays in its measured stability band
     (30-32/64 intact rows at lr 3e-4; a plain floor of 24 sits below it).
     Teacher PARITY is deliberately NOT asserted: at this scale the teacher's

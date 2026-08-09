@@ -161,25 +161,38 @@ def meanflow_distillation_loss(
                 target_timesteps=rr * time_scale,
             ).velocity
 
-        # Forward-mode AD is only implemented for the math SDPA backend;
-        # the flash/efficient kernels raise NotImplementedError inside jvp.
-        with torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH):
+        # Two dispatch layers must both be steered away from kernels that
+        # lack forward-AD formulas: the math SDPA backend replaces the
+        # flash/efficient attention kernels, and `enable_grad` keeps
+        # `nn.TransformerEncoderLayer` off its fused eval-mode fast path
+        # (`_transformer_encoder_layer_fwd`, taken only under
+        # eval + no_grad and dispatched ABOVE SDPA — an eval-mode student
+        # would crash the jvp without it).  The surrounding no_grad still
+        # detaches the target: `u_target` never joins the student's graph.
+        with (
+            torch.enable_grad(),
+            torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH),
+        ):
             _, du = torch.func.jvp(
                 u_fn,
                 (z_t, t, r),
                 (v, torch.ones_like(t), torch.zeros_like(r)),
             )
+        du = du.detach()
         u_target = v - (t - r).view(-1, 1, 1) * du
 
     u = student(z_t, timesteps=t * time_scale, target_timesteps=r * time_scale).velocity
     per_row = ((u - u_target) ** 2).flatten(1).mean(dim=1)
 
-    losses: dict[str, torch.Tensor] = {}
-    if bool((~pure).any()):
-        losses["meanflow_mse"] = per_row[~pure].mean()
-    if bool(pure.any()):
-        losses["pure_fm_mse"] = per_row[pure].mean()
-    losses["total"] = per_row.mean()
+    # Both keys are ALWAYS present (zero-filled when a Bernoulli draw left
+    # a branch empty): the dict is a logging contract, and a fixed-schema
+    # metrics writer must not KeyError on ~a third of small batches.
+    zero = per_row.sum() * 0.0
+    losses: dict[str, torch.Tensor] = {
+        "meanflow_mse": per_row[~pure].mean() if bool((~pure).any()) else zero,
+        "pure_fm_mse": per_row[pure].mean() if bool(pure.any()) else zero,
+        "total": per_row.mean(),
+    }
     return losses
 
 
