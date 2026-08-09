@@ -86,7 +86,8 @@ def test_known_algorithms_present() -> None:
     # The continuous_flow family (#66) is in neither historical table — those
     # tables exist for masked/canvas callers — but it is registered.
     assert set(ALL_ALGORITHMS) == set(DISCRETE_ALGORITHMS) | set(CANVAS_ALGORITHMS) | {
-        "flowlm"
+        "flowlm",
+        "ladiff",
     }
 
 
