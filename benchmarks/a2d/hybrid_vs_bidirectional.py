@@ -103,6 +103,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-batch-size", type=int, default=16)
     parser.add_argument("--t-grid", type=float, nargs="+", default=[0.25, 0.5, 0.75])
     parser.add_argument("--mask-seed", type=int, default=1234)
+    parser.add_argument("--gen-eval-prompts", type=int, default=128)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument(
         "--smoke",
@@ -116,6 +117,7 @@ def parse_args() -> argparse.Namespace:
         args.seeds = [0]
         args.train_rows = 128
         args.eval_rows = 32
+        args.gen_eval_prompts = 16
     return args
 
 
@@ -320,17 +322,25 @@ def run_arm(args, hybrid, seed, train_rows, eval_pack, output_dir):
 
 
 def generation_metrics_section(model, tokenizer, args, *, seed):
+    """#125 pre-registered readout: prompt-conditioned MAUVE (primary) +
+    guard trio + latency, and GSM8K exact match (secondary), all on the
+    canonical `unturtle.eval` surface via the masked family's own path.
+    Additive: the frozen #114 training metrics above are untouched."""
+    from datasets import load_dataset
+
     from unturtle.eval import (
         diversity_guards,
         generation_record,
+        mauve_score,
         measure_generation,
     )
+    from unturtle.eval._answer_parser import extract_numeric_answer
     from unturtle.eval.harness.configs import DecodingConfig
 
     model.eval()
     decoding = DecodingConfig(
         model_family="tiny-a2d-qwen3",
-        task="free-generation",
+        task="gsm8k-conditioned-generation",
         max_new_tokens=64,
         num_steps=16,
         temperature=1.0,
@@ -338,33 +348,73 @@ def generation_metrics_section(model, tokenizer, args, *, seed):
         fewshot=0,
         algorithm="mdlm",
     )
-    prompt = tokenizer("Question:", return_tensors="pt").input_ids.to(args.device)
-    prompt = prompt.expand(32, -1)
+    held_out = load_dataset("openai/gsm8k", "main", split="test").select(
+        range(args.gen_eval_prompts)
+    )
+    reference_answers = [example["answer"] for example in held_out]
+    gold = [extract_numeric_answer(answer) for answer in reference_answers]
 
-    def sample():
-        with torch.no_grad():
-            # The masked generation config names this field `steps` (the
-            # harness adapter does the same translation); `num_steps=` would
-            # be silently DISCARDED by GenerationConfig.update and the run
-            # would execute the 128-step default while recording nfe=16 —
-            # the exact record-vs-execution mismatch #123 exists to prevent.
-            return model.generate(
-                prompt,
-                algorithm="mdlm",
-                max_new_tokens=decoding.max_new_tokens,
-                steps=decoding.num_steps,
-                temperature=decoding.temperature,
-            )
+    generated_texts: list[str] = []
+    all_completions = []
+    total_seconds = 0.0
+    batch = 16
+    for start in range(0, len(held_out), batch):
+        chunk = held_out.select(range(start, min(start + batch, len(held_out))))
+        prompts = tokenizer(
+            [f"Question: {q}\nAnswer:" for q in chunk["question"]],
+            return_tensors="pt",
+            padding=True,
+            padding_side="left",
+        ).input_ids.to(args.device)
 
-    samples, seconds = measure_generation(sample)
+        def sample(prompts=prompts):
+            with torch.no_grad():
+                # The masked config names this field `steps` (#124 lesson);
+                # `num_steps=` would be silently discarded and the run would
+                # execute the 128-step default while recording nfe=16.
+                return model.generate(
+                    prompts,
+                    algorithm="mdlm",
+                    max_new_tokens=decoding.max_new_tokens,
+                    steps=decoding.num_steps,
+                    temperature=decoding.temperature,
+                )
+
+        samples, seconds = measure_generation(sample)
+        total_seconds += seconds
+        completions = samples[:, prompts.shape[1] :].cpu()
+        all_completions.append(completions)
+        generated_texts.extend(
+            tokenizer.batch_decode(completions, skip_special_tokens=True)
+        )
+
+    completions = torch.cat(all_completions)
+    guards = diversity_guards(completions)
+    score = mauve_score(
+        reference_answers,
+        generated_texts,
+        featurize_model_name="gpt2",
+        device_id=torch.device(args.device).index or 0,
+        max_text_length=decoding.max_new_tokens,
+    )
+    predictions = [extract_numeric_answer(text) for text in generated_texts]
+    exact = sum(
+        1
+        for prediction, answer in zip(predictions, gold, strict=True)
+        if prediction is not None and answer is not None and prediction == answer
+    ) / len(gold)
+
     record = generation_record(
-        metrics=diversity_guards(samples[:, prompt.shape[1] :].cpu()),
+        metrics={"mauve": score, "gsm8k_exact_match": exact, **guards},
         seed=seed,
         decoding=decoding,
         nfe=decoding.num_steps,
-        latency_seconds=seconds,
+        latency_seconds=total_seconds,
     )
-    print(f"    generation metrics (mdlm): {record['metrics']}", flush=True)
+    print(
+        f"    generation (mdlm): MAUVE {score:.3f} exact {exact:.3f} guards {guards}",
+        flush=True,
+    )
     return record
 
 
