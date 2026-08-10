@@ -166,23 +166,69 @@ class TestTheBoundaryRidesHybridGeneration:
             "the generation loop's hybrid forward diverges from a direct call"
         )
 
-    def test_the_boundary_changes_hybrid_generation_output(self):
-        """The end-to-end observable #125 lacked: the same seeded hybrid
-        generation must differ between the boundary-threaded path and a
-        boundary-free forward — otherwise the threading is inert."""
+    def test_the_boundary_changes_the_denoise_logits(self):
+        """The end-to-end observable #125 lacked, asserted on LOGITS: a
+        sampled-ids comparison flakes (~25% of seeds let a tiny untrained
+        model's argmax absorb the ~0.3 logit shift, measured in review),
+        while the logits of the first in-generation forward are a stable
+        observable of the same claim — the threading is not inert."""
         model = _model(hybrid=True)
+        captured = []
+        original = model.forward
+
+        def recording(*args, **kwargs):
+            out = original(*args, **kwargs)
+            if not captured:
+                snapshot = {
+                    key: value.clone() if torch.is_tensor(value) else value
+                    for key, value in kwargs.items()
+                }
+                captured.append((snapshot, out.logits.detach().clone()))
+            return out
+
+        model.forward = recording
         prompt = torch.randint(0, VOCAB - 1, (2, PROMPT))
-
         torch.manual_seed(6)
-        threaded = model.generate(prompt, algorithm="mdlm", max_new_tokens=8, steps=4)
+        model.generate(prompt, algorithm="mdlm", max_new_tokens=8, steps=2)
 
-        unthreaded_model = _model(hybrid=False)
-        unthreaded_model.load_state_dict(_model(hybrid=True).state_dict())
-        torch.manual_seed(6)
-        unthreaded = unthreaded_model.generate(
-            prompt, algorithm="mdlm", max_new_tokens=8, steps=4
+        kwargs, threaded_logits = captured[0]
+        model.forward = original
+        kwargs.pop("prompt_lengths")
+        with torch.no_grad():
+            unthreaded_logits = model(**kwargs).logits
+
+        assert not torch.allclose(threaded_logits, unthreaded_logits), (
+            "threading the boundary did not change the denoise logits"
         )
 
-        assert not torch.equal(threaded, unthreaded), (
-            "threading the boundary did not change hybrid generation"
+
+class TestAutoNeverPicksACachePathForHybrid:
+    """The #128 review's gap: `auto` resolved hybrid models to
+    `block_decode`, whose loop never threads the boundary — silently
+    decoding under the exact mismatch this feature exists to close.  A
+    hybrid model does not SUPPORT cache-based block decoding (the eq.(3)
+    mask is square by contract), so the capability probe must say so."""
+
+    def test_auto_resolves_a_hybrid_model_to_mdlm(self):
+        from unturtle.models.generation.sampler import resolve_algorithm
+
+        assert (
+            resolve_algorithm("auto", _model(hybrid=True), bd3lm_requested=False)
+            == "mdlm"
+        )
+
+    def test_explicit_block_decode_on_a_hybrid_model_is_rejected(self):
+        from unturtle.models.generation.sampler import resolve_algorithm
+
+        with pytest.raises(ValueError, match="block-decode|block_decode"):
+            resolve_algorithm(
+                "block_decode", _model(hybrid=True), bd3lm_requested=False
+            )
+
+    def test_non_hybrid_auto_resolution_is_unchanged(self):
+        from unturtle.models.generation.sampler import resolve_algorithm
+
+        assert (
+            resolve_algorithm("auto", _model(hybrid=False), bd3lm_requested=False)
+            == "block_decode"
         )

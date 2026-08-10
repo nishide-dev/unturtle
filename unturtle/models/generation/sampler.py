@@ -165,7 +165,15 @@ def _supports_block_decode(model: Any) -> bool:
     ``supports_block_decode = False`` lets a backbone that inherits the mixin
     generically (e.g. encoder backbones without KV cache) opt out of the
     block-decode fast path.
+
+    A hybrid-attention model (#127) is excluded outright: the eq.-(3) mask
+    is square by contract (hybrid + KV cache is deliberately undefined), and
+    the cache loop threads no prompt boundary — so picking block-decode
+    would silently decode under the train/inference topology mismatch the
+    boundary threading exists to close.  ``auto`` falls through to mdlm.
     """
+    if getattr(getattr(model, "config", None), "hybrid_attention", False):
+        return False
     if not getattr(model, "supports_block_decode", True):
         return False
     return callable(getattr(model, "_model_forward_with_cache", None))
@@ -192,6 +200,13 @@ def _mdlm_unsupported(model: Any) -> str:
 
 
 def _block_decode_unsupported(model: Any) -> str:
+    if getattr(getattr(model, "config", None), "hybrid_attention", False):
+        return (
+            f"{type(model).__name__} has hybrid_attention=True: block-decode "
+            "would decode with a KV cache the square eq.-(3) mask cannot "
+            "express, silently dropping the prompt topology the model was "
+            "trained with (#127). Use algorithm='mdlm'."
+        )
     return (
         f"{type(model).__name__} does not support block-decode "
         f"(no usable KV-cache forward); use algorithm='mdlm'."
