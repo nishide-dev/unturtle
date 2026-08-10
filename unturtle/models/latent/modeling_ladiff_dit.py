@@ -71,12 +71,29 @@ class LaDiffDiTConfig(MDLMDiTConfig):
         # per-position latent dimensionality is not recoverable from the
         # text, recorded as a choice on #130.
         self.latent_dim = latent_dim or self.hidden_size
-        # Paper main config: two adapters, "at the first and last position"
-        # between the self-attention layers — the first and last inter-block
-        # gaps (after block 0 and after block L-2).
+        # Two adapters in the first and last inter-block gaps. This is an
+        # Unturtle default (recorded on #130): the paper's MAIN config uses
+        # ONE cross-attention layer ("from one to three" in the ablation);
+        # its analysis section separately describes a two-layer first/last
+        # variant, which is what this default interpolates.
         if latent_adapter_gaps is None:
             latent_adapter_gaps = (0, self.num_hidden_layers - 2)
-        self.latent_adapter_gaps = tuple(latent_adapter_gaps)
+        latent_adapter_gaps = tuple(latent_adapter_gaps)
+        # Valid gaps are the INTER-block gaps 0..L-2 (a "gap" at L-1 would
+        # sit after the final block, and any farther index would build an
+        # adapter that never fires: trained-but-inert parameters saved to
+        # every checkpoint). Duplicates would silently collapse in the
+        # ModuleDict. At L<=2 the default itself degenerates — state gaps
+        # explicitly there.
+        valid = range(self.num_hidden_layers - 1)
+        if len(set(latent_adapter_gaps)) != len(latent_adapter_gaps) or any(
+            gap not in valid for gap in latent_adapter_gaps
+        ):
+            raise ValueError(
+                f"latent_adapter_gaps must be unique inter-block gap indices "
+                f"in [0, {self.num_hidden_layers - 2}], got {latent_adapter_gaps}"
+            )
+        self.latent_adapter_gaps = latent_adapter_gaps
 
 
 class LatentCrossAttentionAdapter(nn.Module):

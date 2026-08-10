@@ -285,6 +285,10 @@ class MDLMDiTModel(nn.Module):
     def forward(
         self, input_ids: torch.Tensor, attn_bias: Optional[torch.Tensor]
     ) -> torch.Tensor:
+        # NOTE: unturtle/models/latent/modeling_ladiff_dit.py re-runs this
+        # exact loop (with adapters between blocks); a change here must be
+        # mirrored there — its init-bitwise test only catches drift on the
+        # behaviors it exercises.
         B, L = input_ids.shape
         x = self.vocab_embed(input_ids)
         c = F.silu(self.cond).unsqueeze(0).expand(B, -1)  # [B, cond_dim]

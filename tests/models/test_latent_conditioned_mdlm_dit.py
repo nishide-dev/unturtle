@@ -273,3 +273,108 @@ class TestRealCheckpointComposition:
             reference = base(input_ids=ids).logits
             conditioned_logits = conditioned(input_ids=ids, latents=latents).logits
         assert torch.equal(conditioned_logits, reference)
+
+
+class TestLatentGuidedGeneration:
+    """#133 review Important: generate(latents=...) was swallowed by the
+    generation config's catch-all and the adapters never ran — latent-guided
+    decoding, the feature's reason to exist, was silently a no-op."""
+
+    def test_generate_threads_latents_into_every_denoise_forward(self):
+        _, conditioned = models()
+        open_channel(conditioned)
+        calls = []
+        for key, adapter in conditioned.latent_adapters.items():
+            adapter.register_forward_hook(lambda *a, key=key, **k: calls.append(key))
+        prompt = torch.randint(0, VOCAB - 1, (1, 4))
+        latents = torch.randn(1, 3, HIDDEN)
+        torch.manual_seed(7)
+        conditioned.generate(
+            prompt, algorithm="mdlm", max_new_tokens=8, steps=3, latents=latents
+        )
+        assert sorted(calls) == sorted(["0", str(LAYERS - 2)] * 3), (
+            f"adapters must run once per adapter per denoise step, got {calls}"
+        )
+
+    def test_generate_without_latents_still_never_calls_adapters(self):
+        _, conditioned = models()
+        open_channel(conditioned)
+        calls = []
+        for key, adapter in conditioned.latent_adapters.items():
+            adapter.register_forward_hook(lambda *a, key=key, **k: calls.append(key))
+        prompt = torch.randint(0, VOCAB - 1, (1, 4))
+        torch.manual_seed(8)
+        conditioned.generate(prompt, algorithm="mdlm", max_new_tokens=8, steps=3)
+        assert calls == []
+
+
+class TestGapValidation:
+    """#133 review Important: out-of-range / duplicate gaps built adapters
+    that could never fire — trained-but-inert parameters saved to every
+    checkpoint with no error."""
+
+    def test_out_of_range_gaps_are_refused(self):
+        for gaps in [(99,), (-1,), (LAYERS - 1,)]:
+            with pytest.raises(ValueError, match="gap"):
+                LaDiffDiTConfig(
+                    num_hidden_layers=LAYERS,
+                    hidden_size=HIDDEN,
+                    num_attention_heads=2,
+                    latent_adapter_gaps=gaps,
+                )
+
+    def test_duplicate_gaps_are_refused(self):
+        with pytest.raises(ValueError, match="gap"):
+            LaDiffDiTConfig(
+                num_hidden_layers=LAYERS,
+                hidden_size=HIDDEN,
+                num_attention_heads=2,
+                latent_adapter_gaps=(0, 0),
+            )
+
+    def test_tiny_depths_where_the_default_degenerates_are_refused(self):
+        """L=2 defaults to (0, 0) and L=1 to (0, -1): both must raise so a
+        small debug config states its gaps explicitly."""
+        for layers in (1, 2):
+            with pytest.raises(ValueError, match="gap"):
+                LaDiffDiTConfig(
+                    num_hidden_layers=layers,
+                    hidden_size=HIDDEN,
+                    num_attention_heads=2,
+                )
+
+
+class TestTrainingAndPersistencePlumbing:
+    def test_gradient_checkpointing_composes_with_adapters(self):
+        _, conditioned = models()
+        open_channel(conditioned)
+        ids = torch.randint(0, VOCAB, (2, 12))
+        latents = torch.randn(2, 3, HIDDEN)
+        with torch.no_grad():
+            plain_logits = conditioned(input_ids=ids, latents=latents).logits
+
+        conditioned.gradient_checkpointing_enable()
+        conditioned.train()
+        out = conditioned(input_ids=ids, latents=latents).logits
+        out.square().mean().backward()
+        assert all(
+            adapter.conv_in.weight.grad is not None
+            for adapter in conditioned.latent_adapters.values()
+        )
+        conditioned.eval()
+        with torch.no_grad():
+            gc_logits = conditioned(input_ids=ids, latents=latents).logits
+        assert torch.equal(gc_logits, plain_logits)
+
+    def test_save_load_roundtrip_preserves_adapters_and_gaps(self, tmp_path):
+        _, conditioned = models()
+        open_channel(conditioned)
+        conditioned.save_pretrained(tmp_path)
+        reloaded = LatentConditionedMDLMDiT.from_pretrained(tmp_path).eval()
+        assert tuple(reloaded.config.latent_adapter_gaps) == (0, LAYERS - 2)
+        ids = torch.randint(0, VOCAB, (2, 12))
+        latents = torch.randn(2, 3, HIDDEN)
+        with torch.no_grad():
+            before = conditioned(input_ids=ids, latents=latents).logits
+            after = reloaded(input_ids=ids, latents=latents).logits
+        assert torch.equal(before, after)

@@ -825,7 +825,14 @@ class MaskedDiffusionGenerationMixin:
 
         if not is_torchdynamo_compiling():
             generation_config = copy.deepcopy(generation_config)
-            generation_config.update(**kwargs)
+            # GenerationConfig.update SETS only keys that already exist as
+            # attributes and RETURNS the rest — discarding that return is how
+            # `latents=` (and the #124 `num_steps=` typo) vanished silently.
+            # Re-apply the remainder with the same catch-all semantics the
+            # config's own __init__ uses for unknown keys.
+            unused = generation_config.update(**kwargs)
+            for key, value in unused.items():
+                setattr(generation_config, key, value)
 
         return generation_config
 
@@ -1003,6 +1010,12 @@ class MaskedDiffusionGenerationMixin:
             else None
         )
 
+        # Latent-guided decoding (#130): a caller-supplied latent must ride
+        # EVERY denoise forward — the generation config's catch-all setattr
+        # would otherwise swallow it silently and the latent adapters never
+        # run (the #133 review finding). None for every non-latent caller.
+        latents = getattr(generation_config, "latents", None)
+
         # Pad completion region with mask tokens
         x = F.pad(input_ids, (0, max_length - input_ids.shape[1]), value=mask_token_id)
 
@@ -1036,6 +1049,8 @@ class MaskedDiffusionGenerationMixin:
             forward_kwargs = {"input_ids": x, "attention_mask": attention_mask}
             if prompt_lengths is not None:
                 forward_kwargs["prompt_lengths"] = prompt_lengths
+            if latents is not None:
+                forward_kwargs["latents"] = latents
             logits = self(**forward_kwargs).logits  # [B, L, V]
 
             mask_logits = logits[mask_index]  # [N_masked, V]

@@ -26,7 +26,6 @@ The conversion contract:
   against the checkpoint instead of being discarded on faith.
 """
 
-
 import pytest
 import torch
 import torch.nn.functional as F
