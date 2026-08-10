@@ -360,20 +360,28 @@ def generation_metrics_section(model, tokenizer, args, *, seed):
     batch = 16
     for start in range(0, len(held_out), batch):
         chunk = held_out.select(range(start, min(start + batch, len(held_out))))
-        prompts = tokenizer(
+        encoded = tokenizer(
             [f"Question: {q}\nAnswer:" for q in chunk["question"]],
             return_tensors="pt",
             padding=True,
             padding_side="left",
-        ).input_ids.to(args.device)
+        )
+        prompts = encoded.input_ids.to(args.device)
+        # The attention mask MUST ride along: dLLM attention is
+        # bidirectional, so without it every completion position attends to
+        # every left-pad token — measured 52.5% token-level disagreement at
+        # 0.41 pad fraction, and UNEQUALLY across the two topologies (#126
+        # review's Critical).
+        prompt_mask = encoded.attention_mask.to(args.device)
 
-        def sample(prompts=prompts):
+        def sample(prompts=prompts, prompt_mask=prompt_mask):
             with torch.no_grad():
                 # The masked config names this field `steps` (#124 lesson);
                 # `num_steps=` would be silently discarded and the run would
                 # execute the 128-step default while recording nfe=16.
                 return model.generate(
                     prompts,
+                    attention_mask=prompt_mask,
                     algorithm="mdlm",
                     max_new_tokens=decoding.max_new_tokens,
                     steps=decoding.num_steps,
@@ -390,12 +398,18 @@ def generation_metrics_section(model, tokenizer, args, *, seed):
 
     completions = torch.cat(all_completions)
     guards = diversity_guards(completions)
+    # max_text_length must COVER the references (70% of held-out answers
+    # exceed 64 gpt2 tokens; truncating them mid-derivation would make the
+    # reference arm systematically different from complete 64-token
+    # generations).  Buckets pinned for cross-run comparability; both
+    # choices recorded in the record extras below.
+    mauve_settings = {"max_text_length": 256, "num_buckets": 12}
     score = mauve_score(
         reference_answers,
         generated_texts,
         featurize_model_name="gpt2",
         device_id=torch.device(args.device).index or 0,
-        max_text_length=decoding.max_new_tokens,
+        **mauve_settings,
     )
     predictions = [extract_numeric_answer(text) for text in generated_texts]
     exact = sum(
@@ -410,6 +424,7 @@ def generation_metrics_section(model, tokenizer, args, *, seed):
         decoding=decoding,
         nfe=decoding.num_steps,
         latency_seconds=total_seconds,
+        extra={"mauve_features": "gpt2", **mauve_settings},
     )
     print(
         f"    generation (mdlm): MAUVE {score:.3f} exact {exact:.3f} guards {guards}",
