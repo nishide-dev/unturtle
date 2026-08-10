@@ -86,6 +86,24 @@ attention-mask fix from the #126 review; raw JSON under dev/local/):
     - absolute MAUVE is low for BOTH arms (0.005-0.057 vs the 0.98
       held-out ceiling): a 400-step SFT is far from the reference
       distribution regardless of arm — the #122 regime lesson again.
+
+Frozen #127 topology-matched readout (2026-08-10, identical protocol and
+seeds; the ONLY change is the #128 library fix — the hybrid arm now decodes
+under its training topology; raw JSON under dev/local/):
+
+        arm            seed 0                    seed 1
+        bidirectional  MAUVE 0.0519 exact 2/128  MAUVE 0.0573 exact 1/128
+        hybrid         MAUVE 0.2315 exact 1/128  MAUVE 0.4070 exact 1/128
+    - the direction FLIPS and is decidable (same sign both seeds, no
+      collapsed points): with matched topology, HYBRID wins free generation
+      by 4.5-7x — consistent with its training-side NLL win above.  The
+      mismatched table above therefore measured the topology mismatch
+      itself: threading the boundary moved hybrid MAUVE 0.0048 -> 0.23/0.41
+      (48-85x).
+    - the bidirectional rows are BIT-IDENTICAL to the mismatched run —
+      the #128 non-hybrid byte-identity property, confirmed in the wild.
+    - absolute values remain far below the 0.98 ceiling for both arms (the
+      budget/regime lesson stands); exact match stays not-measurable.
 """
 
 from __future__ import annotations
