@@ -60,7 +60,13 @@ def config_from_mdlm_owt(source_config: dict) -> MDLMDiTConfig:
     mask-less gpt2 tokenizer (``diffusion.py``: ``mask_index = vocab_size;
     vocab_size += 1``), so the id lives in the config, not the tokenizer.
     """
-    if source_config.get("time_conditioning", False):
+    if "time_conditioning" not in source_config:
+        raise ValueError(
+            "Source config lacks 'time_conditioning'; refusing to assume the "
+            "checkpoint is time-agnostic — that is the one field this "
+            "conversion must not guess."
+        )
+    if source_config["time_conditioning"]:
         raise ValueError(
             "This checkpoint has time_conditioning=True; collapsing its sigma path "
             "into a constant conditioning vector at sigma=0 would silently change "
@@ -130,7 +136,9 @@ def convert_mdlm_state_dict(
     expected_inv_freq = 1.0 / (
         10_000 ** (torch.arange(0, head_dim, 2).float() / head_dim)
     )
-    if not torch.allclose(inv_freq.float(), expected_inv_freq):
+    if inv_freq.shape != expected_inv_freq.shape or not torch.allclose(
+        inv_freq.float(), expected_inv_freq
+    ):
         raise ValueError(
             "backbone.rotary_emb.inv_freq differs from the RoPE table the native "
             "model recomputes (base 10000); refusing to drop it silently."
@@ -142,9 +150,12 @@ def convert_mdlm_state_dict(
         converted["model." + key.removeprefix("backbone.")] = tensor
 
     # Fail here, not at load_state_dict, so the error names the offender.
-    native_keys = {
-        name for name, _ in MDLMDiTForMaskedDiffusionLM(config).named_parameters()
-    }
+    # Meta device: only the parameter NAMES are needed, not a second ~170M
+    # allocation on the real-checkpoint path.
+    with torch.device("meta"):
+        native_keys = {
+            name for name, _ in MDLMDiTForMaskedDiffusionLM(config).named_parameters()
+        }
     unknown = sorted(set(converted) - native_keys)
     if unknown:
         raise ValueError(
@@ -161,17 +172,23 @@ def build_native_model(
 ) -> MDLMDiTForMaskedDiffusionLM:
     """Build a genuinely native model carrying the converted weights.
 
+    Returned in eval mode: the checkpoint carries ``dropout=0.1``, so a
+    train-mode model hands every caller stochastic logits with no error.
+
     Default dtype is fp32 — the checkpoint's own dtype, loaded bitwise. bf16
     is an explicit conversion requested via ``dtype`` (never a silent cast,
-    #112); ``Module.to(dtype)`` converts every floating-point parameter
-    unconditionally, and the tests pin that.
+    #112) and applies to *parameters*; the rotary ``inv_freq`` buffer stays
+    fp32 — bf16's ~3 significant digits alias the low-frequency RoPE lanes at
+    long context (~0.45 rad angle error at L=1024), and both upstream and the
+    native ``Rotary`` keep the table fp32, casting cos/sin at use time.
     """
     converted = convert_mdlm_state_dict(source, config)
     model = MDLMDiTForMaskedDiffusionLM(config)
     model.load_state_dict(converted, strict=True)
     if dtype is not torch.float32:
         model = model.to(dtype)
-    return model
+        model.model.rotary.inv_freq = model.model.rotary.inv_freq.float()
+    return model.eval()
 
 
 def load_mdlm_owt(

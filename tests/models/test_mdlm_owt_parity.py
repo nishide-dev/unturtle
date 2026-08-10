@@ -32,6 +32,14 @@ evidence chain used here:
    identical token trajectory.
 
 Stop/go (#130): if this module fails, latent training does not start.
+
+Marker layout: the whole module is ``slow`` (real-checkpoint downloads);
+only the two flash-kernel classes are ``gpu`` — the fp32 reference and the
+sampling swap are pure CPU and must not be lost to a gpu deselection on a
+CPU-only runner.  Maintenance tripwire: the upstream remote code calls the
+deprecated ``torch.cuda.amp.autocast``; if a future torch removes it, the
+CPU legs die with AttributeError (an environment failure, not a parity
+failure).
 """
 
 import contextlib
@@ -40,7 +48,11 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-pytestmark = [pytest.mark.slow, pytest.mark.gpu]
+pytestmark = pytest.mark.slow
+
+requires_cuda = pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="requires CUDA"
+)
 
 REPO = "kuleshov-group/mdlm-owt"
 MASK_ID = 50257
@@ -178,6 +190,8 @@ def parity_batch(device, seq_len=128, seed=7):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.gpu
+@requires_cuda
 class TestShimsMatchFlashKernels:
     def test_sdpa_shim_matches_flash_varlen(self, flash):
         import flash_attn.flash_attn_interface as fai
@@ -239,6 +253,8 @@ class TestFp32LogitsParity:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.gpu
+@requires_cuda
 class TestCanonicalBf16Parity:
     def test_native_bf16_within_the_selfnoise_of_canonical_upstream(
         self, flash, upstream_cpu, native_cpu

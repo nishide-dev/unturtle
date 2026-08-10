@@ -199,6 +199,13 @@ class DDiTBlock(nn.Module):
             self.adaLN_modulation(c)[:, None].chunk(6, dim=2)
         )
 
+        # The .squeeze(1) looks like a shape disagreement with kuleshov's
+        # modeling_mdlm.py line ~133 (modulate with unsqueeze) — it is not:
+        # their live path is `modulate_fused`, a @torch.jit.script wrapper
+        # that captured the FIRST `modulate` definition (no unsqueeze) at
+        # decoration time; the later redefinition is shadowed dead code.
+        # Squeezing the chunked [B,1,dim] back to [B,dim] before modulate's
+        # own unsqueeze reproduces the live upstream shapes exactly.
         x_skip = x
         h = modulate(self.norm1(x), shift_msa.squeeze(1), scale_msa.squeeze(1))
         b, length = h.shape[0], h.shape[1]

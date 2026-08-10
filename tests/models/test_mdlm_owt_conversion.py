@@ -224,6 +224,15 @@ class TestConfigMapping:
         with pytest.raises(ValueError, match="time_conditioning"):
             config_from_mdlm_owt({**UPSTREAM_CONFIG, "time_conditioning": True})
 
+    def test_a_config_lacking_time_conditioning_is_refused_not_assumed(self):
+        """Refuse-don't-guess (#131 review): a missing key would otherwise be
+        silently read as time-agnostic — a guess on exactly the field the
+        refusal above exists to protect.  mdlm-owt's config carries the key
+        explicitly, so requiring it costs nothing."""
+        absent = {k: v for k, v in UPSTREAM_CONFIG.items() if k != "time_conditioning"}
+        with pytest.raises(ValueError, match="time_conditioning"):
+            config_from_mdlm_owt(absent)
+
 
 class TestBuildNativeModel:
     def test_default_dtype_is_fp32_bitwise(self):
@@ -255,3 +264,28 @@ class TestBuildNativeModel:
         model = build_native_model(tiny_config(), tiny_source_state_dict())
         assert type(model) is MDLMDiTForMaskedDiffusionLM
         assert type(model.config) is MDLMDiTConfig
+
+    def test_the_built_model_is_inference_ready(self):
+        """#131 review Important: the checkpoint carries dropout=0.1, so a
+        loader that returns a train-mode model hands every caller stochastic
+        logits with no error (measured: two forwards differing by up to 7.5).
+        A checkpoint loader returns eval mode, like from_pretrained."""
+        model = build_native_model(tiny_config(), tiny_source_state_dict())
+        assert not model.training
+        ids = torch.randint(0, VOCAB - 1, (2, 8))
+        with torch.no_grad():
+            first = model(input_ids=ids).logits
+            second = model(input_ids=ids).logits
+        assert torch.equal(first, second), "forwards differ — dropout is live"
+
+    def test_bf16_conversion_keeps_the_rope_table_fp32(self):
+        """#131 review Important: a blanket Module.to(bf16) also casts the
+        non-persistent inv_freq buffer, and bf16's ~3 significant digits alias
+        the low-frequency lanes once multiplied by positions up to 1023
+        (~0.45 rad angle error at the checkpoint's own 1024 context).
+        Upstream keeps inv_freq fp32 and casts cos/sin at use time; so does
+        native Rotary.forward — the buffer must stay fp32."""
+        model = build_native_model(
+            tiny_config(), tiny_source_state_dict(), dtype=torch.bfloat16
+        )
+        assert model.model.rotary.inv_freq.dtype == torch.float32
