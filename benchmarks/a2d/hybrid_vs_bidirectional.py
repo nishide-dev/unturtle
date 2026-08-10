@@ -302,10 +302,62 @@ def run_arm(args, hybrid, seed, train_rows, eval_pack, output_dir):
         "train_seconds": elapsed,
         "steps_per_second": args.steps / elapsed,
         "peak_memory_gib": torch.cuda.max_memory_allocated(args.device) / 2**30,
+        # #123 consumer 2: free-generation metrics through the canonical
+        # `unturtle.eval` surface, via the MASKED family's own path (mdlm) —
+        # an independent second consumer proving the surface is not a
+        # DFM-only carve-out.  Additive: the frozen training metrics above
+        # are untouched.
+        "generation_metrics": generation_metrics_section(
+            model, tokenizer, args, seed=seed
+        ),
     }
     del trainer, model
     torch.cuda.empty_cache()
     return result
+
+
+def generation_metrics_section(model, tokenizer, args, *, seed):
+    from unturtle.eval import (
+        diversity_guards,
+        generation_record,
+        measure_generation,
+    )
+    from unturtle.eval.harness.configs import DecodingConfig
+
+    model.eval()
+    decoding = DecodingConfig(
+        model_family="tiny-a2d-qwen3",
+        task="free-generation",
+        max_new_tokens=64,
+        num_steps=16,
+        temperature=1.0,
+        use_chat_template=False,
+        fewshot=0,
+        algorithm="mdlm",
+    )
+    prompt = tokenizer("Question:", return_tensors="pt").input_ids.to(args.device)
+    prompt = prompt.expand(32, -1)
+
+    def sample():
+        with torch.no_grad():
+            return model.generate(
+                prompt,
+                algorithm="mdlm",
+                max_new_tokens=decoding.max_new_tokens,
+                num_steps=decoding.num_steps,
+                temperature=decoding.temperature,
+            )
+
+    samples, seconds = measure_generation(sample)
+    record = generation_record(
+        metrics=diversity_guards(samples[:, prompt.shape[1] :].cpu()),
+        seed=seed,
+        decoding=decoding,
+        nfe=decoding.num_steps,
+        latency_seconds=seconds,
+    )
+    print(f"    generation metrics (mdlm): {record['metrics']}", flush=True)
+    return record
 
 
 def main() -> None:
