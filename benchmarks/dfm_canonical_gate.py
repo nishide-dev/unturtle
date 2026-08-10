@@ -51,6 +51,32 @@ Design, per the frozen protocol and the #121 lessons:
 Usage (one seed per GPU; run seeds 0, 1, 2):
     uv run python benchmarks/dfm_canonical_gate.py --seed 0 --smoke
     uv run python benchmarks/dfm_canonical_gate.py --seed 0
+
+Frozen verdict (2026-08-10, 3 seeds on RTX 6000 Ada, defaults above; raw
+JSONs archived under dev/local/): **both gates NOT passed — capability
+promotion stays blocked, per the pre-registered surface.**
+
+    gate A (NFE load-bearing):    seed 0 undecidable (50% collapsed),
+                                  seed 1 FAIL, seed 2 undecidable (100%)
+    gate B (step-aware low-NFE):  seed 0 undecidable, seed 1 FAIL,
+                                  seed 2 undecidable
+
+MAUVE sat at 0.02-0.15 everywhere against a 0.979 held-out ceiling
+(sanity: random tokens 0.092, repetitive 0.025): at this budget the
+generated distribution is far from the reference regardless of arm or NFE,
+with widespread collapse flags.  The one clean seed (1) DID show the NFE
+direction on the ordinary arm — MAUVE(32) - MAUVE(1) = 0.112 - 0.068 =
++0.044 — but below the pre-frozen 0.05 margin, so it records as FAIL;
+the threshold was frozen before the run and is not moved after it.
+
+Reading: a 0.6B AR-initialized conversion fine-tuned for ~5k steps on a
+7.5k-example corpus does not reach a distribution where the quality-vs-NFE
+claim is testable, and neither directional result from the tiny control is
+demonstrable here.  Consequence for #65: `supports_dfm_generation` stays
+unpromoted; the public `dfm` family remains an explicit research opt-in
+path, which is exactly the honest posture #120 built.  A future rerun that
+wants decidability needs a different regime (longer training on a larger
+corpus, per the FS-DFM paper's own scale), not another pass at this one.
 """
 
 from __future__ import annotations
