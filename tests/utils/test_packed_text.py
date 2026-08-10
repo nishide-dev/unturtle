@@ -187,6 +187,36 @@ class TestPackedIO:
             write_packed(path, rows_then_boom(), BLOCK, metadata={})
         assert not path.exists(), "truncated corpus left at the final path"
         assert not (tmp_path / "packed.json").exists()
+        assert not (tmp_path / "packed.tmp").exists(), (
+            "interrupted run left its staging file (a dead multi-GB tmp on "
+            "real corpora)"
+        )
+
+    def test_a_crash_at_any_single_point_never_yields_data_without_sidecar(
+        self, tmp_path, monkeypatch
+    ):
+        """The ordering claim itself: simulate dying immediately after the
+        data lands at the final path — the sidecar must already be there,
+        because sidecar-less data is the one artifact the atomic design
+        exists to rule out (a crash the other side of the boundary leaves a
+        sidecar whose data is missing, which read_packed rejects loudly)."""
+        import os as os_module
+
+        real_replace = os_module.replace
+
+        def replace_then_die(src, dst):
+            real_replace(src, dst)
+            raise RuntimeError("crashed right after the data landed")
+
+        monkeypatch.setattr("unturtle.utils.packed_text.os.replace", replace_then_die)
+        rows = wrap_documents(docs_of(40), BLOCK, bos=BOS, eos=EOS)
+        path = tmp_path / "packed"
+        with pytest.raises(RuntimeError, match="crashed right after"):
+            write_packed(path, iter(rows), BLOCK, metadata={})
+        if path.exists():
+            assert (tmp_path / "packed.json").exists(), (
+                "data landed at the final path without its sidecar"
+            )
 
     def test_metadata_colliding_with_computed_fields_is_refused(self, tmp_path):
         """#132 review: computed truth wins over a caller's guess — but a
