@@ -19,7 +19,14 @@ stream: document token streams (each already carrying its trailing EOS
 separator — that is the tokenize step's contract, mdlm's ``tokens + [EOS]``)
 are concatenated, chunked into ``block_size - 2`` content tokens, and each
 chunk is wrapped ``[BOS] + chunk + [EOS]``.  The final partial chunk is
-dropped, matching mdlm's single end-of-corpus truncation.
+dropped exactly once, at end of stream.
+
+Deliberate divergence from mdlm's *realized* rows: upstream applies
+``_group_texts`` through ``datasets.map(batched=True)`` (batch_size 1000), so
+it drops a partial remainder per 1000-document map batch — losing ~0.5 rows
+per batch and shifting all subsequent chunk boundaries.  This implementation
+is the clean global definition (one truncation per corpus).  The #130 gate
+needs determinism and split consistency, not bug-for-bug boundary identity.
 
 Rows are uint16 (gpt2 + mask = 50258 ids fits); a corpus that does not is
 refused rather than silently wrapped.
@@ -58,8 +65,7 @@ def iter_wrapped_blocks(
             hi, lo = max(ids), min(ids)
             if hi > UINT16_MAX or lo < 0:
                 raise ValueError(
-                    f"token id outside uint16 range in packed row "
-                    f"(max {hi}, min {lo})"
+                    f"token id outside uint16 range in packed row (max {hi}, min {lo})"
                 )
             yield np.array(ids, dtype=np.uint16)
 

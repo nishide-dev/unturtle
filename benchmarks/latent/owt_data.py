@@ -23,7 +23,9 @@ Reproduces the mdlm data conventions exactly (dev/repos/mdlm/dataloader.py):
   document, no detokenizer for OWT;
 - packing: ``[BOS] + 1022 content tokens + [EOS]`` per row via
   ``unturtle.utils.packed_text`` (gpt2: BOS == EOS == 50256), final partial
-  chunk dropped once at end of corpus.
+  chunk dropped once at end of corpus — a deliberate, documented divergence
+  from mdlm's realized rows, which drop a remainder per 1000-document
+  ``datasets.map`` batch (see unturtle/utils/packed_text.py).
 
 Provenance note: mdlm loaded the script-based ``openwebtext`` dataset;
 ``datasets>=3`` resolves ``Skylion007/openwebtext`` to the hub's parquet
