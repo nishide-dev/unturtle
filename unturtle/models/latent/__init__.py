@@ -32,6 +32,10 @@ from .modeling_flowlm import (
     FlowLMDenoiserOutput,
     FlowLMModel,
 )
+from .modeling_ladiff_dit import (
+    LaDiffDiTConfig,
+    LatentConditionedMDLMDiT,
+)
 from .modeling_ladiff import (
     LaDiffConfig,
     LaDiffModel,
@@ -51,6 +55,8 @@ __all__ = [
     "FlowLMModel",
     "flowlm_loss",
     "LaDiffConfig",
+    "LaDiffDiTConfig",
+    "LatentConditionedMDLMDiT",
     "LaDiffModel",
     "LatentAutoencoderCodec",
     "LatentConditionedMDLM",
