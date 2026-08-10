@@ -63,10 +63,12 @@ class LaDiffDiTConfig(MDLMDiTConfig):
         num_latents: int = 512,
         latent_dim: int | None = None,
         latent_adapter_gaps: tuple[int, ...] | None = None,
+        encoder_layers: int = 4,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.num_latents = num_latents
+        self.encoder_layers = encoder_layers
         # Default: the decoder hidden size (768 for mdlm-owt) — the paper's
         # per-position latent dimensionality is not recoverable from the
         # text, recorded as a choice on #130.
