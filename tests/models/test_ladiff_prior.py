@@ -322,6 +322,9 @@ class TestSampler:
         sample_latent_prior(
             model, batch=2, steps=5, generator=torch.Generator().manual_seed(9)
         )
+        # Intent pin only: forward() encodes None as a zeros channel, so
+        # None and zeros are bit-identical downstream (#136 review) — this
+        # asserts the CALL contract, not an observable sample difference.
         assert seen[0] is None
         assert all(s is not None for s in seen[1:]), "self-cond not carried"
         assert len(seen) == 5

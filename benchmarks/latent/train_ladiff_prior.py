@@ -123,7 +123,11 @@ def main() -> None:
     rows, _ = read_packed(args.train_corpus)
     take = args.steps * ROWS_PER_STEP
     g = torch.Generator().manual_seed(args.seed + 1000)
-    order = torch.randperm(rows.shape[0], generator=g)[: min(take, rows.shape[0])]
+    assert take <= rows.shape[0], (
+        f"corpus has {rows.shape[0]} rows but the run needs {take}; an "
+        "exhausted order would crash mid-run with an opaque reshape error"
+    )
+    order = torch.randperm(rows.shape[0], generator=g)[:take]
     heldout, _ = read_packed(args.heldout_corpus)
     heldout_ids = torch.from_numpy(heldout[EVAL_ROWS].astype("int64"))
 
