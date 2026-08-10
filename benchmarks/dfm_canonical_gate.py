@@ -65,9 +65,18 @@ MAUVE sat at 0.02-0.15 everywhere against a 0.979 held-out ceiling
 (sanity: random tokens 0.092, repetitive 0.025): at this budget the
 generated distribution is far from the reference regardless of arm or NFE,
 with widespread collapse flags.  The one clean seed (1) DID show the NFE
-direction on the ordinary arm — MAUVE(32) - MAUVE(1) = 0.112 - 0.068 =
-+0.044 — but below the pre-frozen 0.05 margin, so it records as FAIL;
+direction on the ordinary arm — MAUVE(32) - MAUVE(1) = 0.1117 - 0.0685 =
++0.0433 — but below the pre-frozen 0.05 margin, so it records as FAIL;
 the threshold was frozen before the run and is not moved after it.
+
+Known limitation of the frozen rule (review-found; recorded rather than
+patched post-hoc): gate B's collapse denominator pools all three arms'
+points, so a collapsed point on the ONE arm whose superiority is being
+asserted dilutes to 1/6 and cannot trip the 25% bar alone — seed 1's
+single collapsed point was exactly `shortcut S=2`.  The verdict is
+unaffected on the merits (the shortcut also loses the healthy contrasts:
+0.0677 vs 0.0714 at S=2, 0.0686 vs 0.0867 at S=4), but the next iteration
+of this surface should count collapse per contrast, not per pool.
 
 Reading: a 0.6B AR-initialized conversion fine-tuned for ~5k steps on a
 7.5k-example corpus does not reach a distribution where the quality-vs-NFE
