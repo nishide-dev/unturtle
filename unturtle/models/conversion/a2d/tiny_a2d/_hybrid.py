@@ -76,11 +76,12 @@ def maybe_build_hybrid_mask(
         # not over a query window against a longer key history.  Building the
         # square mask anyway would silently mis-align every row.
         #
-        # Rejected rather than approximated because #63's scope is training,
-        # and the masked-diffusion generation path never supplies
-        # `prompt_lengths` — so this is only reachable by deliberately pairing
-        # hybrid attention with incremental decoding, which needs a rectangular
-        # formulation this slice does not define.
+        # Rejected rather than approximated: equation (3) has no rectangular
+        # formulation here.  Since #127 the masked-diffusion MDLM loop DOES
+        # supply `prompt_lengths` (cache-free, square) — and the block-decode
+        # capability probe excludes hybrid models outright so `auto` cannot
+        # route a hybrid model into a cache path; this raise remains the
+        # guard for a deliberate hybrid + use_cache pairing.
         raise ValueError(
             "hybrid_attention does not support a KV cache: attention is "
             f"rectangular (q_len={seq_len}, kv_len={key_value_length}) while "

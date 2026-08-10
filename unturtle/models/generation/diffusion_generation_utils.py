@@ -984,6 +984,25 @@ class MaskedDiffusionGenerationMixin:
 
         histories = [] if (return_dict_out and output_history) else None
 
+        # Hybrid-aware decoding (#127): a hybrid-trained model must decode
+        # under the topology it trained with, so the eq.-(3) prompt boundary
+        # rides EVERY denoise forward when — and only when — the model is
+        # hybrid.  The boundary is the PHYSICAL end of the prompt tensor
+        # (never `attention_mask.sum()`): under left padding the pads sit
+        # inside the boundary on the causal side, and the model forward's
+        # 2-D attention-mask intersection excludes them.
+        hybrid = bool(getattr(self.config, "hybrid_attention", False))
+        prompt_lengths = (
+            torch.full(
+                (input_ids.shape[0],),
+                input_ids.shape[1],
+                dtype=torch.long,
+                device=input_ids.device,
+            )
+            if hybrid
+            else None
+        )
+
         # Pad completion region with mask tokens
         x = F.pad(input_ids, (0, max_length - input_ids.shape[1]), value=mask_token_id)
 
@@ -991,12 +1010,19 @@ class MaskedDiffusionGenerationMixin:
             attention_mask = F.pad(
                 attention_mask, (0, max_length - attention_mask.shape[1]), value=1.0
             )
-            # Broadcast to [B, 1, L, L] for SDPA
-            attention_mask = torch.logical_and(
-                attention_mask.unsqueeze(1).unsqueeze(-2),
-                attention_mask.unsqueeze(1).unsqueeze(-1),
-            )
+            if not hybrid:
+                # Broadcast to [B, 1, L, L] for SDPA
+                attention_mask = torch.logical_and(
+                    attention_mask.unsqueeze(1).unsqueeze(-2),
+                    attention_mask.unsqueeze(1).unsqueeze(-1),
+                )
+            # Hybrid keeps the mask 2-D: a prebuilt 4-D mask is a complete
+            # specification by the `maybe_build_hybrid_mask` contract and
+            # would bypass the eq.-(3) intersection entirely.
         else:
+            # None also serves the hybrid branch: the model forward defaults
+            # a missing mask to all-ones before the eq.-(3) intersection
+            # (verified bit-identical), so no synthetic mask is needed here.
             attention_mask = None
 
         timesteps = torch.linspace(1, eps, steps + 1, device=x.device)
@@ -1007,9 +1033,10 @@ class MaskedDiffusionGenerationMixin:
             mask_index = x == mask_token_id
 
             # Forward pass — no logit shift (contrast with DreamGenerationMixin)
-            logits = self(
-                input_ids=x, attention_mask=attention_mask
-            ).logits  # [B, L, V]
+            forward_kwargs = {"input_ids": x, "attention_mask": attention_mask}
+            if prompt_lengths is not None:
+                forward_kwargs["prompt_lengths"] = prompt_lengths
+            logits = self(**forward_kwargs).logits  # [B, L, V]
 
             mask_logits = logits[mask_index]  # [N_masked, V]
             t = timesteps[i]
