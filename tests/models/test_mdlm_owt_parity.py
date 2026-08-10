@@ -105,12 +105,27 @@ def flash():
 @pytest.fixture(scope="module")
 def upstream_cpu(flash):
     """Upstream remote code, fp32 weights, CPU. Unpatched — shims are applied
-    around individual calls via flash_kernels_shimmed()."""
-    from transformers import AutoModelForMaskedLM
+    around individual calls via flash_kernels_shimmed().
 
-    return AutoModelForMaskedLM.from_pretrained(
-        REPO, trust_remote_code=True, torch_dtype=torch.float32
-    ).eval()
+    Built by instantiating the remote-code class directly and loading the
+    safetensors state dict strict — NOT via from_pretrained: the remote code
+    predates transformers 5.x, whose loading machinery requires post_init
+    state (``all_tied_weights_keys``) the upstream ``MDLM.__init__`` never
+    sets.  The manual path also keeps the reference free of any HF loading
+    transformations."""
+    import json
+
+    from huggingface_hub import hf_hub_download
+    from safetensors.torch import load_file
+    from transformers.dynamic_module_utils import get_class_from_dynamic_module
+
+    model_cls = get_class_from_dynamic_module("modeling_mdlm.MDLM", REPO)
+    config_cls = get_class_from_dynamic_module("configuration_mdlm.MDLMConfig", REPO)
+    with open(hf_hub_download(REPO, "config.json")) as f:
+        config = config_cls(**json.load(f))
+    model = model_cls(config)
+    model.load_state_dict(load_file(hf_hub_download(REPO, "model.safetensors")))
+    return model.eval()
 
 
 @pytest.fixture(scope="module")
@@ -225,29 +240,73 @@ class TestFp32LogitsParity:
 
 
 class TestCanonicalBf16Parity:
-    def test_native_bf16_matches_canonical_upstream(
+    def test_native_bf16_within_the_selfnoise_of_canonical_upstream(
         self, flash, upstream_cpu, native_cpu
     ):
+        """v2 rule (#130, declared after the v1 FAIL was recorded on the
+        issue): the two bf16 paths are DIFFERENT legitimate executions
+        (flash varlen + internal autocast vs flash_attn_func + external
+        autocast), so a fixed agreement constant is uncalibratable — v1's
+        99% was above what upstream's own bf16 achieves against its own
+        fp32 math (98.6%).  Calibrate on self-noise instead:
+
+          flips(cross)   <= flips(up-self) + flips(nat-self)
+          maxdiff(cross) <= maxdiff(up-self) + maxdiff(nat-self)
+          every cross-disagreeing position is a genuine near-tie in fp32
+          (margin < 0.5, vs an all-position median of ~2.5)
+
+        A conversion bug flips confidently-decided positions and shifts
+        logits beyond precision noise; self-noise cannot hide it."""
         import flash_attn.flash_attn_interface as fai
 
         assert fai.flash_attn_varlen_qkvpacked_func is not sdpa_varlen_qkvpacked, (
             "canonical leg must run the real flash kernels"
         )
+        batch_cpu = parity_batch("cpu")
+        up_fp32 = shimmed_upstream_logits(upstream_cpu, batch_cpu).float()
+        with torch.no_grad():
+            nat_fp32 = native_cpu(input_ids=batch_cpu).logits.float()
+
         upstream = upstream_cpu.cuda()
+        # Upstream's Rotary caches cos/sin as plain attributes keyed only on
+        # seq_len — a cache built during the CPU legs would be served to the
+        # CUDA triton kernel (crash) whenever the lengths coincide. Reset it.
+        upstream.backbone.rotary_emb.seq_len_cached = None
         native = native_cpu.cuda()
         batch = parity_batch("cuda")
         try:
             with torch.no_grad():
-                ref = upstream_logits(upstream, batch).float()
+                up_bf16 = upstream_logits(upstream, batch).float().cpu()
                 with torch.autocast("cuda", dtype=torch.bfloat16):
-                    got = native(input_ids=batch).logits.float()
+                    nat_bf16 = native(input_ids=batch).logits.float().cpu()
         finally:
             upstream_cpu.cpu()
             native_cpu.cpu()
-        agree = (ref.argmax(-1) == got.argmax(-1)).float().mean().item()
-        diff = (ref - got).abs().max().item()
-        assert agree > 0.99, f"canonical bf16 argmax agreement {agree}"
-        assert diff < 0.5, f"canonical bf16 max abs logit diff {diff}"
+
+        def flips(a, b):
+            return int((a.argmax(-1) != b.argmax(-1)).sum())
+
+        def maxdiff(a, b):
+            return (a - b).abs().max().item()
+
+        up_self, nat_self = flips(up_bf16, up_fp32), flips(nat_bf16, nat_fp32)
+        cross = flips(up_bf16, nat_bf16)
+        assert cross <= up_self + nat_self, (
+            f"cross argmax flips {cross} exceed combined self-noise "
+            f"{up_self}+{nat_self}"
+        )
+        assert maxdiff(up_bf16, nat_bf16) <= (
+            maxdiff(up_bf16, up_fp32) + maxdiff(nat_bf16, nat_fp32)
+        ), "cross logit diff exceeds combined self-noise"
+
+        disagree = up_bf16.argmax(-1) != nat_bf16.argmax(-1)
+        if bool(disagree.any()):
+            top2 = up_fp32[disagree].topk(2, dim=-1).values
+            worst_margin = (top2[:, 0] - top2[:, 1]).max().item()
+            assert worst_margin < 0.5, (
+                f"a confidently-decided position flipped (fp32 margin "
+                f"{worst_margin}); that is not precision noise"
+            )
 
 
 # ---------------------------------------------------------------------------
