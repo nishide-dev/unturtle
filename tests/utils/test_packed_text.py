@@ -122,6 +122,25 @@ class TestPackedIO:
         assert sidecar["split"] == "x"
         assert sidecar["block_size"] == BLOCK
 
+    def test_writer_refuses_malformed_rows(self, tmp_path):
+        """A caller streaming raw int64 rows (or the wrong width) must be
+        stopped at write time — a silently reinterpreted memmap corrupts the
+        corpus for every consumer downstream."""
+        with pytest.raises(ValueError, match="uint16"):
+            write_packed(
+                tmp_path / "bad",
+                iter([np.zeros(BLOCK, dtype=np.int64)]),
+                BLOCK,
+                metadata={},
+            )
+        with pytest.raises(ValueError, match="shape"):
+            write_packed(
+                tmp_path / "bad2",
+                iter([np.zeros(BLOCK + 1, dtype=np.uint16)]),
+                BLOCK,
+                metadata={},
+            )
+
     def test_reader_memory_maps(self, tmp_path):
         rows = wrap_documents(docs_of(40), BLOCK, bos=BOS, eos=EOS)
         path = tmp_path / "packed"
