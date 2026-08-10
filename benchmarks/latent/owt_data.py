@@ -77,14 +77,25 @@ def iter_tokenized_docs(dataset, tokenizer, eos_id: int):
 
 
 def build_split(split: str, out: Path, max_rows: int | None) -> dict:
+    import glob
+
     import datasets
+    from huggingface_hub import snapshot_download
     from transformers import AutoTokenizer
 
     from unturtle.utils.packed_text import iter_wrapped_blocks, write_packed
 
     tokenizer = AutoTokenizer.from_pretrained(TOKENIZER)
     eos_id = tokenizer.eos_token_id  # gpt2: BOS == EOS == 50256
-    dataset = datasets.load_dataset(DATASET, split=SPLITS[split])
+    # Read the locally cached parquet shards directly: the hub loader's
+    # per-file lock/verify pass hangs on stale NFS SoftFileLocks (observed
+    # twice on this box), and sorted shard filenames preserve the split's
+    # canonical row order exactly as the hub loader would.
+    snapshot = snapshot_download(DATASET, repo_type="dataset", local_files_only=True)
+    shards = sorted(glob.glob(f"{snapshot}/plain_text/train-*.parquet"))
+    if len(shards) != 80:
+        raise RuntimeError(f"expected 80 OWT parquet shards, found {len(shards)}")
+    dataset = datasets.load_dataset("parquet", data_files=shards, split=SPLITS[split])
 
     rows = iter_wrapped_blocks(
         iter_tokenized_docs(dataset, tokenizer, eos_id),
@@ -98,6 +109,7 @@ def build_split(split: str, out: Path, max_rows: int | None) -> dict:
     out.parent.mkdir(parents=True, exist_ok=True)
     metadata = {
         "dataset": DATASET,
+        "snapshot_revision": Path(snapshot).name,
         "split": SPLITS[split],
         "tokenizer": TOKENIZER,
         "bos_id": eos_id,
