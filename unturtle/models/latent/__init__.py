@@ -32,10 +32,6 @@ from .modeling_flowlm import (
     FlowLMDenoiserOutput,
     FlowLMModel,
 )
-from .modeling_ladiff_dit import (
-    LaDiffDiTConfig,
-    LatentConditionedMDLMDiT,
-)
 from .modeling_ladiff import (
     LaDiffConfig,
     LaDiffModel,
@@ -43,6 +39,10 @@ from .modeling_ladiff import (
     LatentConditionedMDLM,
     PerceiverLiteEncoder,
     latent_autoencoder_loss,
+)
+from .modeling_ladiff_dit import (
+    LaDiffDiTConfig,
+    LatentConditionedMDLMDiT,
 )
 from .objective import flowlm_loss
 
