@@ -17,15 +17,23 @@ _BOUNDARY_SCRIPT = textwrap.dedent(
     """
     import sys
 
-    # Make any import of lm_eval fail, as if it were not installed.
-    class _BlockLmEval:
+    # Make any import of the optional deps fail, as if not installed.
+    # lm_eval and mauve share the same boundary rule (#123): the eval
+    # package must import without either.
+    class _BlockOptionalDeps:
+        _BLOCKED = ("lm_eval", "mauve")
+
         def find_spec(self, name, path=None, target=None):
-            if name == "lm_eval" or name.startswith("lm_eval."):
-                raise ImportError("simulated: lm_eval not installed")
+            if any(
+                name == blocked or name.startswith(blocked + ".")
+                for blocked in self._BLOCKED
+            ):
+                raise ImportError(f"simulated: {name} not installed")
             return None
 
-    sys.meta_path.insert(0, _BlockLmEval())
+    sys.meta_path.insert(0, _BlockOptionalDeps())
     sys.modules.pop("lm_eval", None)
+    sys.modules.pop("mauve", None)
 
     # These must all import WITHOUT lm_eval present.
     import unturtle.eval  # noqa: F401

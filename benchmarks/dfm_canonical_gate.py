@@ -93,7 +93,6 @@ from __future__ import annotations
 import argparse
 import copy
 import json
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -288,53 +287,47 @@ def judge_nll(judge, samples):
 
 
 def evaluate_arm(model, wrapper, judge, tokenizer, reference_texts, args, *, label):
-    import mauve  # benchmark-only optional dependency (mauve-text)
+    # #123 consumer 1: the canonical `unturtle.eval` generation surface
+    # replaces the formerly-inline metric math.  Same operations, same keys —
+    # differential-smoke-verified bit-neutral; the frozen verdict semantics
+    # below this function are untouched.
+    from unturtle.eval import diversity_guards, mauve_score, measure_generation
 
     model.eval()
     wrapper.eval()
     model.dfm_denoiser = lambda x_t, t, h: wrapper(x_t, t, float(h))
     curve = {}
     for steps in args.nfe_grid:
-        start = time.perf_counter()
-        samples = model.generate(
-            algorithm="dfm",
-            batch_size=args.eval_samples,
-            steps=steps,
-            seq_len=args.seq_len,
-            generator=torch.Generator(device=args.device).manual_seed(1234),
-        )
-        elapsed = time.perf_counter() - start
-
-        distinct = (
-            float(
-                torch.tensor(
-                    [row.unique().numel() for row in samples], dtype=torch.float32
-                ).mean()
+        samples, elapsed = measure_generation(
+            lambda steps=steps: model.generate(
+                algorithm="dfm",
+                batch_size=args.eval_samples,
+                steps=steps,
+                seq_len=args.seq_len,
+                generator=torch.Generator(device=args.device).manual_seed(1234),
             )
-            / samples.shape[1]
         )
-        counts = torch.bincount(samples.reshape(-1)).float()
-        frequencies = counts[counts > 0] / counts.sum()
-        entropy = float(-(frequencies * frequencies.log()).sum())
-        unique_rows = len({tuple(r.tolist()) for r in samples}) / samples.shape[0]
+
+        guards = diversity_guards(samples)
+        entropy = guards["pooled_unigram_entropy"]
+        unique_rows = guards["unique_rows_fraction"]
+        # The collapse RULE stays experiment-local: its thresholds are this
+        # gate's pre-registered surface, not evaluation-library code (#123).
         collapsed = unique_rows < 0.5 or entropy < 3.0
 
         generated_texts = tokenizer.batch_decode(samples, skip_special_tokens=True)
-        score = mauve.compute_mauve(
-            p_text=reference_texts,
-            q_text=generated_texts,
+        score = mauve_score(
+            reference_texts,
+            generated_texts,
             featurize_model_name="gpt2",
             device_id=torch.device(args.device).index or 0,
             max_text_length=args.seq_len,
-            verbose=False,
-        ).mauve
+        )
 
         curve[steps] = {
             "mauve": float(score),
             "judge_nll": judge_nll(judge, samples),
-            "distinct_fraction": distinct,
-            "pooled_unigram_entropy": entropy,
-            "unique_rows_fraction": unique_rows,
+            **guards,
             "collapsed": collapsed,
             "sample_seconds": elapsed,
         }
