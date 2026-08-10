@@ -60,6 +60,32 @@ dev/local/hybrid_vs_bidirectional_2026-08-09.md):
     cost parity: ~4.5-4.7 steps/s and 9.1 GiB peak for both arms
     (seq_len 256 < hybrid_fast_min_seq_len, so the hybrid arm ran the
     dense eq.-(3) mask path).
+
+Frozen #125 readout (2026-08-10, 2 seeds, pre-registered protocol with the
+attention-mask fix from the #126 review; raw JSON under dev/local/):
+
+    prompt-conditioned generation (mdlm, steps=16, 128 held-out questions,
+    MAUVE gpt2 / max_text_length 256 / num_buckets 12):
+        arm            seed 0                    seed 1
+        bidirectional  MAUVE 0.0519 exact 2/128  MAUVE 0.0573 exact 0/128
+        hybrid         MAUVE 0.0048 exact 0/128  MAUVE 0.0048 exact 0/128
+    - no collapsed points (unique rows 1.00, entropy 4.5-5.5): per the
+      frozen readout the direction is DECIDABLE and favors BIDIRECTIONAL
+      on free generation — the OPPOSITE sign of the training-side NLL win
+      above.  Mechanism note, recorded with the result: the mdlm generate
+      path threads no `prompt_lengths`, so the hybrid-trained model decodes
+      under a topology it never trained with (prompt attention bidirectional
+      at decode, causal in training — exactly the mismatch
+      docs/a2d-attention-topology.md warns against); both hybrid seeds sit
+      at the metric floor (0.0048), consistent with that mismatch dominating.
+      A hybrid-aware masked generation path (prompt_lengths threading) is
+      the follow-up this measurement motivates — a library feature, out of
+      #125's scope.
+    - GSM8K exact match near zero for both arms: not measurable at this
+      budget, per the pre-registration.
+    - absolute MAUVE is low for BOTH arms (0.005-0.057 vs the 0.98
+      held-out ceiling): a 400-step SFT is far from the reference
+      distribution regardless of arm — the #122 regime lesson again.
 """
 
 from __future__ import annotations
