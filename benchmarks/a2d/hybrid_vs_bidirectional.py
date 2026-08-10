@@ -92,14 +92,14 @@ seeds; the ONLY change is the #128 library fix — the hybrid arm now decodes
 under its training topology; raw JSON under dev/local/):
 
         arm            seed 0                    seed 1
-        bidirectional  MAUVE 0.0519 exact 2/128  MAUVE 0.0573 exact 1/128
+        bidirectional  MAUVE 0.0519 exact 2/128  MAUVE 0.0573 exact 0/128
         hybrid         MAUVE 0.2315 exact 1/128  MAUVE 0.4070 exact 1/128
     - the direction FLIPS and is decidable (same sign both seeds, no
       collapsed points): with matched topology, HYBRID wins free generation
       by 4.5-7x — consistent with its training-side NLL win above.  The
       mismatched table above therefore measured the topology mismatch
-      itself: threading the boundary moved hybrid MAUVE 0.0048 -> 0.23/0.41
-      (48-85x).
+      itself: threading the boundary moved hybrid MAUVE per seed from
+      0.00475/0.00484 to 0.2315/0.4070 (49x / 84x).
     - the bidirectional rows are BIT-IDENTICAL to the mismatched run —
       the #128 non-hybrid byte-identity property, confirmed in the wild.
     - absolute values remain far below the 0.98 ceiling for both arms (the
