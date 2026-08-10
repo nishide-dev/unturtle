@@ -39,7 +39,7 @@ FROZEN RESULTS (2026-08-11, both seeds, raw JSONs
 dev/local/ladiff_ae/gate_a_seed{0,1}.json):
 
 - v1 verdict as pre-registered: FAIL on both seeds — but via an instrument
-  defect: shuffled == true EXACTLY (NLL deltas 0.0 / 0.0 / 6e-8), because
+  defect: shuffled == true EXACTLY (NLL deltas <= 6e-8 on both seeds), because
   eq.(32) cross-attention is permutation-invariant in its keys/values: the
   decoder reads z as a SET, so the shuffled clause of criterion 2 is
   architecturally unsatisfiable.  Recorded on #130; criterion 2' (v2,
@@ -55,10 +55,13 @@ dev/local/ladiff_ae/gate_a_seed{0,1}.json):
     0  1.00    7.258 / 7.545 / 8.015    0.0447 / 0.0367    +0.287   -1.63
     1  0.75    4.599 / 4.628 / 4.733    0.2655 / 0.2636    +0.029   -3.56
     1  0.90    6.023 / 6.092 / 6.369    0.1252 / 0.1227    +0.069   -4.00
-    1  1.00    7.242 / 7.544 / 8.007    0.0435 / 0.0366    +0.302   -1.53
+    1  1.00    7.242 / 7.544 / 8.006    0.0435 / 0.0366    +0.302   -1.53
 
   Wrong latents are actively HARMFUL (worse than dropout): the decoder
-  genuinely trusts the latent content.  benefit(true) rises monotonically
+  genuinely trusts the latent content.  Note criterion 2' is a
+  sign-directional test (benefit ratio < 0.25): harmfulness (negative
+  ratios) satisfies it a fortiori — it is NOT a magnitude bound, and the
+  frozen ratios of -1.5 to -4.2 mean the threshold was never binding.  benefit(true) rises monotonically
   in t on both seeds (auxiliary, ungated) — the paper's "latent matters
   most where clean context is scarce" mechanism, observed.
 """
@@ -111,7 +114,11 @@ def arm_latents(autoencoder, clean_ids: torch.Tensor, t: float) -> dict:
 
     wrong = true.roll(-WRONG_OFFSET, dims=0)
 
-    perm_g = torch.Generator().manual_seed(7100)
+    # 7900: outside the 7000 + t*100 eta-seed block — at t=1.0 the old 7100
+    # collided with the dropout arm's generator (harmless in the frozen run:
+    # independent fresh generators, and the shuffled arm is architecturally
+    # degenerate — no recorded figure depends on the permutation).
+    perm_g = torch.Generator().manual_seed(7900)
     perm = torch.randperm(true.shape[1], generator=perm_g).to(true.device)
     shuffled = true[:, perm, :]
     return {"true": true, "dropout": dropout, "wrong": wrong, "shuffled": shuffled}

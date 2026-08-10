@@ -74,6 +74,15 @@ def build_autoencoder(device: str):
     decoder.model.load_state_dict(base.model.state_dict())
     autoencoder = LaDiffAutoencoder(config, decoder)  # copies the trunk FIRST
     decoder.open_latent_channel(std=OPEN_CHANNEL_STD)  # then the deviation
+    # The ordering above is load-bearing (#135 review): the frozen feature
+    # trunk must be the PRISTINE checkpoint, never one with opened adapters
+    # baked in. Enforced, not just commented:
+    pristine = torch.stack(
+        [p.detach().float().mean() for p in base.model.parameters()]
+    ).cpu()
+    assert torch.allclose(autoencoder.trunk_fingerprint, pristine), (
+        "feature trunk is not the pristine checkpoint"
+    )
     return autoencoder.to(device)
 
 
