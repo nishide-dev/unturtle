@@ -51,6 +51,13 @@ from .modeling_ladiff_dit import (
     LatentConditionedMDLMDiT,
 )
 from .objective import flowlm_loss
+from .prior_dit import (
+    LaDiffPriorConfig,
+    LatentPriorDenoiser,
+    TanhLogSNRSchedule,
+    ladiff_prior_loss,
+    sample_latent_prior,
+)
 
 __all__ = [
     "Codec",
@@ -61,6 +68,11 @@ __all__ = [
     "FlowLMModel",
     "flowlm_loss",
     "LaDiffAutoencoder",
+    "LaDiffPriorConfig",
+    "LatentPriorDenoiser",
+    "TanhLogSNRSchedule",
+    "ladiff_prior_loss",
+    "sample_latent_prior",
     "LaDiffEncoder",
     "RunningStandardizer",
     "ladiff_autoencoder_loss",
