@@ -34,6 +34,33 @@ Protocol (issue #130, issuecomment-5242035162):
 - auxiliary (recorded, NOT gated): monotonicity of benefit(true) in t.
 
 Stop/go: FAIL => no prior-side rescue; the negative is frozen.
+
+FROZEN RESULTS (2026-08-11, both seeds, raw JSONs
+dev/local/ladiff_ae/gate_a_seed{0,1}.json):
+
+- v1 verdict as pre-registered: FAIL on both seeds — but via an instrument
+  defect: shuffled == true EXACTLY (NLL deltas 0.0 / 0.0 / 6e-8), because
+  eq.(32) cross-attention is permutation-invariant in its keys/values: the
+  decoder reads z as a SET, so the shuffled clause of criterion 2 is
+  architecturally unsatisfiable.  Recorded on #130; criterion 2' (v2,
+  declared after the v1 FAIL was recorded) drops the shuffled clause and
+  keeps the content-specificity control.  v2 is computed from the SAME
+  frozen run outputs — no new runs, no tuning.
+
+- v2 verdict: PASS, both seeds, all t.
+
+    seed t     NLL true/dropout/wrong    rec true/dropout   benefit  wrong-ratio
+    0  0.75    4.598 / 4.629 / 4.732    0.2655 / 0.2636    +0.031   -3.32
+    0  0.90    6.023 / 6.092 / 6.382    0.1252 / 0.1226    +0.069   -4.19
+    0  1.00    7.258 / 7.545 / 8.015    0.0447 / 0.0367    +0.287   -1.63
+    1  0.75    4.599 / 4.628 / 4.733    0.2655 / 0.2636    +0.029   -3.56
+    1  0.90    6.023 / 6.092 / 6.369    0.1252 / 0.1227    +0.069   -4.00
+    1  1.00    7.242 / 7.544 / 8.007    0.0435 / 0.0366    +0.302   -1.53
+
+  Wrong latents are actively HARMFUL (worse than dropout): the decoder
+  genuinely trusts the latent content.  benefit(true) rises monotonically
+  in t on both seeds (auxiliary, ungated) — the paper's "latent matters
+  most where clean context is scarce" mechanism, observed.
 """
 
 from __future__ import annotations
