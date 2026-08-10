@@ -15,6 +15,15 @@
 from .base import BaseEvaluator
 from .diffusion import MaskedDiffusionEvaluator
 from .generation import GenerationEvaluator
+from .generation_metrics import (
+    distinct_fraction,
+    diversity_guards,
+    generation_record,
+    mauve_score,
+    measure_generation,
+    pooled_unigram_entropy,
+    unique_rows_fraction,
+)
 from .gsm8k import GSM8KEvaluator
 
 __all__ = [
@@ -22,4 +31,11 @@ __all__ = [
     "MaskedDiffusionEvaluator",
     "GenerationEvaluator",
     "GSM8KEvaluator",
+    "distinct_fraction",
+    "diversity_guards",
+    "generation_record",
+    "mauve_score",
+    "measure_generation",
+    "pooled_unigram_entropy",
+    "unique_rows_fraction",
 ]
