@@ -1019,11 +1019,10 @@ class MaskedDiffusionGenerationMixin:
             # Hybrid keeps the mask 2-D: a prebuilt 4-D mask is a complete
             # specification by the `maybe_build_hybrid_mask` contract and
             # would bypass the eq.-(3) intersection entirely.
-        elif hybrid:
-            # No padding: an all-ones 2-D mask keeps the model-side
-            # intersection well-defined while changing nothing else.
-            attention_mask = torch.ones_like(x)
         else:
+            # None also serves the hybrid branch: the model forward defaults
+            # a missing mask to all-ones before the eq.-(3) intersection
+            # (verified bit-identical), so no synthetic mask is needed here.
             attention_mask = None
 
         timesteps = torch.linspace(1, eps, steps + 1, device=x.device)
