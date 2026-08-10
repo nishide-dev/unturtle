@@ -301,6 +301,9 @@ def run_arm(args, hybrid, seed, train_rows, eval_pack, output_dir):
         "final_nll_mean": callback.curve[-1]["mean"],
         "train_seconds": elapsed,
         "steps_per_second": args.steps / elapsed,
+        # Read BEFORE the generation section below allocates: dict values
+        # evaluate top-to-bottom, and that ordering is what keeps the frozen
+        # training-memory number unaffected by the additive section.
         "peak_memory_gib": torch.cuda.max_memory_allocated(args.device) / 2**30,
         # #123 consumer 2: free-generation metrics through the canonical
         # `unturtle.eval` surface, via the MASKED family's own path (mdlm) —
@@ -340,11 +343,16 @@ def generation_metrics_section(model, tokenizer, args, *, seed):
 
     def sample():
         with torch.no_grad():
+            # The masked generation config names this field `steps` (the
+            # harness adapter does the same translation); `num_steps=` would
+            # be silently DISCARDED by GenerationConfig.update and the run
+            # would execute the 128-step default while recording nfe=16 —
+            # the exact record-vs-execution mismatch #123 exists to prevent.
             return model.generate(
                 prompt,
                 algorithm="mdlm",
                 max_new_tokens=decoding.max_new_tokens,
-                num_steps=decoding.num_steps,
+                steps=decoding.num_steps,
                 temperature=decoding.temperature,
             )
 
