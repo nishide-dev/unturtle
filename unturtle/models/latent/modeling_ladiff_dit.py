@@ -159,8 +159,24 @@ class LatentConditionedMDLMDiT(MDLMDiTPreTrainedModel, MaskedDiffusionGeneration
     def freeze_for_autoencoder_training(self) -> None:
         """Paper C.1: the pretrained embedding table is frozen during AE
         training (stability); everything else stays trainable.  The paper's
-        encoder/decoder warmup asymmetry is the training loop's job."""
+        encoder/decoder warmup asymmetry is the training loop's job.
+
+        NOTE (#134 review): with both adapter convs zero-initialized (eq. 32
+        verbatim), dL/dz = 0 identically — the ENCODER receives no gradient
+        until conv_out moves off zero.  A training script implementing the
+        paper's 1000-step encoder-first warmup literally would burn it on
+        zero gradients.  Use :meth:`open_latent_channel` at AE-training
+        start (a recorded deviation, pinned in the run protocol) if the
+        encoder is meant to learn from step 0."""
         self.model.vocab_embed.embedding.requires_grad_(False)
+
+    def open_latent_channel(self, std: float = 1e-3) -> None:
+        """Give every adapter's OUTER conv a small non-zero init so gradient
+        reaches the encoder from step 0 (see freeze_for_autoencoder_training
+        NOTE).  Breaks exact init-bitwise identity by design — call it only
+        when training is about to start, never on a model used for parity."""
+        for adapter in self.latent_adapters.values():
+            nn.init.normal_(adapter.conv_out.weight, std=std)
 
     def forward(
         self,

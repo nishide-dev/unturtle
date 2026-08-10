@@ -315,10 +315,6 @@ class TestAutoencoderLoss:
         assert torch.equal(l1["total"], l2["total"])
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-q"])
-
-
 class TestStaticFeatureExtractor:
     def test_features_do_not_chase_the_finetuning_decoder(self):
         """The extractor is the trunk AS OF CONSTRUCTION (the paper's frozen
@@ -382,3 +378,98 @@ class TestDeadRowGuard:
                 ae, ids, generator=torch.Generator().manual_seed(seed)
             )
             assert torch.isfinite(loss["total"]), f"seed {seed} produced NaN"
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-q"])
+
+
+class TestCompositionLayer:
+    """#134 review Criticals: device movement, checkpoint identity, dtype."""
+
+    @pytest.mark.gpu
+    def test_the_whole_autoencoder_runs_on_cuda(self):
+        if not torch.cuda.is_available():
+            pytest.skip("requires CUDA")
+        ae, ids = TestAlgorithmOneBranches().seeded_ae()
+        ae = ae.to("cuda")
+        loss = ladiff_autoencoder_loss(
+            ae, ids.cuda(), generator=torch.Generator().manual_seed(0)
+        )
+        assert loss["total"].device.type == "cuda"
+        assert torch.isfinite(loss["total"])
+
+    def test_bf16_conversion_leaves_the_statistics_in_fp32(self):
+        """#134 review: bf16 accumulators freeze `count` once it exceeds the
+        mantissa (increments vanish) and quantize mean/m2 — silently
+        poisoning the statistics the prior slice consumes."""
+        ae, ids = TestAlgorithmOneBranches().seeded_ae()
+        ae = ae.to(torch.bfloat16)
+        for std in (ae.feature_standardizer, ae.latent_standardizer):
+            assert std.count.dtype == torch.float32
+            assert std.mean.dtype == torch.float32
+            assert std.m2.dtype == torch.float32
+        std = RunningStandardizer(4).to(torch.bfloat16)
+        std.train()
+        for _ in range(300):
+            std(torch.randn(7, 4))
+        assert float(std.count) == 2100.0, "count lost increments"
+
+    def test_loading_over_a_different_trunk_is_refused(self):
+        """#134 review Critical: the frozen extractor is not persisted (it
+        is bitwise the published checkpoint), so loading an AE state dict
+        onto an instance built around a DIFFERENT trunk would silently swap
+        the feature space.  A fingerprint in the state dict makes that loud."""
+        ae, _ = TestAlgorithmOneBranches().seeded_ae()
+        state = ae.state_dict()
+
+        torch.manual_seed(123)  # a different random trunk
+        other_decoder = LatentConditionedMDLMDiT(config())
+        other = LaDiffAutoencoder(config(), other_decoder)
+        with pytest.raises(ValueError, match="trunk"):
+            other.load_state_dict(state)
+
+    def test_loading_over_the_same_trunk_succeeds_and_preserves_features(self):
+        ae, ids = TestAlgorithmOneBranches().seeded_ae()
+        state = ae.state_dict()
+        torch.manual_seed(0)  # the same construction path as autoencoder()
+        twin_decoder = LatentConditionedMDLMDiT(config())
+        twin = LaDiffAutoencoder(config(), twin_decoder)
+        twin.load_state_dict(state)
+        with torch.no_grad():
+            assert torch.equal(twin.features(ids), ae.features(ids))
+
+    def test_eval_normalization_with_empty_statistics_is_refused(self):
+        """#134 review: eval at count=0 would normalize by sqrt(eps) and
+        blow features up 300x (or hand the decoder a near-zero latent in
+        the dropout branch) — refuse instead of guessing."""
+        std = RunningStandardizer(HIDDEN).eval()
+        with pytest.raises(RuntimeError, match="statistics"):
+            std(torch.randn(2, 4, HIDDEN))
+
+
+class TestOpenLatentChannelAPI:
+    def test_open_latent_channel_lets_the_encoder_learn_from_step_zero(self):
+        """#134 review: eq.(32)'s double zero-init means dL/dz = 0 until
+        conv_out moves — the paper's encoder-first warmup would burn on zero
+        gradients.  The supported API opens the channel; the AE run protocol
+        pins the std as a recorded deviation."""
+        _, ids = TestAlgorithmOneBranches().seeded_ae()
+        ae2 = autoencoder()  # fresh, unopened
+        ae2.decoder.open_latent_channel(std=1e-3)
+        losses = ladiff_autoencoder_loss(
+            ae2,
+            ids,
+            feature_mask_p=0.0,
+            feature_noise_std=0.0,
+            latent_mask_p=0.0,
+            latent_dropout_p=0.0,
+            generator=torch.Generator().manual_seed(0),
+        )
+        losses["total"].backward()
+        grads = sum(
+            float(p.grad.abs().sum())
+            for p in ae2.encoder.parameters()
+            if p.grad is not None
+        )
+        assert grads > 0, "opened channel still starves the encoder"

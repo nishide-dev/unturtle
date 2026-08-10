@@ -108,6 +108,18 @@ class RunningStandardizer(nn.Module):
         self.register_buffer("mean", torch.zeros(dim))
         self.register_buffer("m2", torch.zeros(dim))
 
+    def _apply(self, fn, recurse=True):
+        """Device moves apply; dtype casts must NOT (#134 review): bf16
+        accumulators freeze ``count`` once past the mantissa (increments of
+        a batch size vanish entirely) and quantize mean/m2 — silently
+        poisoning the statistics the prior slice consumes.  Re-pin fp32."""
+        module = super()._apply(fn, recurse)
+        for name in ("count", "mean", "m2"):
+            buffer = getattr(module, name)
+            if buffer.dtype is not torch.float32:
+                setattr(module, name, buffer.float())
+        return module
+
     @property
     def std(self) -> torch.Tensor:
         variance = self.m2 / self.count.clamp_min(1.0)
@@ -128,7 +140,13 @@ class RunningStandardizer(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
             self._update(x)
-        return (x - self.mean) / self.std
+        elif float(self.count) == 0.0:
+            raise RuntimeError(
+                "RunningStandardizer has no statistics yet (count=0): an "
+                "eval-mode normalization would divide by sqrt(eps) and blow "
+                "the stream up ~300x. Train it first or load statistics."
+            )
+        return ((x.float() - self.mean) / self.std).to(x.dtype)
 
 
 class LaDiffAutoencoder(nn.Module):
@@ -153,21 +171,50 @@ class LaDiffAutoencoder(nn.Module):
         trunk = copy.deepcopy(decoder.model).eval()
         trunk.requires_grad_(False)
         # Non-registered: bitwise the published checkpoint's trunk (see
-        # module docstring), rebuilt on load rather than persisted.
+        # module docstring), rebuilt from the checkpoint on load rather than
+        # persisted.  The fingerprint below makes that contract ENFORCED:
+        # loading an AE state dict onto an instance built around a different
+        # trunk raises instead of silently swapping the feature space.
         object.__setattr__(self, "feature_trunk", trunk)
+        self.register_buffer("trunk_fingerprint", self._trunk_fingerprint())
+
+    def _trunk_fingerprint(self) -> torch.Tensor:
+        return torch.stack(
+            [p.detach().float().mean() for p in self.feature_trunk.parameters()]
+        ).cpu()
+
+    def load_state_dict(self, state_dict, strict: bool = True, assign: bool = False):
+        result = super().load_state_dict(state_dict, strict=strict, assign=assign)
+        expected = self.trunk_fingerprint.cpu()
+        actual = self._trunk_fingerprint()
+        if not torch.allclose(actual, expected, rtol=1e-3, atol=1e-5):
+            raise ValueError(
+                "This state dict was trained against a DIFFERENT frozen "
+                "feature trunk (fingerprint mismatch). The trunk is not "
+                "persisted — rebuild this autoencoder around the same "
+                "pretrained checkpoint (load_mdlm_owt) before loading."
+            )
+        return result
 
     @torch.no_grad()
     def features(self, input_ids: torch.Tensor) -> torch.Tensor:
         """Frozen-trunk hidden states of the clean sequence (the BERT-
-        feature substitute): the trunk loop without the output head."""
+        feature substitute): the trunk loop without the output head.
+
+        The trunk is non-registered, so ``Module._apply`` never moves it —
+        follow the input's device lazily here (#134 review), and hand the
+        (always-fp32) features to the encoder in the encoder's dtype."""
         trunk = self.feature_trunk
+        device = input_ids.device
+        if next(trunk.parameters()).device != device:
+            trunk.to(device)
         batch, length = input_ids.shape
         x = trunk.vocab_embed(input_ids)
         c = F.silu(trunk.cond).unsqueeze(0).expand(batch, -1)
         cos, sin = trunk.rotary(length, input_ids.device)
         for block in trunk.blocks:
             x = block(x, cos, sin, c, None)
-        return x
+        return x.to(self.encoder.queries.dtype)
 
 
 def _draw(shape, generator, device):
@@ -212,7 +259,10 @@ def ladiff_autoencoder_loss(
     if float(torch.rand((), generator=generator)) < 0.5:
         keep = _draw(features.shape, generator, device) >= feature_mask_p
         features = features * keep
-    elif feature_noise_std > 0:
+    else:
+        # Unconditional else (Algorithm 1 lines 4-8): at sigma=0 this is the
+        # identity, but it still CONSUMES the noise draw — keeping the RNG
+        # stream independent of the hyperparameter value (#134 review).
         noise = torch.randn(features.shape, generator=generator).to(device)
         features = (
             1.0 - feature_noise_std**2
