@@ -239,3 +239,37 @@ class TestGenerationStillWorks:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
+
+
+@pytest.mark.slow
+class TestRealCheckpointComposition:
+    def test_real_mdlm_owt_is_bitwise_intact_under_the_adapters(self):
+        """The tiny bitwise pin, composed with the real conversion (#131):
+        wrapping the actual mdlm-owt trunk in zero-init adapters must leave
+        its logits bitwise unchanged, latents or not."""
+        from unturtle.models.backbones.mdlm_dit.convert_mdlm_owt import (
+            load_mdlm_owt,
+        )
+
+        base = load_mdlm_owt()
+        config = LaDiffDiTConfig(
+            vocab_size=base.config.vocab_size,
+            hidden_size=base.config.hidden_size,
+            cond_dim=base.config.cond_dim,
+            num_hidden_layers=base.config.num_hidden_layers,
+            num_attention_heads=base.config.num_attention_heads,
+            dropout=base.config.dropout,
+            max_position_embeddings=base.config.max_position_embeddings,
+            mask_token_id=base.config.mask_token_id,
+        )
+        conditioned = LatentConditionedMDLMDiT(config).eval()
+        conditioned.model.load_state_dict(base.model.state_dict())
+
+        g = torch.Generator().manual_seed(0)
+        ids = torch.randint(0, 50257, (2, 96), generator=g)
+        ids[0, torch.rand(96, generator=g) < 0.3] = 50257
+        latents = torch.randn(2, config.num_latents, config.latent_dim, generator=g)
+        with torch.no_grad():
+            reference = base(input_ids=ids).logits
+            conditioned_logits = conditioned(input_ids=ids, latents=latents).logits
+        assert torch.equal(conditioned_logits, reference)
