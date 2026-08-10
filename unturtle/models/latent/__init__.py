@@ -19,6 +19,12 @@ generation algorithm registers in ``unturtle.models.generation.sampler``
 (centrally, like every other family — this package never self-registers).
 """
 
+from .autoencoder_dit import (
+    LaDiffAutoencoder,
+    LaDiffEncoder,
+    RunningStandardizer,
+    ladiff_autoencoder_loss,
+)
 from .codec import Codec, EmbeddingRoundingCodec
 from .meanflow import (
     MeanFlowDenoiser,
@@ -54,6 +60,10 @@ __all__ = [
     "FlowLMDenoiserOutput",
     "FlowLMModel",
     "flowlm_loss",
+    "LaDiffAutoencoder",
+    "LaDiffEncoder",
+    "RunningStandardizer",
+    "ladiff_autoencoder_loss",
     "LaDiffConfig",
     "LaDiffDiTConfig",
     "LatentConditionedMDLMDiT",
