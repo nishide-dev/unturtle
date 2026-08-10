@@ -62,10 +62,33 @@ class TestWrapSemantics:
 
     def test_documents_flow_across_row_boundaries(self):
         """No per-document row alignment: doc 2 starts mid-row right after
-        doc 1's separator, as in mdlm's global concatenation."""
-        rows = wrap_documents(docs_of(3, 4), BLOCK, bos=BOS, eos=EOS)
+        doc 1's separator, as in mdlm's global concatenation.  Sized so two
+        full rows survive — every asserted token is real (#132 review: the
+        earlier `[: len(flat)]` truncation made this partly self-satisfying)."""
+        rows = wrap_documents(docs_of(3, 8), BLOCK, bos=BOS, eos=EOS)
         flat = rows[:, 1:-1].flatten().tolist()
-        assert flat[:9] == [0, 1, 2, EOS, 3, 4, 5, 6, EOS][: len(flat)]
+        assert flat == [0, 1, 2, EOS, 3, 4, 5, 6, 7, 8, 9, 10]
+
+    def test_empty_and_all_empty_corpora_yield_zero_rows(self):
+        assert wrap_documents([], BLOCK, bos=BOS, eos=EOS).shape == (0, BLOCK)
+        assert wrap_documents([[], [], []], BLOCK, bos=BOS, eos=EOS).shape == (
+            0,
+            BLOCK,
+        )
+
+    def test_block_size_guard_fires_at_call_time(self):
+        """A generator that only raises on first next() attributes the error
+        to whoever consumes it (e.g. deep inside write_packed, after the
+        output file exists) — the guard must fire eagerly."""
+        with pytest.raises(ValueError, match="block_size"):
+            iter_wrapped_blocks(iter([[1, 2, 3]]), 2, bos=BOS, eos=EOS)
+
+    def test_out_of_range_frame_ids_raise_too(self):
+        """bos/eos are checked, not just content tokens."""
+        with pytest.raises(ValueError, match="uint16"):
+            wrap_documents([[1] * 12], BLOCK, bos=70000, eos=EOS)
+        with pytest.raises(ValueError, match="uint16"):
+            wrap_documents([[1] * 12], BLOCK, bos=BOS, eos=-1)
 
     def test_the_final_partial_chunk_is_dropped(self):
         # 3 + 1 doc-EOS = 4 content tokens < 6: nothing survives.
@@ -147,3 +170,38 @@ class TestPackedIO:
         write_packed(path, iter(rows), BLOCK, metadata={})
         loaded, _ = read_packed(path)
         assert isinstance(loaded, np.memmap)
+
+    def test_interrupted_write_leaves_no_file_at_the_final_path(self, tmp_path):
+        """#132 review Important: a mid-stream failure must not leave a
+        plausibly-sized data file with no sidecar at the corpus path — that
+        is the exact artifact an operator is tempted to hand-write a sidecar
+        for.  The write is atomic: data lands at the final path only on
+        success."""
+
+        def rows_then_boom():
+            yield np.zeros(BLOCK, dtype=np.uint16)
+            raise RuntimeError("stream died")
+
+        path = tmp_path / "packed"
+        with pytest.raises(RuntimeError, match="stream died"):
+            write_packed(path, rows_then_boom(), BLOCK, metadata={})
+        assert not path.exists(), "truncated corpus left at the final path"
+        assert not (tmp_path / "packed.json").exists()
+
+    def test_metadata_colliding_with_computed_fields_is_refused(self, tmp_path):
+        """#132 review: computed truth wins over a caller's guess — but a
+        DIFFERING caller value is a bug upstream and must not be silently
+        overwritten."""
+        rows = wrap_documents(docs_of(40), BLOCK, bos=BOS, eos=EOS)
+        with pytest.raises(ValueError, match="num_rows"):
+            write_packed(
+                tmp_path / "p",
+                iter(rows),
+                BLOCK,
+                metadata={"num_rows": 999999},
+            )
+        # An AGREEING value is fine (e.g. block_size passed through).
+        written = write_packed(
+            tmp_path / "q", iter(rows), BLOCK, metadata={"block_size": BLOCK}
+        )
+        assert written == rows.shape[0]

@@ -93,8 +93,17 @@ def build_split(split: str, out: Path, max_rows: int | None) -> dict:
     # canonical row order exactly as the hub loader would.
     snapshot = snapshot_download(DATASET, repo_type="dataset", local_files_only=True)
     shards = sorted(glob.glob(f"{snapshot}/plain_text/train-*.parquet"))
-    if len(shards) != 80:
-        raise RuntimeError(f"expected 80 OWT parquet shards, found {len(shards)}")
+    # Self-consistency instead of a magic shard count: every shard name ends
+    # in `-of-NNNNN.parquet`, so the set itself declares how many there are —
+    # a partial local_files_only cache fails loudly, a hub re-shard does not.
+    if not shards:
+        raise RuntimeError(f"no OWT parquet shards under {snapshot}")
+    declared = int(shards[0].rsplit("-of-", 1)[1].split(".")[0])
+    if len(shards) != declared:
+        raise RuntimeError(
+            f"OWT snapshot incomplete: {len(shards)} shards cached, filenames "
+            f"declare {declared}"
+        )
     dataset = datasets.load_dataset("parquet", data_files=shards, split=SPLITS[split])
 
     rows = iter_wrapped_blocks(
