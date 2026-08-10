@@ -40,6 +40,10 @@ from .modeling_ladiff import (
     PerceiverLiteEncoder,
     latent_autoencoder_loss,
 )
+from .modeling_ladiff_dit import (
+    LaDiffDiTConfig,
+    LatentConditionedMDLMDiT,
+)
 from .objective import flowlm_loss
 
 __all__ = [
@@ -51,6 +55,8 @@ __all__ = [
     "FlowLMModel",
     "flowlm_loss",
     "LaDiffConfig",
+    "LaDiffDiTConfig",
+    "LatentConditionedMDLMDiT",
     "LaDiffModel",
     "LatentAutoencoderCodec",
     "LatentConditionedMDLM",
