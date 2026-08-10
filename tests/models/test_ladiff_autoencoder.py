@@ -317,3 +317,68 @@ class TestAutoencoderLoss:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
+
+
+class TestStaticFeatureExtractor:
+    def test_features_do_not_chase_the_finetuning_decoder(self):
+        """The extractor is the trunk AS OF CONSTRUCTION (the paper's frozen
+        BERT role): mutating the decoder trunk afterwards must not move the
+        features, or the latent space chases a moving target."""
+        ae, ids = TestAlgorithmOneBranches().seeded_ae()
+        with torch.no_grad():
+            before = ae.features(ids)
+            ae.decoder.model.vocab_embed.embedding.add_(1.0)
+            ae.decoder.model.blocks[0].attn_qkv.weight.add_(0.5)
+            after = ae.features(ids)
+        assert torch.equal(before, after)
+
+
+class TestDropoutReplacementStatistics:
+    def test_replacement_is_mu_plus_sigma_eta_not_raw_noise(self):
+        """Fire the dropout branch with doctored latent statistics: the
+        decoder must receive z ~ N(mu_z, sigma_z^2), not N(0, I)."""
+        ae, ids = TestAlgorithmOneBranches().seeded_ae()
+        ae.latent_standardizer.mean.fill_(10.0)
+        ae.latent_standardizer.m2.fill_(0.0)  # sigma ~ sqrt(eps) ~ 0
+        ae.latent_standardizer.count.fill_(1.0)
+        ae.latent_standardizer.eval()  # keep the doctored stats
+        seen = []
+        decoder_forward = ae.decoder.forward
+
+        def spy(input_ids=None, latents=None, **kw):
+            seen.append(latents.detach().clone())
+            return decoder_forward(input_ids=input_ids, latents=latents, **kw)
+
+        ae.decoder.forward = spy
+        fired = False
+        for seed in range(8):
+            seen.clear()
+            ladiff_autoencoder_loss(
+                ae,
+                ids,
+                feature_mask_p=0.0,
+                feature_noise_std=0.0,
+                latent_mask_p=0.0,
+                latent_dropout_p=1.0,
+                generator=torch.Generator().manual_seed(seed),
+            )
+            if abs(float(seen[0].mean()) - 10.0) < 0.1:
+                fired = True
+                break
+        assert fired, (
+            "no seed delivered mu_z-centred latents: the replacement is not "
+            "mu_z + sigma_z * eta"
+        )
+
+
+class TestDeadRowGuard:
+    def test_loss_is_finite_even_when_a_row_draws_no_mask(self):
+        """Length-1 rows make unmasked rows likely; without the guard the
+        CE over an empty index set is NaN."""
+        ae, _ = TestAlgorithmOneBranches().seeded_ae()
+        ids = torch.randint(0, VOCAB - 1, (2, 1))
+        for seed in range(20):
+            loss = ladiff_autoencoder_loss(
+                ae, ids, generator=torch.Generator().manual_seed(seed)
+            )
+            assert torch.isfinite(loss["total"]), f"seed {seed} produced NaN"
