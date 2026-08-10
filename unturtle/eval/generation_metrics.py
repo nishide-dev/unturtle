@@ -93,13 +93,17 @@ def mauve_score(
     featurize_model_name: str = "gpt2",
     device_id: int = 0,
     max_text_length: int = 256,
+    num_buckets: int | str = "auto",
     verbose: bool = False,
 ) -> float:
     """MAUVE between a reference and a generated text distribution.
 
     Optional dependency: install with ``uv pip install mauve-text``.  The
     feature model defaults to ``gpt2`` (base); record the choice with the
-    score — MAUVE values are not comparable across feature models.
+    score — MAUVE values are not comparable across feature models, nor
+    across ``num_buckets`` / ``max_text_length`` settings (the 'auto'
+    bucket count is n/10, so it silently changes with the sample budget —
+    pin and record it for cross-run comparability).
     """
     try:
         import mauve
@@ -116,6 +120,7 @@ def mauve_score(
             featurize_model_name=featurize_model_name,
             device_id=device_id,
             max_text_length=max_text_length,
+            num_buckets=num_buckets,
             verbose=verbose,
         ).mauve
     )

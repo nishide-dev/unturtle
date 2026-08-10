@@ -60,6 +60,32 @@ dev/local/hybrid_vs_bidirectional_2026-08-09.md):
     cost parity: ~4.5-4.7 steps/s and 9.1 GiB peak for both arms
     (seq_len 256 < hybrid_fast_min_seq_len, so the hybrid arm ran the
     dense eq.-(3) mask path).
+
+Frozen #125 readout (2026-08-10, 2 seeds, pre-registered protocol with the
+attention-mask fix from the #126 review; raw JSON under dev/local/):
+
+    prompt-conditioned generation (mdlm, steps=16, 128 held-out questions,
+    MAUVE gpt2 / max_text_length 256 / num_buckets 12):
+        arm            seed 0                    seed 1
+        bidirectional  MAUVE 0.0519 exact 2/128  MAUVE 0.0573 exact 0/128
+        hybrid         MAUVE 0.0048 exact 0/128  MAUVE 0.0048 exact 0/128
+    - no collapsed points (unique rows 1.00, entropy 4.5-5.5): per the
+      frozen readout the direction is DECIDABLE and favors BIDIRECTIONAL
+      on free generation — the OPPOSITE sign of the training-side NLL win
+      above.  Mechanism note, recorded with the result: the mdlm generate
+      path threads no `prompt_lengths`, so the hybrid-trained model decodes
+      under a topology it never trained with (prompt attention bidirectional
+      at decode, causal in training — exactly the mismatch
+      docs/a2d-attention-topology.md warns against); both hybrid seeds sit
+      at the metric floor (0.0048), consistent with that mismatch dominating.
+      A hybrid-aware masked generation path (prompt_lengths threading) is
+      the follow-up this measurement motivates — a library feature, out of
+      #125's scope.
+    - GSM8K exact match near zero for both arms: not measurable at this
+      budget, per the pre-registration.
+    - absolute MAUVE is low for BOTH arms (0.005-0.057 vs the 0.98
+      held-out ceiling): a 400-step SFT is far from the reference
+      distribution regardless of arm — the #122 regime lesson again.
 """
 
 from __future__ import annotations
@@ -103,6 +129,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-batch-size", type=int, default=16)
     parser.add_argument("--t-grid", type=float, nargs="+", default=[0.25, 0.5, 0.75])
     parser.add_argument("--mask-seed", type=int, default=1234)
+    parser.add_argument("--gen-eval-prompts", type=int, default=128)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument(
         "--smoke",
@@ -116,6 +143,7 @@ def parse_args() -> argparse.Namespace:
         args.seeds = [0]
         args.train_rows = 128
         args.eval_rows = 32
+        args.gen_eval_prompts = 16
     return args
 
 
@@ -320,17 +348,25 @@ def run_arm(args, hybrid, seed, train_rows, eval_pack, output_dir):
 
 
 def generation_metrics_section(model, tokenizer, args, *, seed):
+    """#125 pre-registered readout: prompt-conditioned MAUVE (primary) +
+    guard trio + latency, and GSM8K exact match (secondary), all on the
+    canonical `unturtle.eval` surface via the masked family's own path.
+    Additive: the frozen #114 training metrics above are untouched."""
+    from datasets import load_dataset
+
     from unturtle.eval import (
         diversity_guards,
         generation_record,
+        mauve_score,
         measure_generation,
     )
+    from unturtle.eval._answer_parser import extract_numeric_answer
     from unturtle.eval.harness.configs import DecodingConfig
 
     model.eval()
     decoding = DecodingConfig(
         model_family="tiny-a2d-qwen3",
-        task="free-generation",
+        task="gsm8k-conditioned-generation",
         max_new_tokens=64,
         num_steps=16,
         temperature=1.0,
@@ -338,33 +374,88 @@ def generation_metrics_section(model, tokenizer, args, *, seed):
         fewshot=0,
         algorithm="mdlm",
     )
-    prompt = tokenizer("Question:", return_tensors="pt").input_ids.to(args.device)
-    prompt = prompt.expand(32, -1)
+    held_out = load_dataset("openai/gsm8k", "main", split="test").select(
+        range(args.gen_eval_prompts)
+    )
+    reference_answers = [example["answer"] for example in held_out]
+    gold = [extract_numeric_answer(answer) for answer in reference_answers]
 
-    def sample():
-        with torch.no_grad():
-            # The masked generation config names this field `steps` (the
-            # harness adapter does the same translation); `num_steps=` would
-            # be silently DISCARDED by GenerationConfig.update and the run
-            # would execute the 128-step default while recording nfe=16 —
-            # the exact record-vs-execution mismatch #123 exists to prevent.
-            return model.generate(
-                prompt,
-                algorithm="mdlm",
-                max_new_tokens=decoding.max_new_tokens,
-                steps=decoding.num_steps,
-                temperature=decoding.temperature,
-            )
+    generated_texts: list[str] = []
+    all_completions = []
+    total_seconds = 0.0
+    batch = 16
+    for start in range(0, len(held_out), batch):
+        chunk = held_out.select(range(start, min(start + batch, len(held_out))))
+        encoded = tokenizer(
+            [f"Question: {q}\nAnswer:" for q in chunk["question"]],
+            return_tensors="pt",
+            padding=True,
+            padding_side="left",
+        )
+        prompts = encoded.input_ids.to(args.device)
+        # The attention mask MUST ride along: dLLM attention is
+        # bidirectional, so without it every completion position attends to
+        # every left-pad token — measured 52.5% token-level disagreement at
+        # 0.41 pad fraction, and UNEQUALLY across the two topologies (#126
+        # review's Critical).
+        prompt_mask = encoded.attention_mask.to(args.device)
 
-    samples, seconds = measure_generation(sample)
+        def sample(prompts=prompts, prompt_mask=prompt_mask):
+            with torch.no_grad():
+                # The masked config names this field `steps` (#124 lesson);
+                # `num_steps=` would be silently discarded and the run would
+                # execute the 128-step default while recording nfe=16.
+                return model.generate(
+                    prompts,
+                    attention_mask=prompt_mask,
+                    algorithm="mdlm",
+                    max_new_tokens=decoding.max_new_tokens,
+                    steps=decoding.num_steps,
+                    temperature=decoding.temperature,
+                )
+
+        samples, seconds = measure_generation(sample)
+        total_seconds += seconds
+        completions = samples[:, prompts.shape[1] :].cpu()
+        all_completions.append(completions)
+        generated_texts.extend(
+            tokenizer.batch_decode(completions, skip_special_tokens=True)
+        )
+
+    completions = torch.cat(all_completions)
+    guards = diversity_guards(completions)
+    # max_text_length must COVER the references (70% of held-out answers
+    # exceed 64 gpt2 tokens; truncating them mid-derivation would make the
+    # reference arm systematically different from complete 64-token
+    # generations).  Buckets pinned for cross-run comparability; both
+    # choices recorded in the record extras below.
+    mauve_settings = {"max_text_length": 256, "num_buckets": 12}
+    score = mauve_score(
+        reference_answers,
+        generated_texts,
+        featurize_model_name="gpt2",
+        device_id=torch.device(args.device).index or 0,
+        **mauve_settings,
+    )
+    predictions = [extract_numeric_answer(text) for text in generated_texts]
+    exact = sum(
+        1
+        for prediction, answer in zip(predictions, gold, strict=True)
+        if prediction is not None and answer is not None and prediction == answer
+    ) / len(gold)
+
     record = generation_record(
-        metrics=diversity_guards(samples[:, prompt.shape[1] :].cpu()),
+        metrics={"mauve": score, "gsm8k_exact_match": exact, **guards},
         seed=seed,
         decoding=decoding,
         nfe=decoding.num_steps,
-        latency_seconds=seconds,
+        latency_seconds=total_seconds,
+        extra={"mauve_features": "gpt2", **mauve_settings},
     )
-    print(f"    generation metrics (mdlm): {record['metrics']}", flush=True)
+    print(
+        f"    generation (mdlm): MAUVE {score:.3f} exact {exact:.3f} guards {guards}",
+        flush=True,
+    )
     return record
 
 
