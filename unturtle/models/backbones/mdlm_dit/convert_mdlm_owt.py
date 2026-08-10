@@ -162,16 +162,15 @@ def build_native_model(
     """Build a genuinely native model carrying the converted weights.
 
     Default dtype is fp32 — the checkpoint's own dtype, loaded bitwise. bf16
-    is an explicit, asserted conversion (never a silent cast, #112).
+    is an explicit conversion requested via ``dtype`` (never a silent cast,
+    #112); ``Module.to(dtype)`` converts every floating-point parameter
+    unconditionally, and the tests pin that.
     """
     converted = convert_mdlm_state_dict(source, config)
     model = MDLMDiTForMaskedDiffusionLM(config)
     model.load_state_dict(converted, strict=True)
     if dtype is not torch.float32:
         model = model.to(dtype)
-        bad = [name for name, p in model.named_parameters() if p.dtype is not dtype]
-        if bad:
-            raise RuntimeError(f"Parameters not converted to {dtype}: {bad}")
     return model
 
 

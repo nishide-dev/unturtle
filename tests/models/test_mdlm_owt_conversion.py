@@ -26,7 +26,6 @@ The conversion contract:
   against the checkpoint instead of being discarded on faith.
 """
 
-import math
 
 import pytest
 import torch
@@ -188,6 +187,15 @@ class TestStateDictConversion:
         source = tiny_source_state_dict()
         source["backbone.bogus.weight"] = torch.zeros(3)
         with pytest.raises(ValueError, match="backbone.bogus.weight"):
+            convert_mdlm_state_dict(source, config)
+
+    def test_non_backbone_keys_raise_with_their_real_name(self):
+        """A key outside the backbone.* namespace must be reported verbatim,
+        not after a prefix rewrite that would mislabel it."""
+        config = tiny_config()
+        source = tiny_source_state_dict()
+        source["ema.shadow_params"] = torch.zeros(3)
+        with pytest.raises(ValueError, match="ema.shadow_params"):
             convert_mdlm_state_dict(source, config)
 
 
