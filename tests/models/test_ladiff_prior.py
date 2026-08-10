@@ -378,3 +378,19 @@ class TestDenoiserModule:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
+
+
+class TestGammaRenoise:
+    def test_renoising_actually_draws_noise(self):
+        """gamma has TWO effects (time warp + re-noising); the warp alone
+        made the earlier comparison pass even with re-noising deleted.  The
+        re-noise consumes generator draws, so the generator's end state
+        distinguishes them."""
+        model = LatentPriorDenoiser(tiny_config()).eval()
+        g0 = torch.Generator().manual_seed(30)
+        sample_latent_prior(model, batch=2, steps=6, gamma=0.0, generator=g0)
+        g1 = torch.Generator().manual_seed(30)
+        sample_latent_prior(model, batch=2, steps=6, gamma=0.3, generator=g1)
+        assert not torch.equal(g0.get_state(), g1.get_state()), (
+            "gamma>0 consumed no extra randomness: re-noising is dead"
+        )
