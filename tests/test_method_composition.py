@@ -329,3 +329,56 @@ class TestIntrospection:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
+
+
+class TestReviewPins148:
+    def test_peft_wrapped_a2d_models_verify_capabilities_via_the_peft_namespace(self):
+        """#148 review: a PEFT-wrapped Tiny-A2D model reports plain `llama`
+        (CLAUDE.md invariant) — capability validation must fall back to the
+        PEFT vocabulary, making tiny_a2d/prediff_hybrid REAL verifying
+        consumers of required_capabilities on their realistic model shape."""
+
+        class Cfg:
+            model_type = "llama"
+            hybrid_attention = False
+
+        class PeftWrappedA2D:
+            config = Cfg()
+
+            def _sample(self):
+                pass
+
+        for method in ("tiny_a2d", "prediff_hybrid"):
+            resolved = validate_method(method, model=PeftWrappedA2D(), hub=fresh_hub())
+            assert resolved.unverified_capabilities == frozenset(), method
+
+    def test_component_kind_mismatch_is_caught_at_resolve_time(self):
+        """#148 review: `kind` had no kill-path — a recipe registered under
+        the wrong axis registry must fail resolution, not flow into
+        introspection with a lying label."""
+        hub = fresh_hub()
+        hub.training_recipes.register(
+            ComponentRecipe(name="liar", kind="process", factory=lambda: None)
+        )
+        hub.method(MethodSpec(name="uses-liar", training="liar"))
+        with pytest.raises(
+            ValueError, match="kind.*process.*training|training.*process"
+        ):
+            resolve_method("uses-liar", hub=hub)
+
+    def test_builtin_recipes_carry_their_axis_kind(self):
+        hub = fresh_hub()
+        assert hub.processes.get("masked").kind == "process"
+        assert hub.training_recipes.get("mdlm").kind == "training"
+        assert hub.conversions.get("prediff_hybrid").kind == "conversion"
+        assert hub.post_training_recipes.get("opd").kind == "post_training"
+
+    def test_validate_without_a_model_records_everything_unverified(self):
+        """Honesty symmetry: no model means nothing was verified — the
+        caller must be able to distinguish that from 'nothing to verify'."""
+        resolved = validate_method("mdlm", hub=fresh_hub())
+        assert resolved.unverified_capabilities == frozenset({"masked_generation"})
+        assert (
+            validate_method("dfm", hub=fresh_hub()).unverified_capabilities
+            == frozenset()
+        )

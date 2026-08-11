@@ -30,10 +30,13 @@ probe — registering the recipe promotes nothing (#65 boundary, tested).
 Field ledger for ``MethodSpec`` (the #141 stop condition — every field must
 be justified by at least two concrete consumers):
 
-- ``process`` / ``training`` / ``generation``: mdlm, dfm, flowlm, hybrid;
+- ``process`` / ``training`` / ``generation``: mdlm, dfm, flowlm,
+  tiny_a2d, prediff_hybrid (five builtin specs);
 - ``conversion``: tiny_a2d, prediff_hybrid;
-- ``required_capabilities``: dfm (opt-in), prediff_hybrid + tiny_a2d
-  (masked_generation via their integrations);
+- ``required_capabilities``: tiny_a2d + prediff_hybrid (masked_generation,
+  verified on their realistic PEFT-wrapped model shapes via the PEFT
+  vocabulary fallback; the dfm spec deliberately declares NONE — its opt-in
+  boundary lives in the generation probe, not in a capability claim);
 - ``post_training``: the field exists per the issue sketch and the OPD
   component is registered, but no builtin spec references it yet — a full
   OPD composition needs a real consumer (a base method whose post-training
@@ -119,6 +122,12 @@ def _resolve_component(
             f"registered in this hub (known: "
             f"{sorted(r.name for r in registry.values())})"
         )
+    if recipe.kind != axis:
+        raise ValueError(
+            f"method {method!r}: component {name!r} carries kind "
+            f"{recipe.kind!r} but is registered under the {axis} axis — a "
+            f"mislabelled recipe would lie in every introspection output"
+        )
     return recipe
 
 
@@ -175,6 +184,18 @@ def validate_method(
     hub = hub or ensure_default_hub()
     resolved = resolve_method(name, hub=hub)
     if model is None:
+        # Honesty symmetry: no model means nothing WAS verified — record it,
+        # so callers can tell "not attempted" from "nothing to verify".
+        if resolved.spec.required_capabilities:
+            return ResolvedMethod(
+                spec=resolved.spec,
+                process=resolved.process,
+                training=resolved.training,
+                conversion=resolved.conversion,
+                post_training=resolved.post_training,
+                generation=resolved.generation,
+                unverified_capabilities=frozenset(resolved.spec.required_capabilities),
+            )
         return resolved
 
     for algorithm in resolved.generation:
@@ -186,7 +207,12 @@ def validate_method(
     unverified: set[str] = set()
     if resolved.spec.required_capabilities:
         model_type = getattr(getattr(model, "config", None), "model_type", None)
-        integration = hub.find_integration(model_type)
+        # Load vocabulary first, then the PEFT vocabulary: a PEFT-wrapped
+        # Tiny-A2D model reports plain `llama`/`qwen*` (CLAUDE.md invariant),
+        # and its capabilities live on the PEFT integration (#148 review).
+        integration = hub.find_integration(model_type) or hub.find_peft_integration(
+            model_type
+        )
         if integration is None:
             unverified = set(resolved.spec.required_capabilities)
         else:
