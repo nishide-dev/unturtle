@@ -27,6 +27,7 @@ the components registered before the failure.  The test pins exactly that
 documented behavior rather than inventing rollback machinery for this test.
 """
 
+import pathlib
 import subprocess
 import sys
 
@@ -100,7 +101,10 @@ class TestRuntimeProof:
             [sys.executable, "-c", code],
             capture_output=True,
             text=True,
-            cwd="/grouper/nishide.21066-1000003/projects/unturtle-new",
+            # The repo root, derived: `import tests.fixtures...` resolves from
+            # here (unturtle itself is editable-installed and resolves from
+            # anywhere, but the fixture package is not).
+            cwd=pathlib.Path(__file__).resolve().parent.parent,
         )
         assert "SILENT" in result.stdout, result.stderr[-800:]
 
@@ -129,10 +133,14 @@ class TestRuntimeProof:
         validated = validate_method("toy_echo", model=CompatibleModel(), hub=hub)
         assert validated.unverified_capabilities == frozenset()
 
-    def test_step5_incompatible_model_fails_before_any_runner(self):
+    def test_step5_incompatible_model_fails_via_capability_machinery(self):
+        """What is pinned: validation raises the fixture's OWN actionable
+        message through the production capability machinery (validate_method
+        calls supports probes and never runners — that is its contract, shown
+        by source, not asserted here)."""
         hub = fresh_hub()
         toy_extension_plugin.register_unturtle(hub)
-        with pytest.raises(ValueError, match="toy_echo"):
+        with pytest.raises(ValueError, match="set supports_toy_echo = True"):
             validate_method("toy_echo", model=IncompatibleModel(), hub=hub)
 
     def test_step6_dispatch_runs_the_plugin_runner_like_a_builtin(self):
@@ -170,6 +178,9 @@ class TestRuntimeProof:
         assert "toy_echo" not in [a.name for a in sampler.iter_algorithms()]
 
     def test_step9_default_auto_resolution_is_invariant(self):
+        """The auto assertion alone would pass even under a real leak (the
+        plugin's priority 90 never beats mdlm's 40), so the discriminating
+        absence check is asserted alongside it (#149 review)."""
         from unturtle.models.generation import sampler
 
         class Masked:
@@ -181,6 +192,7 @@ class TestRuntimeProof:
         toy_extension_plugin.register_unturtle(hub)
         after = sampler.resolve_algorithm("auto", Masked(), bd3lm_requested=False)
         assert before == after == "mdlm"
+        assert sampler.find_algorithm("toy_echo") is None
 
 
 class TestAdversarialLifecycle:
@@ -232,6 +244,32 @@ class TestAdversarialLifecycle:
             sampler.resolve_algorithm("auto", CompatibleModel(), bd3lm_requested=False)
             == "mdlm"
         )
+
+    def test_registration_before_builtin_bootstrap_is_stable(self):
+        """The issue's remaining ordering case: plugin registered on an EMPTY
+        hub, builtins bootstrapped afterwards.  The plugin must survive the
+        bootstrap, auto must still pick the builtin, and the default hub must
+        stay untouched (#149 review)."""
+        from unturtle.models.generation import sampler
+
+        hub = RegistryHub()
+        toy_extension_plugin.register_unturtle(hub)
+        bootstrap_builtin_hub(hub)
+
+        assert hub.generation_algorithms.find("toy_echo") is not None
+        assert hub.methods.find("toy_echo") is not None
+
+        class MaskedOptIn:
+            supports_toy_echo = True
+
+            def _sample(self):
+                pass
+
+        assert (
+            hub.resolve_generation("auto", MaskedOptIn(), bd3lm_requested=False)
+            == "mdlm"
+        )
+        assert sampler.find_algorithm("toy_echo") is None
 
     def test_plugin_never_wins_auto_even_in_its_own_hub(self):
         """auto_priority=90 sits behind every builtin: a masked model in the
