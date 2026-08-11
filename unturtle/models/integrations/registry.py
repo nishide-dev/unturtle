@@ -33,6 +33,7 @@ one declarative entry rather than a hand-written ``try/except`` block plus an
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from .base import BackboneIntegration
@@ -339,14 +340,33 @@ def _unregister_integration(integration: BackboneIntegration) -> None:
     ensure_default_hub().backbone_integrations.unregister(integration)
 
 
-def find_integration(model_type: str | None) -> BackboneIntegration | None:
-    """The integration claiming ``model_type``, or ``None``."""
+def find_integration_in(
+    integrations: Sequence[BackboneIntegration], model_type: str | None
+) -> BackboneIntegration | None:
+    """Explicit-source lookup (#143 seam): the load-vocabulary namespace."""
     if model_type is None:
         return None
-    for integration in _default_integrations():
+    for integration in integrations:
         if model_type in integration.model_types:
             return integration
     return None
+
+
+def find_peft_integration_in(
+    integrations: Sequence[BackboneIntegration], model_type: str | None
+) -> BackboneIntegration | None:
+    """Explicit-source lookup (#143 seam): the PEFT-vocabulary namespace."""
+    if model_type is None:
+        return None
+    for integration in integrations:
+        if model_type in integration.peft_model_types:
+            return integration
+    return None
+
+
+def find_integration(model_type: str | None) -> BackboneIntegration | None:
+    """The integration claiming ``model_type``, or ``None``."""
+    return find_integration_in(_default_integrations(), model_type)
 
 
 def resolve_native_class(model_type: str | None) -> Any | None:
@@ -368,12 +388,7 @@ def find_peft_integration(model_type: str | None) -> BackboneIntegration | None:
     the load vocabulary: a PEFT-wrapped Tiny-A2D model reports plain ``llama``,
     and ModernBERT is patchable without being natively loadable.
     """
-    if model_type is None:
-        return None
-    for integration in _default_integrations():
-        if model_type in integration.peft_model_types:
-            return integration
-    return None
+    return find_peft_integration_in(_default_integrations(), model_type)
 
 
 def resolve_peft_patcher(model_type: str | None) -> Any | None:
