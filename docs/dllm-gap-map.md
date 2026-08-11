@@ -32,6 +32,7 @@ recorded as such, frozen on their issues.
 - 🟡 partial
 - ❌ missing
 - 🔭 experimental extension track (in scope; maturity varies by row)
+- ⛔ out of scope (deliberately not Unturtle's lane)
 
 ## Gap-map
 
