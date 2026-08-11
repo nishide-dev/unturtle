@@ -176,7 +176,40 @@ class RegistryHub:
 
         return decorate
 
-    # -- hub-scoped resolution --------------------------------------------
+    # -- hub-scoped resolution / dispatch / lookup (#143 seams) ------------
+
+    def dispatch_generation(
+        self,
+        model: Any,
+        request: Any,
+        algorithm: str = "auto",
+        *,
+        bd3lm_requested: bool = False,
+    ) -> Any:
+        """Dispatch against THIS hub's algorithms — same code path as the
+        module-level ``dispatch_generation``, so a hub-registered algorithm
+        can never silently fall back to the default hub."""
+        from unturtle.models.generation.sampler import dispatch_generation_from
+
+        return dispatch_generation_from(
+            self.generation_algorithms.values(),
+            model,
+            request,
+            algorithm,
+            bd3lm_requested=bd3lm_requested,
+        )
+
+    def find_integration(self, model_type: str | None) -> Any | None:
+        """Load-vocabulary integration lookup against THIS hub."""
+        from unturtle.models.integrations.registry import find_integration_in
+
+        return find_integration_in(self.backbone_integrations.values(), model_type)
+
+    def find_peft_integration(self, model_type: str | None) -> Any | None:
+        """PEFT-vocabulary integration lookup against THIS hub."""
+        from unturtle.models.integrations.registry import find_peft_integration_in
+
+        return find_peft_integration_in(self.backbone_integrations.values(), model_type)
 
     def resolve_generation(
         self, algorithm: str, model: Any, *, bd3lm_requested: bool

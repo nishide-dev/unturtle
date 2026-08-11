@@ -647,8 +647,34 @@ def dispatch_generation(
         ValueError: unknown algorithm, unsupported algorithm, or a registered
             algorithm with no runner.
     """
-    resolved = resolve_algorithm(algorithm, model, bd3lm_requested=bd3lm_requested)
-    entry = find_algorithm(resolved)
+    return dispatch_generation_from(
+        _default_algorithms(),
+        model,
+        request,
+        algorithm,
+        bd3lm_requested=bd3lm_requested,
+    )
+
+
+def dispatch_generation_from(
+    algorithms: Sequence[GenerationAlgorithm],
+    model: Any,
+    request: GenerationRequest,
+    algorithm: str = "auto",
+    *,
+    bd3lm_requested: bool = False,
+) -> Any:
+    """Dispatch against an explicit algorithm collection (#143 seam).
+
+    The single implementation behind both the module-level
+    ``dispatch_generation`` (default hub) and
+    ``RegistryHub.dispatch_generation`` (isolated hubs) — resolution, runner
+    lookup, and every capability error come from the SAME collection, so a
+    hub-registered algorithm can never fall back to the default hub."""
+    resolved = resolve_algorithm_from(
+        algorithms, algorithm, model, bd3lm_requested=bd3lm_requested
+    )
+    entry = _find_in(algorithms, resolved)
     if entry is None or entry.runner is None:
         raise ValueError(
             f"decoding algorithm {resolved!r} has no runner; register one via "
