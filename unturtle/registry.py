@@ -136,6 +136,12 @@ class RegistryHub:
     def __init__(self) -> None:
         self.generation_algorithms: Registry[Any] = Registry("generation algorithm")
         self.backbone_integrations: Registry[Any] = Registry("backbone integration")
+        # #143 component axes (lazy ComponentRecipe values) + method manifests.
+        self.processes: Registry[Any] = Registry("process")
+        self.training_recipes: Registry[Any] = Registry("training recipe")
+        self.conversions: Registry[Any] = Registry("conversion recipe")
+        self.post_training_recipes: Registry[Any] = Registry("post-training recipe")
+        self.methods: Registry[Any] = Registry("method")
         self._bootstrapped = False
 
     # -- decorator sugar (registry-bound; importing a module registers
@@ -175,6 +181,39 @@ class RegistryHub:
             return runner
 
         return decorate
+
+    # -- component/method registration sugar (#143) ------------------------
+
+    def _register_component(self, registry_name, kind, name, factory, summary):
+        from unturtle.methods import ComponentRecipe
+
+        recipe = ComponentRecipe(name=name, kind=kind, factory=factory, summary=summary)
+        getattr(self, registry_name).register(recipe)
+        return recipe
+
+    def process(self, name: str, *, factory: Callable[[], Any], summary: str = ""):
+        return self._register_component("processes", "process", name, factory, summary)
+
+    def training(self, name: str, *, factory: Callable[[], Any], summary: str = ""):
+        return self._register_component(
+            "training_recipes", "training", name, factory, summary
+        )
+
+    def conversion(self, name: str, *, factory: Callable[[], Any], summary: str = ""):
+        return self._register_component(
+            "conversions", "conversion", name, factory, summary
+        )
+
+    def post_training_recipe(
+        self, name: str, *, factory: Callable[[], Any], summary: str = ""
+    ):
+        return self._register_component(
+            "post_training_recipes", "post_training", name, factory, summary
+        )
+
+    def method(self, spec: Any) -> Any:
+        """Register a MethodSpec manifest on THIS hub."""
+        return self.methods.register(spec)
 
     # -- hub-scoped resolution / dispatch / lookup (#143 seams) ------------
 
@@ -237,11 +276,13 @@ def bootstrap_builtin_hub(hub: RegistryHub) -> RegistryHub:
             "hub is already bootstrapped; builtin bootstrap is not idempotent "
             "by design — create a fresh RegistryHub instead"
         )
+    from unturtle.methods import populate_method_registry
     from unturtle.models.generation.sampler import populate_generation_registry
     from unturtle.models.integrations.registry import populate_integration_registry
 
     populate_generation_registry(hub)
     populate_integration_registry(hub)
+    populate_method_registry(hub)
     hub._bootstrapped = True
     return hub
 
