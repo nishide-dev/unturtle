@@ -39,6 +39,39 @@ Anything else -> FAIL/undecidable; #130 closes with that verdict.
 Latency: per arm, latent-prior sampling and discrete decode timed
 separately at batch 1 and 32 (model construction and warm-up excluded
 uniformly); facts only, no acceptance threshold.
+
+FROZEN RESULTS (2026-08-12, raw JSONs dev/local/ladiff_gate_b/seed{0,1}/):
+
+VERDICT: FAIL — decidable, both seeds, all four verdict cells valid (no
+collapse), same sign everywhere:
+
+    seed  N_disc  LaDiff   latent_off   winner
+    0     64      0.366    0.812        latent_off
+    0     128     0.393    0.839        latent_off
+    1     64      0.456    0.842        latent_off
+    1     128     0.575    0.806        latent_off
+
+Full grid (MAUVE, LaDiff / latent_off / gaussian):
+    N=32    s0 0.385/0.770/0.814   s1 0.399/0.839/0.710
+    N=64    s0 0.366/0.812/0.777   s1 0.456/0.842/0.714
+    N=128   s0 0.393/0.839/0.846   s1 0.575/0.806/0.829
+    N=256   s0 0.460/0.857/0.876   s1 0.467/0.893/0.821
+    N=1024  s0 0.442/0.939/0.837   s1 0.495/0.848/0.892
+
+The failure localizes to the PRIOR: Gate A showed true latents help and
+wrong latents hurt; here prior-sampled latents (0.37-0.58) are consistently
+worse than EVERY unconditional mode (0.71-0.94).  The decoder and the
+latent channel work; the prior's samples are off-manifold at this budget
+(~1-2% of the paper's).  LaDiff improves with N_disc but plateaus far
+below.  Latency (LaDiff arm, N_cont=200): batch1 prior 1.15s / decode
+0.51s @64; batch32 36.4s / 10.8s — the prior also dominates cost at
+N_disc <= 128.
+
+Two mechanics fixes were recorded on the issue BEFORE the verdict
+(temperature=1.0 reverse-kernel semantics; cell-owned RNG after the guard
+trio caught 32/256 duplicated rows); verdict rule and thresholds unchanged.
+Per the frozen stop/go this negative is the real-text LaDiff verdict for
+#130; no DiLaDiff issue is opened.
 """
 
 from __future__ import annotations
