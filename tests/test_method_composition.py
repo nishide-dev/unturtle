@@ -230,6 +230,41 @@ class TestValidation:
             validate_method("needs-toy", model=WrongModel(), hub=hub)
 
 
+class TestHonestUnverifiedRecording:
+    def test_unresolvable_integration_records_capabilities_as_unverified(self):
+        """The issue's honesty clause: when no integration is resolvable for
+        the model, required capabilities are RECORDED as unverified — never
+        silently treated as satisfied."""
+
+        class NoTypeConfig:
+            pass
+
+        class UnknownModel:
+            config = NoTypeConfig()
+
+            def _sample(self):
+                pass
+
+        resolved = validate_method("mdlm", model=UnknownModel(), hub=fresh_hub())
+        assert resolved.unverified_capabilities == frozenset({"masked_generation"})
+
+    def test_resolvable_integration_leaves_nothing_unverified(self):
+        hub = fresh_hub()
+
+        class Cfg:
+            model_type = "mdlm-dit"
+            hybrid_attention = False
+
+        class MdlmDit:
+            config = Cfg()
+
+            def _sample(self):
+                pass
+
+        resolved = validate_method("mdlm", model=MdlmDit(), hub=hub)
+        assert resolved.unverified_capabilities == frozenset()
+
+
 class TestIsolationAndDeterminism:
     def test_method_registration_does_not_leak_across_hubs(self):
         hub_a, hub_b = fresh_hub(), fresh_hub()
