@@ -566,5 +566,228 @@ class TestAutoSelectionDiscipline:
         assert sampler.find_algorithm("fast_toy") is None
 
 
+class TestReviewPins150:
+    """Pins for the #150 review findings, RED-first."""
+
+    def test_nameless_dist_info_does_not_poison_discovery(self, tmp_path, monkeypatch):
+        """Review F1 (CRITICAL): a dist-info whose METADATA lacks `Name`
+        (interrupted pip install, malformed wheel) must not crash discovery
+        for every well-formed plugin on the path with an unattributable
+        TypeError.  The malformed dist is surfaced under a stable fallback
+        name instead."""
+        from unturtle.plugins import discover_plugins, load_plugins
+
+        site = tmp_path / "site"
+        make_dist(
+            site,
+            "real-pack",
+            "2.0",
+            {"unturtle.plugins": {"real": "real_pack_mod:register_unturtle"}},
+            modules={
+                "real_pack_mod": """\
+                def register_unturtle(hub):
+                    pass
+                """
+            },
+        )
+        nameless = site / "nameless-0.0.dist-info"
+        nameless.mkdir()
+        (nameless / "METADATA").write_text("Metadata-Version: 2.1\n")  # no Name
+        (nameless / "entry_points.txt").write_text(
+            "[unturtle.plugins]\nghost = ghost_mod:register_unturtle\n"
+        )
+        monkeypatch.syspath_prepend(str(site))
+
+        refs = discover_plugins(search_path=[str(site)])
+        by_name = {r.name: r for r in refs}
+        assert by_name["real"].distribution == "real-pack"
+        assert by_name["ghost"].distribution == "unknown-distribution"
+
+        hub = fresh_hub()
+        loaded = load_plugins(hub, names=["real"], search_path=[str(site)])
+        assert [p.ref.name for p in loaded] == ["real"]
+
+    def test_alias_conflict_is_attributed_to_the_owning_plugin(
+        self, tmp_path, monkeypatch
+    ):
+        """Review F2 (CRITICAL): plugin A registers a component with an
+        ALIAS; plugin B later claims that alias as a canonical name.  The
+        conflict must attribute plugin A — not exonerate it as 'builtin or
+        direct registration' — and the alias must be present in provenance
+        and in A's load report."""
+        from unturtle.plugins import PluginError, load_plugins
+
+        site_a = make_dist(
+            tmp_path / "a",
+            "alias-pack",
+            "1.0",
+            {"unturtle.plugins": {"aliased": "alias_pack_mod:register_unturtle"}},
+            modules={
+                "alias_pack_mod": """\
+                def register_unturtle(hub):
+                    from unturtle.methods import ComponentRecipe
+
+                    hub.processes.register(
+                        ComponentRecipe(
+                            name="real_name",
+                            kind="process",
+                            factory=lambda: None,
+                            summary="",
+                        ),
+                        aliases=("nick",),
+                    )
+                """
+            },
+        )
+        site_b = make_dist(
+            tmp_path / "b",
+            "clash-pack",
+            "1.0",
+            {"unturtle.plugins": {"clasher": "clash_pack_mod:register_unturtle"}},
+            modules={
+                "clash_pack_mod": """\
+                def register_unturtle(hub):
+                    hub.process(name="nick", factory=lambda: None)
+                """
+            },
+        )
+        monkeypatch.syspath_prepend(str(site_a))
+        monkeypatch.syspath_prepend(str(site_b))
+
+        hub = fresh_hub()
+        (loaded,) = load_plugins(hub, search_path=[str(site_a)])
+        assert ("process", "nick") in loaded.registered
+        prov = hub.plugin_provenance[("process", "nick")]
+        assert prov.distribution == "alias-pack"
+
+        with pytest.raises(PluginError) as excinfo:
+            load_plugins(hub, search_path=[str(site_b)])
+        message = str(excinfo.value)
+        assert "'nick'" in message
+        assert "clash-pack 1.0" in message  # incoming
+        assert "alias-pack 1.0" in message  # existing provider, not exonerated
+        assert "builtin or direct registration" not in message
+
+    def test_plugin_added_registries_are_reported_and_attributed(
+        self, tmp_path, monkeypatch
+    ):
+        """Review F4: a plugin that attaches a NEW registry axis to the hub
+        and registers into it must appear in the load report and in
+        provenance — silent under-reporting is the wrong failure direction."""
+        from unturtle.plugins import load_plugins
+
+        path = make_dist(
+            tmp_path / "site",
+            "axis-pack",
+            "3.0",
+            {"unturtle.plugins": {"axis": "axis_pack_mod:register_unturtle"}},
+            modules={
+                "axis_pack_mod": """\
+                def register_unturtle(hub):
+                    from unturtle.registry import Registry
+
+                    class OdeSolver:
+                        name = "odesolve"
+
+                    hub.solvers = Registry("solver")
+                    hub.solvers.register(OdeSolver())
+                """
+            },
+        )
+        monkeypatch.syspath_prepend(str(path))
+
+        hub = fresh_hub()
+        (loaded,) = load_plugins(hub, search_path=[str(path)])
+        assert ("solver", "odesolve") in loaded.registered
+        assert hub.plugin_provenance[("solver", "odesolve")].distribution == "axis-pack"
+
+    def test_failure_carries_the_partial_load_report(
+        self, tmp_path, monkeypatch, toy_pack_path
+    ):
+        """Review F5: fail-fast discards nothing the caller needs — the
+        PluginError carries the plugins loaded before the failure AND what
+        the failing plugin registered before it raised (with provenance),
+        so the documented non-transactional residue is diagnosable without
+        promising rollback."""
+        from unturtle.plugins import PluginError, load_plugins
+
+        site = tmp_path / "later"
+        make_dist(
+            site,
+            "zz-half-pack",
+            "0.2",
+            {"unturtle.plugins": {"half": "zz_half_pack_mod:register_unturtle"}},
+            modules={
+                "zz_half_pack_mod": """\
+                def register_unturtle(hub):
+                    @hub.generation(
+                        name="half_done",
+                        family="masked_discrete",
+                        supports=lambda model: True,
+                        auto_priority=93,
+                        unsupported_message=lambda model: "never",
+                    )
+                    def run_half(model, request):
+                        pass
+
+                    raise RuntimeError("late boom")
+                """
+            },
+        )
+        monkeypatch.syspath_prepend(str(site))
+
+        hub = fresh_hub()
+        with pytest.raises(PluginError) as excinfo:
+            load_plugins(hub, search_path=[str(toy_pack_path), str(site)])
+        error = excinfo.value
+        assert [p.ref.name for p in error.loaded] == ["toy_echo"]
+        assert ("generation algorithm", "half_done") in error.partial_registered
+        # The residue is attributable: a later conflict names zz-half-pack.
+        prov = hub.plugin_provenance[("generation algorithm", "half_done")]
+        assert prov.distribution == "zz-half-pack"
+
+    def test_unregister_then_register_hijack_is_a_documented_limitation(
+        self, tmp_path, monkeypatch
+    ):
+        """Review F3, pinned as a DOCUMENTED LIMITATION (not silently
+        assumed away): `Registry.unregister` is a test/teardown helper, not
+        plugin API.  A plugin that swaps an object behind an existing name
+        leaves no provenance and an empty report — the loader tracks names,
+        not object identity.  If this pin breaks because identity tracking
+        was added, update the module docstring's limitation note too."""
+        from unturtle.plugins import load_plugins
+
+        path = make_dist(
+            tmp_path / "site",
+            "hijack-pack",
+            "6.6",
+            {"unturtle.plugins": {"hijack": "hijack_pack_mod:register_unturtle"}},
+            modules={
+                "hijack_pack_mod": """\
+                def register_unturtle(hub):
+                    from unturtle.methods import ComponentRecipe
+
+                    victim = hub.processes.get("masked")
+                    hub.processes.unregister(victim)
+                    hub.processes.register(
+                        ComponentRecipe(
+                            name="masked",
+                            kind="process",
+                            factory=lambda: None,
+                            summary="imposter",
+                        )
+                    )
+                """
+            },
+        )
+        monkeypatch.syspath_prepend(str(path))
+
+        hub = fresh_hub()
+        (loaded,) = load_plugins(hub, search_path=[str(path)])
+        assert hub.processes.get("masked").summary == "imposter"  # swap happened
+        assert loaded.registered == ()  # and the loader cannot see it
+        assert ("process", "masked") not in hub.plugin_provenance
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])

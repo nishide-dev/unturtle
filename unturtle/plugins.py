@@ -78,7 +78,25 @@ class PluginError(RuntimeError):
     """A plugin could not be discovered, resolved, or registered.
 
     Always names the plugin (entry point + distribution + version) so the
-    failure is attributable without reading tracebacks."""
+    failure is attributable without reading tracebacks.
+
+    Because loading is fail-fast AND non-transactional, the error also
+    carries what survived (#150 review): ``loaded`` — the plugins that
+    loaded successfully before the failure — and ``partial_registered`` —
+    the (kind, name) entries the FAILING plugin registered before it raised
+    (already recorded in ``hub.plugin_provenance``).  This makes the
+    documented residue diagnosable; it does not promise rollback."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        loaded: tuple[LoadedPlugin, ...] = (),
+        partial_registered: tuple[tuple[str, str], ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.loaded = loaded
+        self.partial_registered = partial_registered
 
 
 @dataclass(frozen=True)
@@ -103,8 +121,15 @@ class PluginProvider:
 
 @dataclass(frozen=True)
 class LoadedPlugin:
-    """Load report for one plugin: its ref and every (registry kind,
-    canonical name) its registration call added to the hub."""
+    """Load report for one plugin: its ref and every (registry kind, name)
+    its registration call added to the hub — canonical names AND aliases,
+    across the hub's registries including any the plugin attached itself.
+
+    Known limitation (#150 review, pinned in tests): the diff tracks NAMES,
+    not object identity.  A plugin that swaps the object behind an existing
+    name via ``unregister`` + ``register`` (``unregister`` is a
+    test/teardown helper, not plugin API) is invisible to this report and
+    to provenance."""
 
     ref: PluginRef
     registered: tuple[tuple[str, str], ...]
@@ -128,7 +153,10 @@ def _dist_name(entry_point) -> tuple[str, str]:
     dist = entry_point.dist
     if dist is None:
         return "unknown-distribution", "unknown"
-    return dist.metadata["Name"], dist.version or "unknown"
+    # metadata["Name"] is None (not KeyError) for a malformed/incomplete
+    # dist-info; without the fallback one such directory anywhere on the
+    # path crashes discovery for every well-formed plugin (#150 review).
+    return dist.metadata["Name"] or "unknown-distribution", dist.version or "unknown"
 
 
 def _discover(group: str, search_path: list[str] | None) -> list[tuple[PluginRef, Any]]:
@@ -160,6 +188,30 @@ def discover_plugins(
 
 def _hub_registries(hub: RegistryHub) -> list[Registry[Any]]:
     return [value for value in vars(hub).values() if isinstance(value, Registry)]
+
+
+def _known_name_snapshot(registries: list[Registry[Any]]) -> dict[int, set[str]]:
+    # _known_names() covers canonical names AND aliases — an alias a plugin
+    # claims is a name it owns for conflict attribution (#150 review).
+    return {id(reg): set(reg._known_names()) for reg in registries}
+
+
+def _diff_and_record(
+    hub: RegistryHub, before: dict[int, set[str]], ref: PluginRef
+) -> tuple[tuple[str, str], ...]:
+    """Attribute every name the plugin added — re-scanning the hub so
+    registries the plugin attached itself are included (#150 review)."""
+    registered = []
+    for reg in _hub_registries(hub):
+        added = set(reg._known_names()) - before.get(id(reg), set())
+        for name in added:
+            registered.append((reg.kind, name))
+            hub.plugin_provenance[(reg.kind, name)] = PluginProvider(
+                distribution=ref.distribution,
+                version=ref.version,
+                entry_point=ref.name,
+            )
+    return tuple(sorted(registered))
 
 
 def load_plugins(
@@ -199,19 +251,24 @@ def load_plugins(
             register = entry_point.load()
         except Exception as exc:
             raise PluginError(
-                f"{_provider_label(ref)} failed to import/resolve ({ref.value}): {exc}"
+                f"{_provider_label(ref)} failed to import/resolve ({ref.value}): {exc}",
+                loaded=tuple(loaded),
             ) from exc
         if not callable(register):
             raise PluginError(
                 f"{_provider_label(ref)} resolved to a non-callable "
-                f"({ref.value}); expected register_unturtle(hub)"
+                f"({ref.value}); expected register_unturtle(hub)",
+                loaded=tuple(loaded),
             )
 
+        # Hold strong references across the call: prevents id() reuse if the
+        # plugin replaces a registry attribute on the hub.
         registries = _hub_registries(hub)
-        before = {id(reg): {item.name for item in reg.values()} for reg in registries}
+        before = _known_name_snapshot(registries)
         try:
             register(hub)
         except DuplicateRegistrationError as exc:
+            partial = _diff_and_record(hub, before, ref)
             existing = hub.plugin_provenance.get((exc.kind, exc.name))
             existing_label = (
                 f"plugin {existing.entry_point!r} from "
@@ -221,21 +278,19 @@ def load_plugins(
             )
             raise PluginError(
                 f"{_provider_label(ref)}: {exc.kind} {exc.name!r} is already "
-                f"registered by {existing_label}"
+                f"registered by {existing_label}",
+                loaded=tuple(loaded),
+                partial_registered=partial,
             ) from exc
         except Exception as exc:
+            partial = _diff_and_record(hub, before, ref)
             raise PluginError(
-                f"{_provider_label(ref)} failed during registration: {exc}"
+                f"{_provider_label(ref)} failed during registration: {exc}",
+                loaded=tuple(loaded),
+                partial_registered=partial,
             ) from exc
 
-        registered = []
-        for reg in registries:
-            for added in {item.name for item in reg.values()} - before[id(reg)]:
-                registered.append((reg.kind, added))
-                hub.plugin_provenance[(reg.kind, added)] = PluginProvider(
-                    distribution=ref.distribution,
-                    version=ref.version,
-                    entry_point=ref.name,
-                )
-        loaded.append(LoadedPlugin(ref=ref, registered=tuple(sorted(registered))))
+        loaded.append(
+            LoadedPlugin(ref=ref, registered=_diff_and_record(hub, before, ref))
+        )
     return tuple(loaded)
