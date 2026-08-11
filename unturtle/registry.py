@@ -1,0 +1,226 @@
+# Copyright 2025-present nishide-dev & the Unturtle team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Instance-backed registry substrate (#142).
+
+Deliberately boring: deterministic insertion order, duplicate rejection
+(canonical names and aliases), immutable iteration snapshots, and an
+explicit builtin bootstrap.  No dependency injection, no lifecycle
+callbacks, no config machinery — "generalize composition, not
+implementations" (#141) starts by NOT generalizing here.
+
+What instance ownership unlocks (the #142 review question, answered in
+code): an isolated hub can be built, populated, extended, and thrown away
+per test or per plugin context without touching the process-global default
+— the old module lists made every experiment in registration a mutation of
+shared state that had to be hand-unwound.
+
+Lookup is a linear scan over the insertion-ordered item list, NOT a dict
+index: the module-level compatibility seams (``sampler._ALGORITHMS``,
+``integrations._INTEGRATIONS``) expose the backing list to long-standing
+white-box tests that reorder or insert into it directly, and an index would
+silently desync from those mutations.  Registries hold <= a few dozen
+entries; O(n) find is what the module globals did anyway.
+
+Import discipline: this module imports nothing from ``unturtle`` at module
+level.  Builtins enter a hub only through :func:`bootstrap_builtin_hub`,
+which lazily imports the two population functions.  Importing any backbone
+or process module never mutates a hub (tested in a subprocess).
+"""
+
+from __future__ import annotations
+
+import threading
+from typing import Any, Callable, Generic, TypeVar
+
+T = TypeVar("T")
+
+__all__ = [
+    "Registry",
+    "RegistryHub",
+    "bootstrap_builtin_hub",
+    "ensure_default_hub",
+]
+
+
+class Registry(Generic[T]):
+    """A named, insertion-ordered collection with duplicate rejection.
+
+    Values must carry a ``name`` attribute (their canonical name).
+    """
+
+    def __init__(self, kind: str) -> None:
+        self.kind = kind
+        # The backing list is intentionally reachable (module seams expose it
+        # to white-box tests); aliases are registry-owned bookkeeping.
+        self._items: list[T] = []
+        self._aliases: dict[str, str] = {}
+
+    def _known_names(self) -> list[str]:
+        return [item.name for item in self._items] + list(self._aliases)
+
+    def register(self, value: T, *, aliases: tuple[str, ...] = ()) -> T:
+        name = value.name
+        taken = set(self._known_names())
+        for candidate in (name, *aliases):
+            if candidate in taken:
+                raise ValueError(f"{self.kind} {candidate!r} is already registered")
+        if len({name, *aliases}) != 1 + len(aliases):
+            raise ValueError(
+                f"{self.kind} {name!r}: aliases must be distinct from the "
+                f"canonical name and each other"
+            )
+        self._items.append(value)
+        for alias in aliases:
+            self._aliases[alias] = name
+        return value
+
+    def find(self, name: str) -> T | None:
+        canonical = self._aliases.get(name, name)
+        for item in self._items:
+            if item.name == canonical:
+                return item
+        return None
+
+    def get(self, name: str) -> T:
+        found = self.find(name)
+        if found is None:
+            raise KeyError(
+                f"unknown {self.kind} {name!r}; known: {sorted(self._known_names())}"
+            )
+        return found
+
+    def values(self) -> tuple[T, ...]:
+        """Immutable snapshot in insertion order."""
+        return tuple(self._items)
+
+    def unregister(self, value: T) -> None:
+        """Identity-based removal (test/teardown helper).
+
+        Identity, not equality: frozen dataclasses compare by value, and
+        removing by value could drop a different, equal-looking entry."""
+        for index, item in enumerate(self._items):
+            if item is value:
+                del self._items[index]
+                name = value.name
+                self._aliases = {
+                    alias: target
+                    for alias, target in self._aliases.items()
+                    if target != name
+                }
+                return
+
+
+class RegistryHub:
+    """Owns the registry instances one registration context sees.
+
+    This slice hosts the two registries that already exist (generation
+    algorithms, backbone integrations); later #141 slices add more kinds.
+    """
+
+    def __init__(self) -> None:
+        self.generation_algorithms: Registry[Any] = Registry("generation algorithm")
+        self.backbone_integrations: Registry[Any] = Registry("backbone integration")
+        self._bootstrapped = False
+
+    # -- decorator sugar (registry-bound; importing a module registers
+    # nothing — only calling this, on this hub, does) ---------------------
+
+    def generation(
+        self,
+        name: str,
+        *,
+        family: str,
+        supports: Callable[[Any], bool],
+        flags: dict[str, bool] | None = None,
+        auto_priority: int,
+        auto_eligible: bool = True,
+        unsupported_message: Callable[[Any], str],
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Register the decorated function as an algorithm runner on THIS hub.
+
+        Returns the original function unchanged and applies the same
+        duplicate checks as explicit registration."""
+
+        def decorate(runner: Callable[..., Any]) -> Callable[..., Any]:
+            from unturtle.models.generation.sampler import GenerationAlgorithm
+
+            self.generation_algorithms.register(
+                GenerationAlgorithm(
+                    name=name,
+                    family=family,
+                    supports=supports,
+                    flags=dict(flags or {}),
+                    auto_priority=auto_priority,
+                    auto_eligible=auto_eligible,
+                    unsupported_message=unsupported_message,
+                    runner=runner,
+                )
+            )
+            return runner
+
+        return decorate
+
+    # -- hub-scoped resolution --------------------------------------------
+
+    def resolve_generation(
+        self, algorithm: str, model: Any, *, bd3lm_requested: bool
+    ) -> str:
+        """Resolve against THIS hub's algorithms with the exact semantics of
+        the module-level ``resolve_algorithm`` (same code path)."""
+        from unturtle.models.generation.sampler import resolve_algorithm_from
+
+        return resolve_algorithm_from(
+            self.generation_algorithms.values(),
+            algorithm,
+            model,
+            bd3lm_requested=bd3lm_requested,
+        )
+
+
+def bootstrap_builtin_hub(hub: RegistryHub) -> RegistryHub:
+    """Populate ``hub`` with the builtin algorithms and integrations.
+
+    Explicit and strict: bootstrapping the same hub twice raises rather than
+    double-registering.  Lazy imports keep empty-hub construction free of
+    heavy modules."""
+    if hub._bootstrapped:
+        raise ValueError(
+            "hub is already bootstrapped; builtin bootstrap is not idempotent "
+            "by design — create a fresh RegistryHub instead"
+        )
+    from unturtle.models.generation.sampler import populate_generation_registry
+    from unturtle.models.integrations.registry import populate_integration_registry
+
+    populate_generation_registry(hub)
+    populate_integration_registry(hub)
+    hub._bootstrapped = True
+    return hub
+
+
+_default_hub: RegistryHub | None = None
+_default_hub_lock = threading.Lock()
+
+
+def ensure_default_hub() -> RegistryHub:
+    """The process-default hub, bootstrapped exactly once (memoized).
+
+    The module-level compatibility APIs delegate here; everything else
+    should take a hub explicitly."""
+    global _default_hub
+    if _default_hub is None:
+        with _default_hub_lock:
+            if _default_hub is None:
+                _default_hub = bootstrap_builtin_hub(RegistryHub())
+    return _default_hub

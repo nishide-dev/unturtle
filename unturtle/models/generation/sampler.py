@@ -63,6 +63,7 @@ deleting the flags.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
@@ -357,101 +358,127 @@ def _run_block_ar(model: Any, request: GenerationRequest) -> Any:
     )
 
 
-_ALGORITHMS: list[GenerationAlgorithm] = [
-    GenerationAlgorithm(
-        name="block_ar",
-        family="canvas",
-        supports=_supports_block_ar,
-        # No flags: the upstream GenerationConfig governs the loop entirely.
-        flags={},
-        # Inert: `resolve_algorithm` checks block_ar *before* the bd3lm opt-in,
-        # so it is never reached by the priority loop.  That sequencing is not
-        # expressible as a priority — it is what makes a canvas model win even
-        # when bd3lm was requested — so do not "simplify" the special case away
-        # on the assumption this number covers it.
-        auto_priority=10,
-        unsupported_message=_block_ar_unsupported,
-        runner=_run_block_ar,
-    ),
-    GenerationAlgorithm(
-        name="bd3lm",
-        family="masked_discrete",
-        supports=_supports_bd3lm,
-        flags={"use_cache": False, "use_block_diffusion": True},
-        # Also inert, for the same reason: `auto_eligible=False` keeps bd3lm out
-        # of the loop, and the bd3lm_requested branch selects it positionally.
-        auto_priority=20,
-        # Never chosen automatically — only via the bd3lm_requested opt-in.
-        auto_eligible=False,
-        unsupported_message=_bd3lm_unsupported,
-        runner=_run_bd3lm,
-    ),
-    GenerationAlgorithm(
-        name="block_decode",
-        family="masked_discrete",
-        supports=_supports_block_decode,
-        flags={"use_cache": True, "use_block_diffusion": False},
-        auto_priority=30,
-        unsupported_message=_block_decode_unsupported,
-        runner=_run_block_decode,
-    ),
-    GenerationAlgorithm(
-        name="mdlm",
-        family="masked_discrete",
-        supports=_supports_mdlm,
-        flags={"use_cache": False, "use_block_diffusion": False},
-        auto_priority=40,
-        unsupported_message=_mdlm_unsupported,
-        runner=_run_mdlm,
-    ),
-    GenerationAlgorithm(
-        name="flowlm",
-        family="continuous_flow",
-        supports=_supports_flowlm,
-        # No masked flags: a continuous family is never described in
-        # use_cache/use_block_diffusion terms (#66 acceptance criterion).
-        flags={},
-        auto_priority=50,
-        unsupported_message=_flowlm_unsupported,
-        runner=_run_flowlm,
-    ),
-    GenerationAlgorithm(
-        name="ladiff",
-        family="latent_guided",
-        supports=_supports_ladiff,
-        # Hybrid family (continuous latent prior guiding a discrete masked
-        # loop) — still no masked booleans; the discrete loop is the
-        # prototype's own, not a flagged variant of the masked family.
-        flags={},
-        auto_priority=60,
-        unsupported_message=_ladiff_unsupported,
-        runner=_run_ladiff,
-    ),
-    GenerationAlgorithm(
-        name="dfm",
-        family="discrete_flow",
-        supports=_supports_dfm,
-        # The family the registry docstring reserved from day one; no masked
-        # booleans — the jump process is its own loop (#65).
-        flags={},
-        auto_priority=70,
-        unsupported_message=_dfm_unsupported,
-        runner=_run_dfm,
-    ),
-]
+def _builtin_algorithms() -> list[GenerationAlgorithm]:
+    """The builtin algorithm set, in its frozen registration order (#142)."""
+    return [
+        GenerationAlgorithm(
+            name="block_ar",
+            family="canvas",
+            supports=_supports_block_ar,
+            # No flags: the upstream GenerationConfig governs the loop entirely.
+            flags={},
+            # Inert: `resolve_algorithm` checks block_ar *before* the bd3lm opt-in,
+            # so it is never reached by the priority loop.  That sequencing is not
+            # expressible as a priority — it is what makes a canvas model win even
+            # when bd3lm was requested — so do not "simplify" the special case away
+            # on the assumption this number covers it.
+            auto_priority=10,
+            unsupported_message=_block_ar_unsupported,
+            runner=_run_block_ar,
+        ),
+        GenerationAlgorithm(
+            name="bd3lm",
+            family="masked_discrete",
+            supports=_supports_bd3lm,
+            flags={"use_cache": False, "use_block_diffusion": True},
+            # Also inert, for the same reason: `auto_eligible=False` keeps bd3lm out
+            # of the loop, and the bd3lm_requested branch selects it positionally.
+            auto_priority=20,
+            # Never chosen automatically — only via the bd3lm_requested opt-in.
+            auto_eligible=False,
+            unsupported_message=_bd3lm_unsupported,
+            runner=_run_bd3lm,
+        ),
+        GenerationAlgorithm(
+            name="block_decode",
+            family="masked_discrete",
+            supports=_supports_block_decode,
+            flags={"use_cache": True, "use_block_diffusion": False},
+            auto_priority=30,
+            unsupported_message=_block_decode_unsupported,
+            runner=_run_block_decode,
+        ),
+        GenerationAlgorithm(
+            name="mdlm",
+            family="masked_discrete",
+            supports=_supports_mdlm,
+            flags={"use_cache": False, "use_block_diffusion": False},
+            auto_priority=40,
+            unsupported_message=_mdlm_unsupported,
+            runner=_run_mdlm,
+        ),
+        GenerationAlgorithm(
+            name="flowlm",
+            family="continuous_flow",
+            supports=_supports_flowlm,
+            # No masked flags: a continuous family is never described in
+            # use_cache/use_block_diffusion terms (#66 acceptance criterion).
+            flags={},
+            auto_priority=50,
+            unsupported_message=_flowlm_unsupported,
+            runner=_run_flowlm,
+        ),
+        GenerationAlgorithm(
+            name="ladiff",
+            family="latent_guided",
+            supports=_supports_ladiff,
+            # Hybrid family (continuous latent prior guiding a discrete masked
+            # loop) — still no masked booleans; the discrete loop is the
+            # prototype's own, not a flagged variant of the masked family.
+            flags={},
+            auto_priority=60,
+            unsupported_message=_ladiff_unsupported,
+            runner=_run_ladiff,
+        ),
+        GenerationAlgorithm(
+            name="dfm",
+            family="discrete_flow",
+            supports=_supports_dfm,
+            # The family the registry docstring reserved from day one; no masked
+            # booleans — the jump process is its own loop (#65).
+            flags={},
+            auto_priority=70,
+            unsupported_message=_dfm_unsupported,
+            runner=_run_dfm,
+        ),
+    ]
+
+
+def populate_generation_registry(hub) -> None:
+    """Explicit builtin bootstrap for a RegistryHub (#142).
+
+    Importing this module registers nothing; only this call (or the
+    module-level compatibility APIs, which bootstrap the default hub) does.
+    """
+    for algorithm in _builtin_algorithms():
+        hub.generation_algorithms.register(algorithm)
+
+
+def _default_algorithms() -> list[GenerationAlgorithm]:
+    """The default hub's LIVE backing list (also served as `_ALGORITHMS` for
+    long-standing white-box tests that reorder/insert into it directly)."""
+    from unturtle.registry import ensure_default_hub
+
+    return ensure_default_hub().generation_algorithms._items
 
 
 def iter_algorithms() -> tuple[GenerationAlgorithm, ...]:
     """Every registered algorithm, in registration order."""
-    return tuple(_ALGORITHMS)
+    return tuple(_default_algorithms())
+
+
+def _find_in(
+    algorithms: Sequence[GenerationAlgorithm], name: str
+) -> GenerationAlgorithm | None:
+    for algorithm in algorithms:
+        if algorithm.name == name:
+            return algorithm
+    return None
 
 
 def find_algorithm(name: str) -> GenerationAlgorithm | None:
     """The registered algorithm called ``name``, or ``None``."""
-    for algorithm in _ALGORITHMS:
-        if algorithm.name == name:
-            return algorithm
-    return None
+    return _find_in(_default_algorithms(), name)
 
 
 def register_algorithm(algorithm: GenerationAlgorithm) -> None:
@@ -463,7 +490,9 @@ def register_algorithm(algorithm: GenerationAlgorithm) -> None:
     """
     if find_algorithm(algorithm.name) is not None:
         raise ValueError(f"decoding algorithm {algorithm.name!r} is already registered")
-    _ALGORITHMS.append(algorithm)
+    from unturtle.registry import ensure_default_hub
+
+    ensure_default_hub().generation_algorithms.register(algorithm)
 
 
 def _unregister_algorithm(algorithm: GenerationAlgorithm) -> None:
@@ -472,14 +501,13 @@ def _unregister_algorithm(algorithm: GenerationAlgorithm) -> None:
     Removes by identity: ``GenerationAlgorithm`` is a frozen dataclass with value
     equality, so removing by value could drop a different, equal-looking entry.
     """
-    for index, existing in enumerate(_ALGORITHMS):
-        if existing is algorithm:
-            del _ALGORITHMS[index]
-            return
+    from unturtle.registry import ensure_default_hub
+
+    ensure_default_hub().generation_algorithms.unregister(algorithm)
 
 
 def _algorithm_names() -> list[str]:
-    return sorted(a.name for a in _ALGORITHMS)
+    return sorted(a.name for a in _default_algorithms())
 
 
 def algorithm_to_flags(algorithm: str) -> dict[str, bool]:
@@ -503,8 +531,18 @@ def algorithm_to_flags(algorithm: str) -> dict[str, bool]:
     return dict(entry.flags)
 
 
-def resolve_algorithm(algorithm: str, model: Any, *, bd3lm_requested: bool) -> str:
-    """Resolve ``algorithm`` to a concrete algorithm name.
+def resolve_algorithm_from(
+    algorithms: Sequence[GenerationAlgorithm],
+    algorithm: str,
+    model: Any,
+    *,
+    bd3lm_requested: bool,
+) -> str:
+    """Resolve ``algorithm`` against an explicit algorithm collection.
+
+    The single implementation behind both the module-level
+    ``resolve_algorithm`` (default hub) and ``RegistryHub.resolve_generation``
+    (isolated hubs) — #142's differential contract holds by construction.
 
     ``auto`` picks the fastest path the model supports, by ``auto_priority``:
       - ``block_ar`` first, when the model is a DiffusionGemma-family canvas model
@@ -518,19 +556,19 @@ def resolve_algorithm(algorithm: str, model: Any, *, bd3lm_requested: bool) -> s
     silently falls back — including ``bd3lm_requested`` under ``auto``.
     """
     if algorithm == "auto":
-        canvas = find_algorithm("block_ar")
+        canvas = _find_in(algorithms, "block_ar")
         if canvas is not None and canvas.supports(model):
             return canvas.name
 
         if bd3lm_requested:
             # Requested explicitly, so an incapable model is an error rather
             # than a reason to quietly pick something else.
-            bd3lm = find_algorithm("bd3lm")
+            bd3lm = _find_in(algorithms, "bd3lm")
             if bd3lm is None or not bd3lm.supports(model):
                 raise ValueError(_bd3lm_unsupported(model))
             return bd3lm.name
 
-        for entry in sorted(_ALGORITHMS, key=lambda a: a.auto_priority):
+        for entry in sorted(algorithms, key=lambda a: a.auto_priority):
             if entry.auto_eligible and entry.supports(model):
                 return entry.name
 
@@ -541,7 +579,7 @@ def resolve_algorithm(algorithm: str, model: Any, *, bd3lm_requested: bool) -> s
         # how to ask for it, not that nothing works.
         lines = []
         available: list[str] = []
-        for entry in sorted(_ALGORITHMS, key=lambda a: a.auto_priority):
+        for entry in sorted(algorithms, key=lambda a: a.auto_priority):
             if entry.supports(model):
                 # Reachable, but only on request: `auto` skipped it because it
                 # is not auto-eligible.  Saying "does not support" here would
@@ -569,15 +607,22 @@ def resolve_algorithm(algorithm: str, model: Any, *, bd3lm_requested: bool) -> s
             )
         raise ValueError(headline + "\n" + "\n".join(lines))
 
-    entry = find_algorithm(algorithm)
+    entry = _find_in(algorithms, algorithm)
     if entry is None:
         raise ValueError(
             f"Unknown decoding algorithm {algorithm!r}. "
-            f"Supported: {_algorithm_names()} (or 'auto')."
+            f"Supported: {sorted(a.name for a in algorithms)} (or 'auto')."
         )
     if not entry.supports(model):
         raise ValueError(entry.describe_unsupported(model))
     return entry.name
+
+
+def resolve_algorithm(algorithm: str, model: Any, *, bd3lm_requested: bool) -> str:
+    """Resolve against the default hub (see ``resolve_algorithm_from``)."""
+    return resolve_algorithm_from(
+        _default_algorithms(), algorithm, model, bd3lm_requested=bd3lm_requested
+    )
 
 
 def dispatch_generation(
@@ -619,12 +664,20 @@ def __getattr__(name: str) -> dict[str, dict[str, bool]]:
     module-level dicts.  Nothing outside this module reads them, but computing
     them on demand keeps them from becoming a stale second source of truth.
     """
+    if name == "_ALGORITHMS":
+        # The LIVE default-hub backing list — the long-standing white-box test
+        # seam (order shuffles, direct inserts) keeps working unchanged.
+        return _default_algorithms()
     if name == "ALL_ALGORITHMS":
-        return {a.name: dict(a.flags) for a in _ALGORITHMS}
+        return {a.name: dict(a.flags) for a in _default_algorithms()}
     if name == "DISCRETE_ALGORITHMS":
         return {
-            a.name: dict(a.flags) for a in _ALGORITHMS if a.family == "masked_discrete"
+            a.name: dict(a.flags)
+            for a in _default_algorithms()
+            if a.family == "masked_discrete"
         }
     if name == "CANVAS_ALGORITHMS":
-        return {a.name: dict(a.flags) for a in _ALGORITHMS if a.family == "canvas"}
+        return {
+            a.name: dict(a.flags) for a in _default_algorithms() if a.family == "canvas"
+        }
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
