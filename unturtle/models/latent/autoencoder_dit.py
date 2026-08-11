@@ -83,7 +83,7 @@ class LaDiffEncoder(nn.Module):
     def forward(self, features: torch.Tensor) -> torch.Tensor:
         z = self.queries.unsqueeze(0).expand(features.shape[0], -1, -1)
         for norm_q, attn, norm_f, ffn in zip(
-            self.norms_q, self.attns, self.norms_f, self.ffns
+            self.norms_q, self.attns, self.norms_f, self.ffns, strict=True
         ):
             kv = torch.cat([features, z], dim=1)
             attended, _ = attn(norm_q(z), kv, kv, need_weights=False)
