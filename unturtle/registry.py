@@ -47,11 +47,26 @@ from typing import Any, Callable, Generic, TypeVar
 T = TypeVar("T")
 
 __all__ = [
+    "DuplicateRegistrationError",
     "Registry",
     "RegistryHub",
     "bootstrap_builtin_hub",
     "ensure_default_hub",
 ]
+
+
+class DuplicateRegistrationError(ValueError):
+    """A canonical name (or alias) is already registered.
+
+    Subclasses ValueError so every existing ``pytest.raises(ValueError)``
+    contract holds; carries the structured fields (#145) that let the plugin
+    loader attribute BOTH sides of a conflict instead of parsing messages.
+    """
+
+    def __init__(self, kind: str, name: str) -> None:
+        super().__init__(f"{kind} {name!r} is already registered")
+        self.kind = kind
+        self.name = name
 
 
 class Registry(Generic[T]):
@@ -75,7 +90,7 @@ class Registry(Generic[T]):
         taken = set(self._known_names())
         for candidate in (name, *aliases):
             if candidate in taken:
-                raise ValueError(f"{self.kind} {candidate!r} is already registered")
+                raise DuplicateRegistrationError(self.kind, candidate)
         if len({name, *aliases}) != 1 + len(aliases):
             raise ValueError(
                 f"{self.kind} {name!r}: aliases must be distinct from the "
@@ -142,6 +157,12 @@ class RegistryHub:
         self.conversions: Registry[Any] = Registry("conversion recipe")
         self.post_training_recipes: Registry[Any] = Registry("post-training recipe")
         self.methods: Registry[Any] = Registry("method")
+        # (registry kind, canonical name) -> provenance record for names that
+        # arrived via unturtle.plugins.load_plugins.  Filled at the plugin
+        # load boundary only; builtins and direct registrations are absent —
+        # that absence IS their attribution ("builtin or direct
+        # registration"), so builtin declarations need no rewriting (#145).
+        self.plugin_provenance: dict[tuple[str, str], Any] = {}
         self._bootstrapped = False
 
     # -- decorator sugar (registry-bound; importing a module registers
