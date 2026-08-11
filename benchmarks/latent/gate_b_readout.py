@@ -137,7 +137,16 @@ def generate_cell(arm, autoencoder, prior, n_disc, seed, device):
         torch.manual_seed(5000 + n_disc * 10 + seed)  # identical across arms
         t0 = time.perf_counter()
         with torch.autocast(device, dtype=torch.bfloat16):
-            kwargs = dict(algorithm="mdlm", max_new_tokens=MAX_NEW, steps=n_disc)
+            kwargs = dict(
+                algorithm="mdlm",
+                max_new_tokens=MAX_NEW,
+                steps=n_disc,
+                # Reverse-kernel semantics (reference _sample_categorical);
+                # the unpinned default (0 = argmax) collapsed ALL arms to
+                # marginal-mode text in the mechanics smoke — amended on the
+                # issue before any decision output.
+                temperature=1.0,
+            )
             if latents is not None:
                 kwargs["latents"] = latents
             out = decoder.generate(prompt, **kwargs)
