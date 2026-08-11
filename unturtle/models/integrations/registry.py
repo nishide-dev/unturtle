@@ -177,105 +177,99 @@ def _modernbert_report(model: Any, counts: tuple[int, int, int]) -> str:
     )
 
 
-_INTEGRATIONS: list[BackboneIntegration] = [
-    BackboneIntegration(
-        name="llada",
-        model_types=("llada",),
-        _native_resolver=_llada,
-        peft_model_types=("llada",),
-        _peft_patcher=_llada_patcher,
-        peft_report=_llada_report,
-        capabilities=frozenset({"masked_generation", "block_decode"}),
-    ),
-    BackboneIntegration(
-        name="mdlm-dit",
-        model_types=("mdlm-dit",),
-        _native_resolver=_mdlm_dit,
-        capabilities=frozenset({"masked_generation"}),
-    ),
-    BackboneIntegration(
-        name="dream",
-        # DreamConfig.model_type is "Dream" (capital D); Hub configs use both.
-        model_types=("dream", "Dream"),
-        _native_resolver=_dream,
-        peft_model_types=("dream", "Dream"),
-        _peft_patcher=_dream_patcher,
-        peft_report=_dream_report,
-        capabilities=frozenset({"masked_generation", "block_decode"}),
-    ),
-    BackboneIntegration(
-        name="tiny-a2d-llama",
-        model_types=("tiny-a2d-llama",),
-        _native_resolver=_tiny_a2d_llama,
-        # A PEFT-wrapped converted model reports its base architecture, so the
-        # plain names must dispatch here too.
-        peft_model_types=("tiny-a2d-llama", "llama"),
-        _peft_patcher=_a2d_patcher,
-        peft_report=_a2d_report,
-        _sparse_output_resolver=standard_sparse_output,
-        capabilities=frozenset(
-            {"masked_generation", "block_decode", SPARSE_OUTPUT_CAPABILITY}
+def _builtin_integrations() -> list[BackboneIntegration]:
+    """The builtin integration set, in its frozen registration order (#142)."""
+    return [
+        BackboneIntegration(
+            name="llada",
+            model_types=("llada",),
+            _native_resolver=_llada,
+            peft_model_types=("llada",),
+            _peft_patcher=_llada_patcher,
+            peft_report=_llada_report,
+            capabilities=frozenset({"masked_generation", "block_decode"}),
         ),
-    ),
-    BackboneIntegration(
-        name="tiny-a2d-qwen2",
-        model_types=("tiny-a2d-qwen2",),
-        _native_resolver=_tiny_a2d_qwen2,
-        peft_model_types=("tiny-a2d-qwen2", "qwen2"),
-        _peft_patcher=_a2d_patcher,
-        peft_report=_a2d_report,
-        _sparse_output_resolver=standard_sparse_output,
-        capabilities=frozenset(
-            {"masked_generation", "block_decode", SPARSE_OUTPUT_CAPABILITY}
+        BackboneIntegration(
+            name="mdlm-dit",
+            model_types=("mdlm-dit",),
+            _native_resolver=_mdlm_dit,
+            capabilities=frozenset({"masked_generation"}),
         ),
-    ),
-    BackboneIntegration(
-        name="tiny-a2d-qwen3",
-        model_types=("tiny-a2d-qwen3",),
-        _native_resolver=_tiny_a2d_qwen3,
-        peft_model_types=("tiny-a2d-qwen3", "qwen3"),
-        _peft_patcher=_a2d_patcher,
-        peft_report=_a2d_report,
-        _sparse_output_resolver=standard_sparse_output,
-        capabilities=frozenset(
-            {"masked_generation", "block_decode", SPARSE_OUTPUT_CAPABILITY}
+        BackboneIntegration(
+            name="dream",
+            # DreamConfig.model_type is "Dream" (capital D); Hub configs use both.
+            model_types=("dream", "Dream"),
+            _native_resolver=_dream,
+            peft_model_types=("dream", "Dream"),
+            _peft_patcher=_dream_patcher,
+            peft_report=_dream_report,
+            capabilities=frozenset({"masked_generation", "block_decode"}),
         ),
-    ),
-    BackboneIntegration(
-        name="modernbert-diffusion",
-        # No native class: loads through FastModel, but is PEFT-patchable.
-        model_types=(),
-        peft_model_types=("modernbert-diffusion",),
-        _peft_patcher=_modernbert_patcher,
-        peft_report=_modernbert_report,
-        capabilities=frozenset({"masked_generation"}),
-    ),
-    BackboneIntegration(
-        name="diffusion-gemma",
-        # Loads through upstream/FastModel; Unturtle adds only a generate shim,
-        # so the wrapper is installed by __class__ swap rather than by loading.
-        model_types=("diffusion_gemma",),
-        _wrapper_resolver=_diffusion_gemma_wrapper,
-        capabilities=frozenset({"canvas_block_generation"}),
-    ),
-]
+        BackboneIntegration(
+            name="tiny-a2d-llama",
+            model_types=("tiny-a2d-llama",),
+            _native_resolver=_tiny_a2d_llama,
+            # A PEFT-wrapped converted model reports its base architecture, so the
+            # plain names must dispatch here too.
+            peft_model_types=("tiny-a2d-llama", "llama"),
+            _peft_patcher=_a2d_patcher,
+            peft_report=_a2d_report,
+            _sparse_output_resolver=standard_sparse_output,
+            capabilities=frozenset(
+                {"masked_generation", "block_decode", SPARSE_OUTPUT_CAPABILITY}
+            ),
+        ),
+        BackboneIntegration(
+            name="tiny-a2d-qwen2",
+            model_types=("tiny-a2d-qwen2",),
+            _native_resolver=_tiny_a2d_qwen2,
+            peft_model_types=("tiny-a2d-qwen2", "qwen2"),
+            _peft_patcher=_a2d_patcher,
+            peft_report=_a2d_report,
+            _sparse_output_resolver=standard_sparse_output,
+            capabilities=frozenset(
+                {"masked_generation", "block_decode", SPARSE_OUTPUT_CAPABILITY}
+            ),
+        ),
+        BackboneIntegration(
+            name="tiny-a2d-qwen3",
+            model_types=("tiny-a2d-qwen3",),
+            _native_resolver=_tiny_a2d_qwen3,
+            peft_model_types=("tiny-a2d-qwen3", "qwen3"),
+            _peft_patcher=_a2d_patcher,
+            peft_report=_a2d_report,
+            _sparse_output_resolver=standard_sparse_output,
+            capabilities=frozenset(
+                {"masked_generation", "block_decode", SPARSE_OUTPUT_CAPABILITY}
+            ),
+        ),
+        BackboneIntegration(
+            name="modernbert-diffusion",
+            # No native class: loads through FastModel, but is PEFT-patchable.
+            model_types=(),
+            peft_model_types=("modernbert-diffusion",),
+            _peft_patcher=_modernbert_patcher,
+            peft_report=_modernbert_report,
+            capabilities=frozenset({"masked_generation"}),
+        ),
+        BackboneIntegration(
+            name="diffusion-gemma",
+            # Loads through upstream/FastModel; Unturtle adds only a generate shim,
+            # so the wrapper is installed by __class__ swap rather than by loading.
+            model_types=("diffusion_gemma",),
+            _wrapper_resolver=_diffusion_gemma_wrapper,
+            capabilities=frozenset({"canvas_block_generation"}),
+        ),
+    ]
 
 
-def iter_integrations() -> tuple[BackboneIntegration, ...]:
-    """Every registered integration, in registration order."""
-    return tuple(_INTEGRATIONS)
+def register_integration_into(hub, integration: BackboneIntegration) -> None:
+    """Register onto an explicit hub, with this registry's conflict rules.
 
-
-def register_integration(integration: BackboneIntegration) -> None:
-    """Add an integration to the registry.
-
-    Raises:
-        ValueError: if any of its ``model_types`` is already claimed.  Two
-            integrations answering to one ``model_type`` means the winner
-            depends on registration order, which is exactly the kind of
-            silent behavior change this registry exists to prevent.
+    The model_type / peft_model_type namespaces are integration-domain
+    invariants, so they live here rather than in the generic substrate.
     """
-    for existing in _INTEGRATIONS:
+    for existing in hub.backbone_integrations.values():
         clashes = set(existing.model_types) & set(integration.model_types)
         if clashes:
             raise ValueError(
@@ -290,7 +284,46 @@ def register_integration(integration: BackboneIntegration) -> None:
                 f"peft model_type(s) {sorted(peft_clashes)} already registered by "
                 f"{existing.name!r}; cannot also register {integration.name!r}"
             )
-    _INTEGRATIONS.append(integration)
+    hub.backbone_integrations.register(integration)
+
+
+def populate_integration_registry(hub) -> None:
+    """Explicit builtin bootstrap for a RegistryHub (#142).
+
+    Importing this module registers nothing; the zero-arg resolvers keep
+    backbone imports lazy exactly as before.
+    """
+    for integration in _builtin_integrations():
+        register_integration_into(hub, integration)
+
+
+def _default_integrations() -> list[BackboneIntegration]:
+    """The default hub's LIVE backing list (also served as `_INTEGRATIONS`
+    for long-standing white-box tests that mutate it directly)."""
+    from unturtle.registry import ensure_default_hub
+
+    return ensure_default_hub().backbone_integrations._items
+
+
+def iter_integrations() -> tuple[BackboneIntegration, ...]:
+    """Every registered integration, in registration order."""
+    return tuple(_default_integrations())
+
+
+def register_integration(integration: BackboneIntegration) -> None:
+    """Add an integration to the registry.
+
+    Raises:
+        ValueError: if any of its ``model_types`` or ``peft_model_types`` is
+            already claimed, or (since #142, a recorded tightening over the
+            old module-global list) if its ``name`` is already registered.
+            Two integrations answering to one key means the winner depends
+            on registration order, which is exactly the kind of silent
+            behavior change this registry exists to prevent.
+    """
+    from unturtle.registry import ensure_default_hub
+
+    register_integration_into(ensure_default_hub(), integration)
 
 
 def _unregister_integration(integration: BackboneIntegration) -> None:
@@ -301,17 +334,16 @@ def _unregister_integration(integration: BackboneIntegration) -> None:
     entries would silently unregister each other's, leaving the registry
     permanently short for everything that runs after.
     """
-    for index, existing in enumerate(_INTEGRATIONS):
-        if existing is integration:
-            del _INTEGRATIONS[index]
-            return
+    from unturtle.registry import ensure_default_hub
+
+    ensure_default_hub().backbone_integrations.unregister(integration)
 
 
 def find_integration(model_type: str | None) -> BackboneIntegration | None:
     """The integration claiming ``model_type``, or ``None``."""
     if model_type is None:
         return None
-    for integration in _INTEGRATIONS:
+    for integration in _default_integrations():
         if model_type in integration.model_types:
             return integration
     return None
@@ -338,7 +370,7 @@ def find_peft_integration(model_type: str | None) -> BackboneIntegration | None:
     """
     if model_type is None:
         return None
-    for integration in _INTEGRATIONS:
+    for integration in _default_integrations():
         if model_type in integration.peft_model_types:
             return integration
     return None
@@ -352,7 +384,7 @@ def resolve_peft_patcher(model_type: str | None) -> Any | None:
 
 def supported_peft_model_types() -> list[str]:
     """Every PEFT-patchable ``model_type``, sorted — for error messages."""
-    return sorted({mt for i in _INTEGRATIONS for mt in i.peft_model_types})
+    return sorted({mt for i in _default_integrations() for mt in i.peft_model_types})
 
 
 def native_model_classes() -> dict[str, Any]:
@@ -362,7 +394,7 @@ def native_model_classes() -> dict[str, Any]:
     matching the loader's long-standing per-entry ``except ImportError``.
     """
     classes: dict[str, Any] = {}
-    for integration in _INTEGRATIONS:
+    for integration in _default_integrations():
         cls = integration.native_model_cls
         if cls is None:
             continue
@@ -378,7 +410,7 @@ def post_load_class_swaps() -> dict[str, Any]:
     free of backbone imports.
     """
     swaps: dict[str, Any] = {}
-    for integration in _INTEGRATIONS:
+    for integration in _default_integrations():
         if integration._wrapper_resolver is None:
             continue
         for model_type in integration.model_types:
@@ -402,3 +434,11 @@ def resolve_sparse_output(model: Any) -> SparseOutputAccess | None:
     if resolver is None:
         return None
     return resolver(model)
+
+
+def __getattr__(name: str):
+    if name == "_INTEGRATIONS":
+        # The LIVE default-hub backing list — the long-standing white-box test
+        # seam (direct appends/removals) keeps working unchanged.
+        return _default_integrations()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
