@@ -62,10 +62,13 @@ The failure localizes to the PRIOR: Gate A showed true latents help and
 wrong latents hurt; here prior-sampled latents (0.37-0.58) are consistently
 worse than EVERY unconditional mode (0.71-0.94).  The decoder and the
 latent channel work; the prior's samples are off-manifold at this budget
-(~1-2% of the paper's).  LaDiff improves with N_disc but plateaus far
-below.  Latency (LaDiff arm, N_cont=200): batch1 prior 1.15s / decode
-0.51s @64; batch32 36.4s / 10.8s — the prior also dominates cost at
-N_disc <= 128.
+(~1-2% of the paper's).  LaDiff trends upward across the grid ENDPOINTS
+(s0 +0.057, s1 +0.095 over 32->1024) but NON-monotonically — s1 drops
+0.575->0.467 at 128->256 and s0's terminal step is downward — and the
+ceiling (max 0.575) stays far below the unconditional floor (min 0.710).
+Latency (LaDiff arm, N_cont=200; produced by --latency-only): batch1
+prior 1.15s / decode 0.51s @64; batch32 36.4s / 10.8s — the prior also
+dominates cost at N_disc <= 128.
 
 Two mechanics fixes were recorded on the issue BEFORE the verdict
 (temperature=1.0 reverse-kernel semantics; cell-owned RNG after the guard
@@ -195,6 +198,58 @@ def generate_cell(arm, autoencoder, prior, n_disc, seed, device):
     return texts, tokens, {"prior_s": round(prior_s, 2), "decode_s": round(decode_s, 2)}
 
 
+def latency_only(seed: int, device: str, out: Path) -> None:
+    """Reproduces dev/local/ladiff_gate_b/latency_batch1_32.json: batch-1/32
+    prior-vs-decode split, warm-up excluded uniformly (#130 protocol)."""
+    from unturtle.models.latent import sample_latent_prior
+
+    autoencoder, prior = load_models(seed, device)
+    results = {}
+    for batch in (1, 32):
+        g = torch.Generator().manual_seed(0)
+        sample_latent_prior(prior, batch=batch, steps=10, generator=g)  # warm-up
+        prompt = torch.full((batch, 1), BOS, dtype=torch.long, device=device)
+        with torch.autocast(device, dtype=torch.bfloat16):
+            autoencoder.decoder.generate(
+                prompt,
+                algorithm="mdlm",
+                max_new_tokens=MAX_NEW,
+                steps=4,
+                temperature=1.0,
+            )
+        torch.cuda.synchronize()
+        for n_disc in (64, 128):
+            t0 = time.perf_counter()
+            z = sample_latent_prior(
+                prior,
+                batch=batch,
+                steps=N_CONT,
+                generator=torch.Generator().manual_seed(1),
+            )
+            torch.cuda.synchronize()
+            prior_s = time.perf_counter() - t0
+            std = autoencoder.latent_standardizer
+            z = std.std * z + std.mean
+            torch.manual_seed(2)
+            t0 = time.perf_counter()
+            with torch.autocast(device, dtype=torch.bfloat16):
+                autoencoder.decoder.generate(
+                    prompt,
+                    algorithm="mdlm",
+                    max_new_tokens=MAX_NEW,
+                    steps=n_disc,
+                    temperature=1.0,
+                    latents=z,
+                )
+            torch.cuda.synchronize()
+            results[f"b{batch}_n{n_disc}"] = {
+                "prior_s": round(prior_s, 2),
+                "decode_s": round(time.perf_counter() - t0, 2),
+            }
+    out.write_text(json.dumps(results, indent=2))
+    print(json.dumps(results, indent=1))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seed", type=int, required=True)
@@ -208,7 +263,13 @@ def main() -> None:
     parser.add_argument(
         "--arms", nargs="+", default=["ladiff", "latent_off", "gaussian"]
     )
+    parser.add_argument("--latency-only", action="store_true")
     args = parser.parse_args()
+
+    if args.latency_only:
+        args.out_dir.mkdir(parents=True, exist_ok=True)
+        latency_only(args.seed, args.device, args.out_dir / "latency_batch1_32.json")
+        return
 
     from transformers import AutoTokenizer
 
