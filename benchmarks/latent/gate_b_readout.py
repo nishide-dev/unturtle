@@ -96,14 +96,15 @@ def load_models(seed: int, device: str):
 
 
 def sample_arm_latents(
-    arm: str, autoencoder, prior, batch: int, n_disc: int, seed: int, device: str
+    arm: str, autoencoder, prior, batch: int, n_disc: int, seed: int, device: str, g
 ):
-    """Latent construction per arm; the 6000-block owns all latent RNG."""
+    """Latent construction per arm; the 6000-block generator ``g`` is owned
+    by the CELL and advances across batches — re-seeding it per batch made
+    every batch identical (the unique_rows=32/256 mechanics bug)."""
     from unturtle.models.latent import sample_latent_prior
 
     if arm == "latent_off":
         return None, 0.0
-    g = torch.Generator().manual_seed(6000 + n_disc * 10 + seed)
     std = autoencoder.latent_standardizer
     start = time.perf_counter()
     if arm == "ladiff":
@@ -127,14 +128,17 @@ def generate_cell(arm, autoencoder, prior, n_disc, seed, device):
     tok = AutoTokenizer.from_pretrained("gpt2")
     decoder = autoencoder.decoder
     texts, token_batches, prior_s, decode_s = [], [], 0.0, 0.0
+    # Seed ONCE per cell (identical across arms), never per batch: a per-batch
+    # reset replayed the same randomness 8x and produced 32x8 copied rows.
+    torch.manual_seed(5000 + n_disc * 10 + seed)
+    latent_g = torch.Generator().manual_seed(6000 + n_disc * 10 + seed)
     for start in range(0, N_GENERATIONS, GEN_BATCH):
         batch = min(GEN_BATCH, N_GENERATIONS - start)
         latents, dt_prior = sample_arm_latents(
-            arm, autoencoder, prior, batch, n_disc, seed, device
+            arm, autoencoder, prior, batch, n_disc, seed, device, latent_g
         )
         prior_s += dt_prior
         prompt = torch.full((batch, 1), BOS, dtype=torch.long, device=device)
-        torch.manual_seed(5000 + n_disc * 10 + seed)  # identical across arms
         t0 = time.perf_counter()
         with torch.autocast(device, dtype=torch.bfloat16):
             kwargs = dict(
