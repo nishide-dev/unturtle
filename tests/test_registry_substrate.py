@@ -259,3 +259,45 @@ class TestHubBoundDecorator:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
+
+
+class TestReviewPins147:
+    def test_unregister_of_a_same_named_twin_keeps_the_survivors_aliases(self):
+        """#147 review: the alias sweep must honor the same identity
+        semantics as item removal — removing a same-named twin must not
+        strip the SURVIVOR's aliases."""
+        reg = Registry("thing")
+        survivor = reg.register(Thing("a"), aliases=("alpha",))
+        twin = Thing("a")
+        reg._items.append(twin)  # the white-box seam the docstring warns about
+        reg.unregister(twin)
+        assert reg.find("a") is survivor
+        assert reg.find("alpha") is survivor, "twin removal stripped the alias"
+        # and once the LAST holder of the name goes, the alias goes with it
+        reg.unregister(survivor)
+        assert reg.find("alpha") is None
+
+    def test_duplicate_integration_names_are_now_rejected(self):
+        """#147 review: a RECORDED tightening vs the old module-global code
+        (which checked only model_type namespaces).  Two integrations
+        answering to one name would make hub lookups order-dependent."""
+        from unturtle.models.integrations.registry import (
+            BackboneIntegration,
+            register_integration_into,
+        )
+        from unturtle.registry import RegistryHub
+
+        hub = RegistryHub()
+        register_integration_into(
+            hub,
+            BackboneIntegration(
+                name="twin", model_types=("t-one",), _native_resolver=lambda: None
+            ),
+        )
+        with pytest.raises(ValueError, match="twin"):
+            register_integration_into(
+                hub,
+                BackboneIntegration(
+                    name="twin", model_types=("t-two",), _native_resolver=lambda: None
+                ),
+            )

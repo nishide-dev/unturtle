@@ -114,11 +114,15 @@ class Registry(Generic[T]):
             if item is value:
                 del self._items[index]
                 name = value.name
-                self._aliases = {
-                    alias: target
-                    for alias, target in self._aliases.items()
-                    if target != name
-                }
+                # Sweep aliases only when the LAST holder of the name is
+                # gone: a same-named twin removed by identity must not strip
+                # the survivor's aliases (#147 review).
+                if all(item.name != name for item in self._items):
+                    self._aliases = {
+                        alias: target
+                        for alias, target in self._aliases.items()
+                        if target != name
+                    }
                 return
 
 

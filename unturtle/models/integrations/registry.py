@@ -314,10 +314,12 @@ def register_integration(integration: BackboneIntegration) -> None:
     """Add an integration to the registry.
 
     Raises:
-        ValueError: if any of its ``model_types`` is already claimed.  Two
-            integrations answering to one ``model_type`` means the winner
-            depends on registration order, which is exactly the kind of
-            silent behavior change this registry exists to prevent.
+        ValueError: if any of its ``model_types`` or ``peft_model_types`` is
+            already claimed, or (since #142, a recorded tightening over the
+            old module-global list) if its ``name`` is already registered.
+            Two integrations answering to one key means the winner depends
+            on registration order, which is exactly the kind of silent
+            behavior change this registry exists to prevent.
     """
     from unturtle.registry import ensure_default_hub
 
