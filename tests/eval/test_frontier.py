@@ -511,11 +511,15 @@ class TestReviewPins159:
         from unturtle.eval.frontier import generative_perplexity
 
         identity = {"model": "fake", "revision": "r0"}
-        with pytest.raises(ValueError, match="text"):
+        # The two failure modes carry DISTINCT diagnoses (empty corpus vs
+        # all-degenerate corpus) — matched exactly, because the zero-token
+        # guard also fires on an empty list and a loose match let the
+        # empty-list guard's removal survive the battery.
+        with pytest.raises(ValueError, match="zero texts"):
             generative_perplexity(
                 [], evaluator=lambda t: (1.0, 1), evaluator_identity=identity
             )
-        with pytest.raises(ValueError, match="token"):
+        with pytest.raises(ValueError, match="zero tokens"):
             generative_perplexity(
                 ["x"], evaluator=lambda t: (0.0, 0), evaluator_identity=identity
             )
