@@ -124,7 +124,19 @@ def oracle():
 def _oracle_model(oracle, algo_name):
     torch.manual_seed(123)
     cls = oracle["algo"].FLM if algo_name == "flm" else oracle["algo"].FMLM
-    return cls(_tiny_config(algo_name), TinyTokenizer()).eval()
+    model = cls(_tiny_config(algo_name), TinyTokenizer()).eval()
+    # DDiTFinalLayer zero-inits linear AND adaLN modulation (DiT
+    # convention), so an UNTRAINED model's output is identically zero —
+    # log_softmax degenerates to uniform, argmax to ties, and schedule /
+    # cap / churn mutants become invisible (the first battery proved it).
+    # Perturb the head on the ORACLE side; the state dict is copied into
+    # the pack, so differential parity is untouched.
+    head = model.backbone.output_layer
+    torch.nn.init.normal_(head.linear.weight, std=0.5)
+    torch.nn.init.normal_(head.linear.bias, std=0.5)
+    torch.nn.init.normal_(head.adaLN_modulation.weight, std=0.1)
+    torch.nn.init.normal_(head.adaLN_modulation.bias, std=0.1)
+    return model
 
 
 def _pack_model(oracle_model, kind):
