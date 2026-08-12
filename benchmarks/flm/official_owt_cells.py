@@ -110,7 +110,13 @@ def generate(model, tokenizer, args):
         offset = 0
         while remaining > 0:
             batch = min(args.batch_size, remaining)
-            result = run_pack(model, args, num_samples=batch, seed=seed + offset)
+            # Collision-free across seeds at ANY batch size (#161 review
+            # F1: seed+offset made 42/43/44 overlap at small batches) —
+            # and a DISCLOSED deviation from the oracle's single
+            # sequential stream (L.seed_everything once, main.py:415).
+            result = run_pack(
+                model, args, num_samples=batch, seed=seed * 1_000_003 + offset
+            )
             executed = result["executed"]
             ids_chunks.append(result["tokens"].cpu())
             remaining -= batch
@@ -147,23 +153,25 @@ def official_column(per_seed, max_length, eval_device):
             # The oracle moves its metrics with TrainerBase.to()
             # (trainer_base.py:136-139); standalone use must do the same or
             # torchmetrics raises a device mismatch on CUDA evaluation.
-            metric.to(torch.device("cpu" if eval_device == "cpu" else "cuda"))
+            metric.to(torch.device(eval_device))
             metric.record_entropy(payload["ids"])
             metric.record_generative_perplexity(
-                payload["texts"],
-                max_length,
-                device="cpu" if eval_device == "cpu" else "cuda",
+                payload["texts"], max_length, device=eval_device
             )
             rows[seed] = {
                 "genppl_official": float(metric.gen_ppl.compute()),
                 "entropy_official_native": float(metric.sample_entropy.compute()),
             }
-        genppls = sorted(row["genppl_official"] for row in rows.values())
-        entropies = sorted(row["entropy_official_native"] for row in rows.values())
+        import statistics
+
         return {
             "per_seed": rows,
-            "median_genppl": genppls[len(genppls) // 2],
-            "median_entropy": entropies[len(entropies) // 2],
+            "median_genppl": statistics.median(
+                row["genppl_official"] for row in rows.values()
+            ),
+            "median_entropy": statistics.median(
+                row["entropy_official_native"] for row in rows.values()
+            ),
             "evaluator": {
                 "model": "gpt2-large",
                 "dtype": "float32",
@@ -351,9 +359,7 @@ def main():
     )
 
     print("[5/5] canonical #152 column ...", flush=True)
-    quality, mauve_note = canonical_column(
-        texts, native_ids, args, "cpu" if eval_device == "cpu" else args.device
-    )
+    quality, mauve_note = canonical_column(texts, native_ids, args, eval_device)
 
     if args.algo == "flm":
         checkpoint = f"{FLM_CHECKPOINT}@{FLM_REVISION[:8]}"
@@ -389,7 +395,11 @@ def main():
             "official_column": official,
             "mauve_note": mauve_note,
             "seeds": args.seeds,
-            "per_seed_seed_rule": "seed + samples_generated_so_far within a seed",
+            "per_seed_seed_rule": (
+                "seed*1_000_003 + samples_generated_so_far — N derived seeds, "
+                "a DISCLOSED deviation from the oracle's single sequential "
+                "stream (official scripts: seed_everything(1) once)"
+            ),
         },
     )
     write_jsonl([record], out / "frontier_record.jsonl")

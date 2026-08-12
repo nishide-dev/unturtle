@@ -33,6 +33,14 @@ hub = bootstrap_builtin_hub(RegistryHub())
 load_plugins(hub, names=["flm"])
 ```
 
+Parity evidence is two-tier (disclosed): CPU-tier parity is EXACT
+(`torch.equal` against the oracle through its own `use_jvp_attn=True`
+pure-torch path — a path the official sampler itself never takes); the
+GPU/flash tier has no bitwise oracle test and is validated statistically
+by the official 3-cell band reproduction (all within ~1% of published
+values). Every frontier record carries `use_jvp_attn` so artifacts are
+self-describing.
+
 No stable ABI, no capability promotion, no cross-family claims: this pack
 fills the `flow_map` Tier-A role (and provides the one-hot Euclidean flow
 control) for the #152 frontier protocol.

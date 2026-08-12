@@ -116,7 +116,12 @@ def oracle():
                 "models",
                 "models.dit",
                 "models.ema",
-                "utils.jvp",
+                # NOTE (#161 review F8): exact-name sweep — a future oracle
+                # submodule needs adding here.  Module scope is load-bearing:
+                # FLM's bare `utils` is a MODULE while ELF's is a package;
+                # overlapping live windows would collide (loudly).  Never
+                # promote this fixture to session scope: original_forward is
+                # captured at setup and would double-wrap.
             ) and not name.startswith("unturtle"):
                 sys.modules.pop(name, None)
 
@@ -328,6 +333,19 @@ class TestLoaderCrossGuards:
         loader = self._fake_load(monkeypatch, has_prime=False, algo_name="flm")
         with pytest.raises(ValueError, match="load_flm_model"):
             loader.load_fmlm_model()
+
+    def test_success_paths_set_exactly_one_marker(self, monkeypatch):
+        """#161 review F6: the probe/dispatch separation rests on each
+        loader setting ITS marker and not the other's."""
+        loader = self._fake_load(monkeypatch, has_prime=False, algo_name="dos")
+        model = loader.load_flm_model()
+        assert model.is_flm_denoiser is True
+        assert not getattr(model, "is_fmlm_flow_map", False)
+
+        loader = self._fake_load(monkeypatch, has_prime=True, algo_name="fmlm")
+        model = loader.load_fmlm_model()
+        assert model.is_fmlm_flow_map is True
+        assert not getattr(model, "is_flm_denoiser", False)
 
 
 @pytest.mark.slow
