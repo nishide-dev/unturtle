@@ -65,6 +65,17 @@ def parse_args():
         action="store_true",
         help="skip batch 1/8/32 cells (record them as missing with reason)",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="skip generation: reuse samples.jsonl + generation_meta.json in "
+        "--out (evaluation can then run CPU-only via CUDA_VISIBLE_DEVICES='')",
+    )
+    parser.add_argument(
+        "--eval-device",
+        default=None,
+        help="device for the canonical evaluator (defaults to --device)",
+    )
     return parser.parse_args()
 
 
@@ -251,45 +262,75 @@ def main():
         write_jsonl,
     )
 
-    print(f"[1/5] loading ELF-B on {args.device} ...", flush=True)
-    from transformers import AutoTokenizer
-
-    model = load_elf_model(device=args.device)
-    tokenizer = AutoTokenizer.from_pretrained("t5-small", legacy=True)
-    torch.cuda.reset_peak_memory_stats() if torch.cuda.is_available() else None
-
-    print("[2/5] throughput cells ...", flush=True)
-    if args.skip_throughput:
-        cells = {
-            f"batch_{batch}": missing_cell("missing", "skipped by flag")
-            for batch in (1, 8, 32)
-        }
-        warmup_seconds = None
+    if args.resume:
+        print("[1-3/5] resuming from saved samples/meta ...", flush=True)
+        texts = [
+            json.loads(line)["text"]
+            for line in (out / "samples.jsonl").read_text().splitlines()
+            if line.strip()
+        ]
+        meta = json.loads((out / "generation_meta.json").read_text())
+        executed = meta["executed"]
+        cells = meta["cells"]
+        peak_memory = meta["peak_memory_bytes"]
+        warmup_seconds = meta["warmup_seconds"]
+        generation_seconds = meta["generation_wall_seconds"]
+        t5_ids = torch.load(out / "t5_ids.pt", weights_only=True)
     else:
-        warmup_start = time.perf_counter()
-        cells = throughput_cells(model, args)
-        warmup_seconds = time.perf_counter() - warmup_start
+        print(f"[1/5] loading ELF-B on {args.device} ...", flush=True)
+        from transformers import AutoTokenizer
 
-    print(f"[3/5] generating {args.num_samples} samples ...", flush=True)
-    texts, t5_ids, executed, generation_seconds = generate_samples(
-        model, tokenizer, args
-    )
-    peak_memory = (
-        torch.cuda.max_memory_allocated() if torch.cuda.is_available() else None
-    )
-    (out / "samples.jsonl").write_text(
-        "\n".join(json.dumps({"text": text}) for text in texts) + "\n"
-    )
-    del model
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+        model = load_elf_model(device=args.device)
+        tokenizer = AutoTokenizer.from_pretrained("t5-small", legacy=True)
+        torch.cuda.reset_peak_memory_stats() if torch.cuda.is_available() else None
+
+        print("[2/5] throughput cells ...", flush=True)
+        if args.skip_throughput:
+            cells = {
+                f"batch_{batch}": missing_cell("missing", "skipped by flag")
+                for batch in (1, 8, 32)
+            }
+            warmup_seconds = None
+        else:
+            warmup_start = time.perf_counter()
+            cells = throughput_cells(model, args)
+            warmup_seconds = time.perf_counter() - warmup_start
+
+        print(f"[3/5] generating {args.num_samples} samples ...", flush=True)
+        texts, t5_ids, executed, generation_seconds = generate_samples(
+            model, tokenizer, args
+        )
+        peak_memory = (
+            torch.cuda.max_memory_allocated() if torch.cuda.is_available() else None
+        )
+        (out / "samples.jsonl").write_text(
+            "\n".join(json.dumps({"text": text}) for text in texts) + "\n"
+        )
+        torch.save(t5_ids, out / "t5_ids.pt")
+        (out / "generation_meta.json").write_text(
+            json.dumps(
+                {
+                    "executed": executed,
+                    "cells": cells,
+                    "peak_memory_bytes": peak_memory,
+                    "warmup_seconds": warmup_seconds,
+                    "generation_wall_seconds": generation_seconds,
+                }
+            )
+        )
+        del model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     print("[4/5] official evaluator column ...", flush=True)
     official = official_column(texts, max_length=1024)
     print(f"  official: {official}", flush=True)
 
     print("[5/5] canonical #152 column ...", flush=True)
-    quality, mauve_note = canonical_column(texts, t5_ids, args, args.device)
+    eval_device = args.eval_device or (
+        "cpu" if not torch.cuda.is_available() else args.device
+    )
+    quality, mauve_note = canonical_column(texts, t5_ids, args, eval_device)
 
     record = frontier_record(
         family="embedding_flow",
