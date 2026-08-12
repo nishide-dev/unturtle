@@ -1,0 +1,21 @@
+[project]
+name = "unturtle-elf"
+version = "0.0.1"
+description = "ELF (Embedded Language Flows, arXiv:2605.10938) reference method pack for Unturtle - EXPERIMENTAL (#153: checkpoint parity + generation/evaluation only, no training)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+# torch / transformers / huggingface_hub are supplied by the host Unturtle
+# environment; the pack deliberately declares no pinned deep-learning deps so
+# it can never downgrade the host's CUDA-matched torch.
+dependencies = []
+
+[project.entry-points."unturtle.plugins"]
+elf = "unturtle_elf:register_unturtle"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
