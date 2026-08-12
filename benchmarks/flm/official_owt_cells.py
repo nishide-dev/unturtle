@@ -144,6 +144,10 @@ def official_column(per_seed, max_length, eval_device):
                 gen_ppl_eval_model_name_or_path="gpt2-large",
                 eval_ppl_batch_size=8,
             )
+            # The oracle moves its metrics with TrainerBase.to()
+            # (trainer_base.py:136-139); standalone use must do the same or
+            # torchmetrics raises a device mismatch on CUDA evaluation.
+            metric.to(torch.device("cpu" if eval_device == "cpu" else "cuda"))
             metric.record_entropy(payload["ids"])
             metric.record_generative_perplexity(
                 payload["texts"],
