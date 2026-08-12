@@ -368,6 +368,63 @@ class TestAdapterSemantics:
             TestAdapterTrajectoryParity()._run_pack(pack_model, solver="dpm")
 
 
+class TestLoaderKeyPolicy:
+    """Stage-1 pin 1 (fast tier): checkpoint key coverage is LOUD — the
+    issue's 'wrong checkpoint key silently dropped' mutation target."""
+
+    def _fake_checkpoint(self, tmp_path, monkeypatch, mutate_state):
+        from unturtle_elf._reference import model as reference_model
+        from unturtle_elf.loader import load_elf_model_from_files
+
+        tiny = _tiny_pack_model()
+        monkeypatch.setattr(reference_model, "ELF_B", lambda **kwargs: tiny)
+        state = dict(tiny.state_dict())
+        mutate_state(state)
+        path = tmp_path / "checkpoint_fake"
+        torch.save({"params": state, "ema_params1": state}, path)
+        raw_config = {
+            "model": "ELF-B",
+            "max_length": TINY["max_length"],
+            "encoder_model_name": "t5-small",
+        }
+        return lambda: load_elf_model_from_files(str(path), raw_config)
+
+    def test_unexpected_keys_raise(self, tmp_path, monkeypatch):
+        load = self._fake_checkpoint(
+            tmp_path,
+            monkeypatch,
+            lambda state: state.update(bogus_extra_key=torch.zeros(1)),
+        )
+        with pytest.raises(RuntimeError, match="bogus_extra_key"):
+            load()
+
+    def test_missing_keys_raise(self, tmp_path, monkeypatch):
+        load = self._fake_checkpoint(
+            tmp_path,
+            monkeypatch,
+            lambda state: state.pop("final_layer.linear.weight"),
+        )
+        with pytest.raises(RuntimeError, match="final_layer.linear.weight"):
+            load()
+
+    def test_missing_ema_falls_back_loudly(self, tmp_path, monkeypatch):
+        from unturtle_elf._reference import model as reference_model
+        from unturtle_elf.loader import load_elf_model_from_files
+
+        tiny = _tiny_pack_model()
+        monkeypatch.setattr(reference_model, "ELF_B", lambda **kwargs: tiny)
+        path = tmp_path / "checkpoint_no_ema"
+        torch.save({"params": dict(tiny.state_dict())}, path)
+        raw_config = {
+            "model": "ELF-B",
+            "max_length": TINY["max_length"],
+            "encoder_model_name": "t5-small",
+        }
+        with pytest.warns(UserWarning, match="no EMA"):
+            model = load_elf_model_from_files(str(path), raw_config)
+        assert model.is_elf_denoiser is True
+
+
 @pytest.mark.slow
 class TestRealCheckpointAudit:
     """Stage-1 audits on the real ELF-B checkpoint (downloads ~840MB)."""
