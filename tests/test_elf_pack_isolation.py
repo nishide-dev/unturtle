@@ -121,9 +121,7 @@ class TestNoPromotion:
                 pass
 
         with pytest.raises(ValueError, match="load_elf_model"):
-            hub.resolve_generation(
-                "elf", ExistingMaskedModel(), bd3lm_requested=False
-            )
+            hub.resolve_generation("elf", ExistingMaskedModel(), bd3lm_requested=False)
 
     def test_elf_never_wins_auto_even_in_its_own_hub(self):
         from unturtle.plugins import load_plugins
@@ -135,10 +133,7 @@ class TestNoPromotion:
             def _sample(self):
                 pass
 
-        assert (
-            hub.resolve_generation("auto", Masked(), bd3lm_requested=False)
-            == "mdlm"
-        )
+        assert hub.resolve_generation("auto", Masked(), bd3lm_requested=False) == "mdlm"
 
     def test_method_manifest_resolves_generation_only(self):
         """#153 is parity+generation only: the manifest must not claim a
