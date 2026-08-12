@@ -110,24 +110,52 @@ def load_dataset_rows(paths: list[str]):
     return pa.concat_tables(tables)
 
 
-def make_batch(table, indices, device):
-    """One microbatch in the oracle's train_step contract (uncond OWT:
-    every position valid, no conditioning prefix)."""
-    import torch
+def make_batch(table, indices, device, pad_token_id=0):
+    """One microbatch built with the ORACLE's collation semantics
+    (data_utils.py:61-115): rows are VARIABLE length, so pad/truncate to
+    `SEQUENCE_LENGTH` and derive the masks from the true lengths —
 
-    rows = [table["input_ids"][int(i)].as_py() for i in indices]
-    input_ids = torch.tensor([row[:SEQUENCE_LENGTH] for row in rows], dtype=torch.long)
-    if input_ids.shape[1] < SEQUENCE_LENGTH:
-        raise ValueError(
-            f"row shorter than {SEQUENCE_LENGTH} tokens; the official split "
-            "is pre-packed, so this indicates a wrong shard/revision"
-        )
-    ones = torch.ones(input_ids.shape, dtype=torch.float32)
+    - `attention_mask` = position < true length (NOT all ones: padded
+      positions must not enter the loss);
+    - `encoder_attention_mask` = `build_self_attn_cond_masks` with no
+      conditioning prefix (uncond OWT), i.e. every row attends to the
+      valid positions;
+    - `cond_seq_mask` = zeros (no conditioning tokens).
+
+    Correction #3 (Stage-3): an earlier version assumed the official split
+    was pre-packed to 1024 and passed all-ones masks; the smoke run proved
+    rows are 846/987/... tokens, so that would have trained on padding.
+    """
+    import numpy as np
+    import torch
+    from unturtle_elf._reference.encoder_utils import build_self_attn_cond_masks
+
+    rows = [np.asarray(table["input_ids"][int(i)].as_py()) for i in indices]
+    padded, lengths = [], []
+    for ids in rows:
+        true_len = min(len(ids), SEQUENCE_LENGTH)
+        ids = ids[:SEQUENCE_LENGTH]
+        if true_len < SEQUENCE_LENGTH:
+            ids = np.concatenate(
+                [
+                    ids,
+                    np.full(SEQUENCE_LENGTH - true_len, pad_token_id, dtype=ids.dtype),
+                ]
+            )
+        padded.append(ids)
+        lengths.append(true_len)
+
+    ids = np.stack(padded)
+    total_lens = np.array(lengths)
+    positions = np.arange(SEQUENCE_LENGTH)[None, :]
+    is_cond = positions < np.zeros((len(rows), 1), dtype=np.int32)  # uncond
+    is_valid = positions < total_lens[:, None]
+    encoder_attn, attn, cond = build_self_attn_cond_masks(is_cond, is_valid, xp=np)
     return {
-        "input_ids": input_ids.to(device),
-        "attention_mask": ones.to(device),
-        "encoder_attention_mask": ones.to(device),
-        "cond_seq_mask": torch.zeros(input_ids.shape, device=device),
+        "input_ids": torch.from_numpy(ids).long().to(device),
+        "attention_mask": torch.from_numpy(attn).to(device),
+        "encoder_attention_mask": torch.from_numpy(encoder_attn).to(device),
+        "cond_seq_mask": torch.from_numpy(cond).to(device),
     }
 
 
@@ -139,7 +167,27 @@ def build_config(raw_config):
         pass
 
     config = Config()
-    for key, value in raw_config.items():
+    # The oracle's Config CLASS supplies defaults for fields the checkpoint
+    # config.yml omits (configs/config.py).  Copy the ones the objective
+    # reads, explicitly, so a missing key can never become a silent default
+    # (Stage-3 correction #5 — config.yml has no `pad_token`).
+    oracle_defaults = {
+        "pad_token": "pad",
+        "label_drop_prob": 0.0,
+        "t_eps": 5e-2,
+        "self_cond_prob": 0.5,
+        "self_cond_cfg_min": 0.5,
+        "self_cond_cfg_max": 5.0,
+        "time_schedule": "logit_normal",
+        "denoiser_noise_scale": 1.0,
+        "decoder_noise_scale": 1.0,
+        "num_self_cond_cfg_tokens": 4,
+        "latent_mean": 0.0,
+        "latent_std": 1.0,
+    }
+    for key, value in oracle_defaults.items():
+        setattr(config, key, value)
+    for key, value in raw_config.items():  # checkpoint values win
         setattr(config, key, value)
     config.grad_accum_steps = 1  # accumulation is driven by this script
     config.ema_decay1 = EMA_DECAY
@@ -203,7 +251,23 @@ def main():
             self.inner = inner
 
         def forward(self, input_ids, attention_mask=None, deterministic=True):
+            """Correction #4 (Stage-3): the oracle hands its 3D float
+            self-attention mask straight to `T5EncoderModel` (t5_encoder.py:
+            66-80), which the transformers version it targets accepted;
+            transformers 5.x rejects a float mask (`bitwise_and` on Float).
+
+            For the UNCONDITIONAL scope every query row of that 3D mask is
+            identical and equals the 2D validity mask (proven directly:
+            `enc[b][q] == attn[b]` for all q), so collapsing to the 2D long
+            mask preserves the oracle's semantics exactly here.  A
+            conditional run would NOT be reducible and needs a different
+            adapter.
+            """
             del deterministic
+            if attention_mask is not None and attention_mask.dim() == 3:
+                attention_mask = attention_mask[:, 0, :]
+            if attention_mask is not None:
+                attention_mask = attention_mask.long()
             return self.inner(
                 input_ids=input_ids, attention_mask=attention_mask
             ).last_hidden_state
