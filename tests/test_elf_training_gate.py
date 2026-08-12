@@ -172,7 +172,7 @@ class TestEntryGuards:
         for name, tensor in payload["ema"].items():
             assert tensor.dtype == torch.float32
             assert torch.equal(tensor, ema[name])
-        for name, tensor in payload["model"].items():
+        for tensor in payload["model"].values():
             assert tensor.dtype == torch.float32
 
 
