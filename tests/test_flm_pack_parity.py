@@ -330,5 +330,63 @@ class TestLoaderCrossGuards:
             loader.load_fmlm_model()
 
 
+@pytest.mark.slow
+class TestRealCheckpointAudit:
+    """Stage-1 audits on the real HF checkpoints (downloads ~1.4GB total)."""
+
+    @pytest.fixture(scope="class")
+    def flm_b(self):
+        from unturtle_flm.loader import load_flm_model
+
+        return load_flm_model()
+
+    @pytest.fixture(scope="class")
+    def fmlm_b(self):
+        from unturtle_flm.loader import load_fmlm_model
+
+        return load_fmlm_model()
+
+    def test_flm_parameter_scale_and_provenance(self, flm_b):
+        from unturtle_flm.loader import FLM_CHECKPOINT, FLM_REVISION
+
+        total = sum(p.numel() for p in flm_b.backbone.parameters())
+        assert 80_000_000 < total < 220_000_000  # "small" DDiT scale
+        assert flm_b.flm_checkpoint.repo_id == FLM_CHECKPOINT
+        assert flm_b.flm_checkpoint.revision == FLM_REVISION
+        assert flm_b.num_tokens == 1024
+        assert flm_b.backbone.sigma_map_prime is None  # one-time contract
+
+    def test_fmlm_carries_the_double_time_contract(self, fmlm_b):
+        assert fmlm_b.backbone.sigma_map_prime is not None
+        assert fmlm_b.is_fmlm_flow_map is True
+        assert not getattr(fmlm_b, "is_flm_denoiser", False)
+
+    def test_real_cross_guards_fire(self):
+        """The REAL checkpoints through the WRONG loaders — the fast-tier
+        fakes proved the logic; this proves the actual metadata trips it."""
+        from unturtle_flm.loader import (
+            FLM_CHECKPOINT,
+            FLM_REVISION,
+            FMLM_CHECKPOINT,
+            FMLM_REVISION,
+            load_flm_model,
+            load_fmlm_model,
+        )
+
+        with pytest.raises(ValueError, match="load_flm_model"):
+            load_fmlm_model(checkpoint=FLM_CHECKPOINT, revision=FLM_REVISION)
+        with pytest.raises(ValueError, match="load_fmlm_model"):
+            load_flm_model(checkpoint=FMLM_CHECKPOINT, revision=FMLM_REVISION)
+
+    def test_short_real_generation_smoke(self, fmlm_b):
+        from unturtle_flm.sampler import run_fmlm_request
+
+        result = run_fmlm_request(
+            fmlm_b, Request(num_samples=2, steps=1, seed=1, gamma=1.0)
+        )
+        assert result["tokens"].shape == (2, 1024)
+        assert result["executed"]["nfe"] == 1
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
