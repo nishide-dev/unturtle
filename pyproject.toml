@@ -70,6 +70,7 @@ target-version = "py311"
 force-exclude = true
 extend-exclude = [
     "examples/demos/*.py",  # marimo notebooks: cell functions reference cross-cell names (F821 by design)
+    "packs/*/src/*/_reference/*.py",  # verbatim-ported official reference code (parity oracles): style edits are forbidden by the port rule
 ]
 
 [tool.ruff.lint]
