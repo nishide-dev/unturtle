@@ -354,7 +354,9 @@ class TestRealCheckpointAudit:
         assert flm_b.flm_checkpoint.repo_id == FLM_CHECKPOINT
         assert flm_b.flm_checkpoint.revision == FLM_REVISION
         assert flm_b.num_tokens == 1024
-        assert flm_b.backbone.sigma_map_prime is None  # one-time contract
+        # Structural one-time contract (the HF config says algo.name="dos" —
+        # Stage-0 correction #1 — so the attribute may be entirely absent).
+        assert getattr(flm_b.backbone, "sigma_map_prime", None) is None
 
     def test_fmlm_carries_the_double_time_contract(self, fmlm_b):
         assert fmlm_b.backbone.sigma_map_prime is not None

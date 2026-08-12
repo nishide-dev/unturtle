@@ -80,7 +80,10 @@ def load_flm_model(
 ) -> Any:
     """The multi-step FLM denoiser (one-time conditioning)."""
     model, algo_name = _load(checkpoint, revision, device)
-    if "fmlm" in algo_name or model.backbone.sigma_map_prime is not None:
+    # STRUCTURAL contract check, not a name check: the real FLM-B-OWT HF
+    # config carries the historical algo.name 'dos' (Stage-0 correction #1),
+    # so only the presence of the double time embedding decides.
+    if getattr(model.backbone, "sigma_map_prime", None) is not None:
         raise ValueError(
             f"checkpoint {checkpoint!r} is a flow map (algo={algo_name!r}, "
             "double time conditioning present) — load it with "
@@ -99,7 +102,7 @@ def load_fmlm_model(
 ) -> Any:
     """The distilled flow map (double time conditioning, one/few-step)."""
     model, algo_name = _load(checkpoint, revision, device)
-    if model.backbone.sigma_map_prime is None:
+    if getattr(model.backbone, "sigma_map_prime", None) is None:
         raise ValueError(
             f"checkpoint {checkpoint!r} has no double time conditioning "
             f"(algo={algo_name!r}) — it is not a flow map; load it with "
