@@ -289,5 +289,34 @@ class TestSemanticSeparation:
         assert torch.equal(torch.random.get_rng_state(), state_before)
 
 
+class TestLoaderCrossGuards:
+    """Stage-1 'wrong checkpoint accepted' mutation target, fast tier: the
+    loader refuses the wrong contract regardless of what HF returns."""
+
+    def _fake_load(self, monkeypatch, *, has_prime, algo_name):
+        import unturtle_flm.loader as loader
+
+        class FakeBackbone:
+            sigma_map_prime = object() if has_prime else None
+
+        class FakeModel:
+            backbone = FakeBackbone()
+
+        monkeypatch.setattr(
+            loader, "_load", lambda repo, rev, dev: (FakeModel(), algo_name)
+        )
+        return loader
+
+    def test_flow_map_checkpoint_refused_by_the_flm_loader(self, monkeypatch):
+        loader = self._fake_load(monkeypatch, has_prime=True, algo_name="fmlm")
+        with pytest.raises(ValueError, match="load_fmlm_model"):
+            loader.load_flm_model()
+
+    def test_plain_flm_checkpoint_refused_by_the_fmlm_loader(self, monkeypatch):
+        loader = self._fake_load(monkeypatch, has_prime=False, algo_name="flm")
+        with pytest.raises(ValueError, match="load_flm_model"):
+            loader.load_fmlm_model()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
