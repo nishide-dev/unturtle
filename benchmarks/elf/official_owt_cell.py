@@ -105,9 +105,10 @@ def generate_samples(model, tokenizer, args):
             "cfg_scale": 1.0,
             "time_schedule": "logit_normal",
             "num_samples": batch,
-            # NOTE: run_generation_request seeds once per call; to keep ONE
-            # stream across batches we advance a per-batch seed derived from
-            # the cell seed deterministically (recorded below).
+            # N per-batch derived seeds — a DISCLOSED deviation from the
+            # oracle script's single sequential stream (#160 review F4);
+            # distributionally equivalent given the reference's own CUDA
+            # global-RNG behavior, recorded in extra.per_batch_seed_rule.
             "seed": args.seed + len(all_ids),
         }
         result = run_generation_request(model, request)
@@ -127,9 +128,20 @@ def generate_samples(model, tokenizer, args):
     return texts, _torch.cat(all_ids, dim=0), executed, time.perf_counter() - start
 
 
-def official_column(texts, max_length):
-    """The oracle's own evaluator, imported from the official checkout."""
+def official_column(texts, max_length, eval_device="cuda"):
+    """The oracle's own evaluator, imported from the official checkout.
+
+    The oracle's Metrics hardcodes `cuda if available`; unsloth conversely
+    refuses to IMPORT without a visible GPU — so a CPU evaluation cannot use
+    CUDA_VISIBLE_DEVICES="".  For eval_device="cpu" we patch
+    torch.cuda.is_available to False around the oracle call only (bf16
+    semantics preserved; slower, numerically equivalent accumulation)."""
+    import torch
+
     sys.path.insert(0, str(ORACLE_SRC))
+    real_is_available = torch.cuda.is_available
+    if eval_device == "cpu":
+        torch.cuda.is_available = lambda: False
     try:
         from utils.metrics_utils import Metrics
 
@@ -145,11 +157,16 @@ def official_column(texts, max_length):
             "evaluator": {
                 "model": "gpt2-large",
                 "dtype": "bfloat16",
+                # bf16-on-CPU and bf16-on-CUDA reduce in different orders;
+                # two records with the same identity but different devices
+                # are distinguishable (#160 review F6).
+                "device": eval_device,
                 "semantics": "official ELF Metrics (first-EOS masking, "
                 "mean per-sample unigram entropy)",
             },
         }
     finally:
+        torch.cuda.is_available = real_is_available
         sys.path.remove(str(ORACLE_SRC))
         for name in list(sys.modules):
             if name.split(".")[0] in ("modules", "utils", "configs") and not (
@@ -223,6 +240,12 @@ def throughput_cells(model, args):
         kwargs = {}
 
     def run_batch(batch_size, generator):
+        # The CELL's single generator owns the stream: each batch's seed is
+        # DRAWN from it, so a per-batch reset cannot masquerade as protocol
+        # compliance (#160 review F3).
+        derived_seed = int(
+            torch.randint(0, 2**31 - 1, (1,), generator=generator).item()
+        )
         request = Request()
         request.kwargs = {
             "solver": "sde",
@@ -230,14 +253,14 @@ def throughput_cells(model, args):
             "sde_gamma": args.sde_gamma,
             "self_cond_cfg_scale": args.self_cond_cfg_scale,
             "num_samples": batch_size,
-            "seed": args.seed,
+            "seed": derived_seed,
         }
         run_generation_request(model, request)
         if torch.cuda.is_available():
             torch.cuda.synchronize()
 
     def warmup():
-        run_batch(1, None)
+        run_batch(1, torch.Generator().manual_seed(args.seed))
 
     return measure_throughput_cells(run_batch, seed=args.seed, warmup=warmup)
 
@@ -323,7 +346,9 @@ def main():
             torch.cuda.empty_cache()
 
     print("[4/5] official evaluator column ...", flush=True)
-    official = official_column(texts, max_length=1024)
+    official = official_column(
+        texts, max_length=1024, eval_device=args.eval_device or "cuda"
+    )
     print(f"  official: {official}", flush=True)
 
     print("[5/5] canonical #152 column ...", flush=True)
@@ -359,14 +384,16 @@ def main():
         extra={
             "official_column": official,
             "mauve_note": mauve_note,
-            "per_batch_seed_rule": "seed + samples_generated_so_far",
+            "per_batch_seed_rule": (
+                "N per-batch derived seeds (seed + samples_generated_so_far) "
+                "— deviation from the oracle's single sequential stream"
+            ),
             "protocol_version": FRONTIER_PROTOCOL_VERSION,
         },
     )
     write_jsonl([record], out / "frontier_record.jsonl")
     print(json.dumps({"official": official, "canonical_quality": quality}, indent=2))
     print(f"records written to {out}")
-    _ = cell  # imported for symmetry with missing_cell; cells come typed
 
 
 if __name__ == "__main__":

@@ -114,7 +114,6 @@ def _tiny_pack_model(seed=0):
         "num_time_tokens": TINY["num_time_tokens"],
         "bottleneck_dim": TINY["bottleneck_dim"],
     }
-    model.text_encoder_dim = TINY["text_encoder_dim"]
     return model
 
 
@@ -239,8 +238,13 @@ class TestAdapterTrajectoryParity:
             cfg_scale=1.0,
             self_cond_cfg_scale=3.0,
         )
-        return oracle["generation"]._dlm_decode_batch(
+        tokens = oracle["generation"]._dlm_decode_batch(
             latent, oracle_model, t_steps[-1], config, 3.0
+        )
+        # The oracle pipeline masks after the first EOS before decoding
+        # (generation.py:184) — part of the end-to-end contract.
+        return oracle["generation"].mask_after_eos(
+            tokens, eos_token_id=1, pad_token_id=0
         )
 
     @pytest.mark.parametrize(
@@ -366,6 +370,66 @@ class TestAdapterSemantics:
         pack_model = _tiny_pack_model()
         with pytest.raises(ValueError, match="solver"):
             TestAdapterTrajectoryParity()._run_pack(pack_model, solver="dpm")
+
+
+class TestReviewPins160:
+    """Pins for the #160 review's CRITICAL findings, RED-first."""
+
+    def test_logit_normal_grid_uses_the_checkpoint_schedule(self, oracle):
+        """Review F1 (CRITICAL): the oracle passes the CHECKPOINT's
+        denoiser_p_mean/p_std into get_sampling_steps (generation.py:151);
+        ELF-B's config.yml has p_mean=-1.5, and the function's -0.8 default
+        allocates ~5x fewer points to the high-noise regime.  The Stage-0
+        freeze flagged exactly this trap.  Pinned by comparing the grid the
+        ADAPTER records against the oracle's grid under the same seed."""
+        pack_model = _tiny_pack_model()
+        pack_model.elf_config["denoiser_p_mean"] = -1.5
+        pack_model.elf_config["denoiser_p_std"] = 0.8
+
+        torch.manual_seed(31)
+        result = TestAdapterTrajectoryParity()._run_pack(
+            pack_model,
+            solver="ode",
+            steps=6,
+            time_schedule="logit_normal",
+            seed=31,
+        )
+        torch.manual_seed(31)
+        oracle_grid = oracle["sampling"].get_sampling_steps(
+            6,
+            time_schedule="logit_normal",
+            P_mean=-1.5,
+            P_std=0.8,
+            dtype=torch.float32,
+        )
+        assert result["executed"]["t_grid"] == pytest.approx(oracle_grid.tolist())
+
+    def test_post_eos_content_is_masked_like_the_oracle(self, oracle):
+        """Review F2 (CRITICAL): the oracle masks everything after the
+        first EOS on T5 ids BEFORE decoding (generation.py:184); unmasked
+        argmax ids leak unbounded post-EOS junk into every evaluator
+        column.  The adapter must return oracle-masked tokens."""
+        pack_model = _tiny_pack_model()
+        result = TestAdapterTrajectoryParity()._run_pack(
+            pack_model, solver="ode", steps=4, time_schedule="uniform"
+        )
+        tokens = result["tokens"]
+        eos_id = result["executed"]["eos_token_id"]
+        pad_id = result["executed"]["pad_token_id"]
+        oracle_masked = oracle["generation"].mask_after_eos(
+            tokens.clone(), eos_token_id=eos_id, pad_token_id=pad_id
+        )
+        assert torch.equal(tokens, oracle_masked)  # already masked
+        # And the mask is not vacuous on this batch by construction: force
+        # an EOS mid-row and re-mask to prove the semantics are the
+        # reference's (first EOS kept, tail padded).
+        forced = tokens.clone()
+        forced[:, 1] = eos_id
+        forced[:, 2:] = eos_id + 1  # junk that must vanish
+        remasked = oracle["generation"].mask_after_eos(
+            forced.clone(), eos_token_id=eos_id, pad_token_id=pad_id
+        )
+        assert (remasked[:, 2:] == pad_id).all()
 
 
 class TestLoaderKeyPolicy:
