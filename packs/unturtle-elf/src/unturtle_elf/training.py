@@ -319,24 +319,32 @@ def ema_update(ema_state: dict[str, torch.Tensor], model: Any, decay: float) -> 
 
 
 def build_muon_optimizer(model: Any, lr: float) -> Any:
-    """The official Muon + aux-Adam partition (muon_utils.py:10-13:
-    ndim==2 -> Muon, else Nesterov-Adam).  Lazy import; the `muon` package
-    is a training-only dependency."""
-    from muon import SingleDeviceMuonWithAuxAdam
+    """The official optimizer, via the VERBATIM-ported `muon_with_aux_adam`.
 
-    muon_params = [p for p in model.parameters() if p.requires_grad and p.ndim == 2]
-    adam_params = [p for p in model.parameters() if p.requires_grad and p.ndim != 2]
-    return SingleDeviceMuonWithAuxAdam(
-        [
-            {"params": muon_params, "use_muon": True, "lr": lr},
-            {
-                "params": adam_params,
-                "use_muon": False,
-                "lr": lr,
-                "betas": (0.9, 0.95),
-            },
-        ]
-    )
+    Stage-2 correction #1: an earlier adaptation called bare upstream
+    `SingleDeviceMuonWithAuxAdam`, which is a DIFFERENT optimizer — the
+    oracle layers four patches (Nesterov-Adam aux update, fp32
+    Newton-Schulz, Nesterov bias correction, layout-aware `sqrt(fan_out/
+    fan_in)` scaling) plus a missing-grad safety wrapper the alternating
+    CE/L2 branches require.  Distribution name is `muon-optimizer`
+    (import name `muon`); the PyPI project literally called `muon` is an
+    unrelated single-cell library.
+    """
+    from unturtle_elf._reference.muon_utils import muon_with_aux_adam
+
+    return muon_with_aux_adam(model, lr=lr)
+
+
+def muon_parameter_partition(model: Any) -> dict[str, list[str]]:
+    """The partition, by NAME, from an immutable snapshot of the model's
+    parameters — the #154 Stage-2 entry guard (ndim==2 -> Muon, else aux
+    Adam), checkable without stepping the optimizer."""
+    muon_names, adam_names = [], []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        (muon_names if param.ndim == 2 else adam_names).append(name)
+    return {"muon": muon_names, "adam": adam_names}
 
 
 __all__ = [
@@ -345,4 +353,5 @@ __all__ = [
     "ema_update",
     "encode_text",
     "init_ema",
+    "muon_parameter_partition",
 ]
