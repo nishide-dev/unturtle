@@ -253,8 +253,10 @@ class TestFrontierEmitters:
         )
 
     def test_no_winner_no_scalar_aggregate(self):
-        """Measurement stays separate from verdict: the module must not
-        export a ranking/winner/aggregate-score function."""
+        """Tripwire, not proof: a flat dir() substring scan catches the
+        obvious verdict-shaped exports (rank/winner/aggregate/score_*);
+        semantic absence of judgment is carried by the emitters' contracts
+        and review, not by this scan alone (#159 review)."""
         import unturtle.eval.frontier as frontier
 
         for banned in ("winner", "rank", "score_frontier", "aggregate"):
@@ -398,6 +400,154 @@ class TestThroughputCells:
 
         with pytest.raises(RuntimeError, match="shape mismatch"):
             measure_throughput_cells(run_batch, seed=0)
+
+
+class TestReviewPins159:
+    """Pins for the #159 review findings, RED-first."""
+
+    def _maker(self):
+        return TestFrontierRecord()
+
+    def test_an_all_oom_role_claim_does_not_cover_the_gap(self):
+        """Review F1 (HIGH): tier_a_gaps is the sole machine gate on the
+        #151 verdict.  A record that merely CLAIMS a role — empty quality,
+        every throughput cell OOM — must not count as coverage."""
+        from unturtle.eval.frontier import frontier_record, missing_cell, tier_a_gaps
+
+        stub = frontier_record(
+            family="uniform",
+            method="sumi",
+            checkpoint="sumi-7b@r0",
+            seed=0,
+            tier_a_role="uniform_state",
+            quality={},
+            systems={
+                "throughput": {
+                    "batch_1": missing_cell("oom", "7B on 24GiB"),
+                    "batch_8": missing_cell("oom", "7B on 24GiB"),
+                    "batch_32": missing_cell("oom", "7B on 24GiB"),
+                }
+            },
+        )
+        assert "uniform_state" in tier_a_gaps([stub])
+
+    def test_quality_without_any_ok_compute_cell_is_not_coverage(self):
+        """The frontier is quality–diversity–COMPUTE: a role with no valid
+        compute cell cannot sit on it."""
+        from unturtle.eval.frontier import frontier_record, missing_cell, tier_a_gaps
+
+        maker = self._maker()
+        no_compute = frontier_record(
+            family="uniform",
+            method="sumi",
+            checkpoint="sumi-7b@r0",
+            seed=0,
+            tier_a_role="uniform_state",
+            quality=maker._quality(),
+            systems={
+                "throughput": {
+                    "batch_1": missing_cell("oom", "x"),
+                    "batch_8": missing_cell("oom", "x"),
+                    "batch_32": missing_cell("oom", "x"),
+                }
+            },
+        )
+        assert "uniform_state" in tier_a_gaps([no_compute])
+        # ...and the full record from the shared maker (quality + ok cells)
+        # DOES cover its role.
+        real = maker._record(tier_a_role="embedding_flow")
+        assert "embedding_flow" not in tier_a_gaps([real])
+
+    def test_explicit_undecidable_reason_resolves_a_role(self):
+        """The issue's escape hatch: 'valid cells OR an explicit reason the
+        protocol is undecidable' — with the reason mandatory and the role
+        name checked."""
+        from unturtle.eval.frontier import tier_a_gaps
+
+        gaps = tier_a_gaps(
+            [], undecidable={"uniform_state": "no runnable open checkpoint"}
+        )
+        assert "uniform_state" not in gaps
+        assert "ar_control" in gaps
+        with pytest.raises(ValueError, match="reason"):
+            tier_a_gaps([], undecidable={"uniform_state": ""})
+        with pytest.raises(ValueError, match="role"):
+            tier_a_gaps([], undecidable={"not_a_role": "x"})
+
+    def test_unknown_quality_keys_are_rejected_not_silently_unvalidated(self):
+        """Review F2: quality={'gen_ppl': ...} (typo) previously dodged the
+        evaluator-identity and entropy-pairing rules entirely.  Quality keys
+        are a closed vocabulary; method-local fields belong in extra."""
+        maker = self._maker()
+        with pytest.raises(ValueError, match="gen_ppl"):
+            maker._record(quality={"gen_ppl": 24.1})
+
+    def test_unknown_throughput_keys_are_rejected_not_silently_dropped(self):
+        """Review F2: a batch_64 (or batch_08 typo) cell was accepted and
+        then silently dropped by the emitters — recorded data must never
+        vanish without a sound."""
+        from unturtle.eval.frontier import cell
+
+        maker = self._maker()
+        systems = maker._systems()
+        systems["throughput"]["batch_64"] = cell({"wall_seconds": 1.0})
+        with pytest.raises(ValueError, match="batch_64"):
+            maker._record(systems=systems)
+
+    def test_ok_throughput_cells_must_carry_a_mapping(self):
+        """Review F6: cell(1.5) passed validation and blew up later inside
+        the emitter, far from the producer.  Fail at record time instead."""
+        from unturtle.eval.frontier import cell
+
+        maker = self._maker()
+        systems = maker._systems()
+        systems["throughput"]["batch_1"] = cell(1.5)
+        with pytest.raises(ValueError, match="mapping"):
+            maker._record(systems=systems)
+
+    def test_generative_perplexity_rejects_empty_inputs_actionably(self):
+        """Review F5: an empty generation run (producer OOMed, no samples)
+        must raise something actionable, not ZeroDivisionError."""
+        from unturtle.eval.frontier import generative_perplexity
+
+        identity = {"model": "fake", "revision": "r0"}
+        with pytest.raises(ValueError, match="text"):
+            generative_perplexity(
+                [], evaluator=lambda t: (1.0, 1), evaluator_identity=identity
+            )
+        with pytest.raises(ValueError, match="token"):
+            generative_perplexity(
+                ["x"], evaluator=lambda t: (0.0, 0), evaluator_identity=identity
+            )
+
+    def test_causal_evaluator_core_matches_the_hand_computation(self):
+        """Review F4: the NLL core is now injectable and unit-tested — a
+        fake two-token model with known logits, checked against the closed
+        form (shift alignment included)."""
+        import torch
+
+        from unturtle.eval.frontier import causal_evaluator_from
+
+        class FakeTokenizer:
+            def __call__(self, text, **kwargs):
+                class Enc:
+                    input_ids = torch.tensor([[0, 1, 2]])
+
+                assert kwargs.get("truncation") is True  # F4: bounded input
+                return Enc()
+
+        class FakeModel:
+            def __call__(self, input_ids):
+                class Out:
+                    # vocab 3; uniform logits => each target NLL = ln(3)
+                    logits = torch.zeros(1, 3, 3)
+
+                return Out()
+
+        evaluator = causal_evaluator_from(FakeModel(), FakeTokenizer())
+        nll, tokens = evaluator("abc")
+        assert tokens == 2  # 3 ids -> 2 shifted targets
+        assert nll == pytest.approx(2 * math.log(3))
 
 
 class TestExistingSurfaceIsUntouched:

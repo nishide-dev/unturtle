@@ -121,6 +121,11 @@ def score_dependency_outputs(
     - ``by_kind``: exact match per task kind;
     - ``length_mismatch_fraction``: flagged, not crashed.
     """
+    if not tasks:
+        raise ValueError(
+            "score_dependency_outputs over zero tasks — an empty slice run "
+            "has no scores; record the failed cell instead (#159 review)"
+        )
     if len(outputs) != len(tasks):
         raise ValueError(
             f"got {len(outputs)} outputs for {len(tasks)} tasks; every task "
@@ -140,7 +145,9 @@ def score_dependency_outputs(
         kind_totals[task.kind][1] += 1
         if len(output) != len(task.target):
             length_mismatches += 1
-        position_total += len(task.target)
+        # max(), not len(target): a correct prefix followed by rambling junk
+        # must not score a perfect coupled accuracy (#159 review).
+        position_total += max(len(output), len(task.target))
         position_correct += sum(
             produced == expected
             for produced, expected in zip(output, task.target, strict=False)

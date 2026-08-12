@@ -123,6 +123,34 @@ class TestScoring:
         assert scores["exact_match"] == 0.0
         assert scores["length_mismatch_fraction"] == 1.0
 
+    def test_over_length_output_is_penalized(self):
+        """Review F3 (#159): the right prefix followed by rambling junk
+        previously scored coupled_token_accuracy == 1.0 — the denominator
+        must cover max(len(output), len(target))."""
+        from unturtle.eval.dependency_slice import (
+            dependency_tasks,
+            score_dependency_outputs,
+        )
+
+        tasks = [
+            task
+            for task in dependency_tasks(n_per_kind=1, seed=0)
+            if task.kind == "copy"
+        ]
+        outputs = [task.target + ("junk",) * len(task.target) for task in tasks]
+        scores = score_dependency_outputs(tasks, outputs)
+        assert scores["exact_match"] == 0.0
+        assert scores["coupled_token_accuracy"] == pytest.approx(0.5)
+        assert scores["length_mismatch_fraction"] == 1.0
+
+    def test_empty_task_list_is_loud(self):
+        """Review F5: an empty slice run raises actionably, not
+        ZeroDivisionError."""
+        from unturtle.eval.dependency_slice import score_dependency_outputs
+
+        with pytest.raises(ValueError, match="task"):
+            score_dependency_outputs([], [])
+
     def test_output_count_must_match_task_count(self):
         from unturtle.eval.dependency_slice import (
             dependency_tasks,

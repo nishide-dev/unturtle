@@ -75,8 +75,10 @@ _MISSING_CELL_STATUSES = ("oom", "unsupported", "missing")
 __all__ = [
     "FRONTIER_PROTOCOL",
     "FRONTIER_PROTOCOL_VERSION",
+    "causal_evaluator_from",
     "cell",
     "frontier_record",
+    "hf_causal_evaluator",
     "generative_perplexity",
     "genppl_entropy_points",
     "measure_throughput_cells",
@@ -110,7 +112,29 @@ def missing_cell(status: str, reason: str) -> dict[str, Any]:
     return {"status": status, "reason": reason}
 
 
+_KNOWN_QUALITY_KEYS = (
+    "genppl",
+    "genppl_evaluator",
+    "unigram_entropy",
+    "mauve",
+    "mauve_settings",
+    "distinct_fraction",
+    "pooled_unigram_entropy",
+    "unique_rows_fraction",
+    "sample_count",
+    "collapse_flags",
+)
+
+
 def _validate_quality(quality: dict[str, Any]) -> None:
+    unknown = sorted(set(quality) - set(_KNOWN_QUALITY_KEYS))
+    if unknown:
+        raise ValueError(
+            f"unknown quality key(s) {unknown}; the quality vocabulary is "
+            f"closed ({list(_KNOWN_QUALITY_KEYS)}) so a typo cannot dodge "
+            "validation (#159 review) — method-local fields belong in "
+            "`extra` or `decoding`"
+        )
     if "genppl" not in quality:
         return
     evaluator = quality.get("genppl_evaluator")
@@ -132,16 +156,33 @@ def _validate_systems(systems: dict[str, Any]) -> None:
     throughput = systems.get("throughput")
     if throughput is None:
         return
-    absent = [
-        f"batch_{batch_size}"
-        for batch_size in FRONTIER_PROTOCOL["batch_sizes"]
-        if f"batch_{batch_size}" not in throughput
+    protocol_keys = [
+        f"batch_{batch_size}" for batch_size in FRONTIER_PROTOCOL["batch_sizes"]
     ]
+    absent = [key for key in protocol_keys if key not in throughput]
     if absent:
         raise ValueError(
             f"throughput is missing typed cells for {absent}; an OOM or "
             "unsupported batch must be a missing_cell(...), not an omission"
         )
+    unknown = sorted(set(throughput) - set(protocol_keys))
+    if unknown:
+        raise ValueError(
+            f"unknown throughput key(s) {unknown}; protocol cells are "
+            f"{protocol_keys} — the emitters iterate protocol batch sizes, "
+            "so an extra/typo'd key would be recorded and then silently "
+            "vanish from every table (#159 review)"
+        )
+    for key, throughput_cell in throughput.items():
+        if throughput_cell.get("status") == "ok" and not isinstance(
+            throughput_cell.get("value"), dict
+        ):
+            raise ValueError(
+                f"throughput {key}: an ok cell must carry a mapping of "
+                "measurements (wall_seconds, ...); a bare scalar would only "
+                "fail later inside the emitter, far from the producer "
+                "(#159 review)"
+            )
 
 
 def _validate_tier_a_role(family: str, tier_a_role: str | None) -> None:
@@ -219,15 +260,51 @@ def frontier_record(
     }
 
 
-def tier_a_gaps(records: list[dict[str, Any]]) -> tuple[str, ...]:
-    """Protocol Tier-A roles with no record claiming them — the machine
-    check behind "no cross-family verdict until every role has valid cells
-    or an explicit undecidable reason"."""
+def _covers_role(record: dict[str, Any]) -> bool:
+    # Coverage needs VALID cells, not a claim: at least one quality metric
+    # AND at least one ok compute cell — the frontier is quality–diversity–
+    # COMPUTE, and a record that OOMed everywhere with empty quality must
+    # not make the verdict look ready (#159 review, HIGH).
+    quality = record.get("quality") or {}
+    throughput = (record.get("systems") or {}).get("throughput") or {}
+    has_ok_compute = any(
+        isinstance(candidate, dict) and candidate.get("status") == "ok"
+        for candidate in throughput.values()
+    )
+    return bool(quality) and has_ok_compute
+
+
+def tier_a_gaps(
+    records: list[dict[str, Any]],
+    *,
+    undecidable: dict[str, str] | None = None,
+) -> tuple[str, ...]:
+    """Protocol Tier-A roles not yet resolved — the machine check behind
+    "no cross-family verdict until every role has valid cells or an
+    explicit reason the protocol is undecidable".
+
+    A role is resolved by a record that CLAIMS it and carries valid cells
+    (>=1 quality metric and >=1 ok throughput cell — see
+    :func:`_covers_role`), or by an entry in ``undecidable`` mapping the
+    role to a non-empty reason (the issue's explicit escape hatch)."""
+    undecidable = undecidable or {}
+    for role, reason in undecidable.items():
+        if role not in FRONTIER_PROTOCOL["tier_a_roles"]:
+            raise ValueError(
+                f"unknown Tier-A role {role!r} in undecidable; protocol "
+                f"roles: {FRONTIER_PROTOCOL['tier_a_roles']}"
+            )
+        if not reason:
+            raise ValueError(
+                f"undecidable role {role!r} requires a non-empty reason — "
+                "an unexplained exemption is a silent omission"
+            )
     covered = {
-        record.get("tier_a_role")
+        record["tier_a_role"]
         for record in records
-        if record.get("tier_a_role") is not None
+        if record.get("tier_a_role") is not None and _covers_role(record)
     }
+    covered.update(undecidable)
     return tuple(
         role for role in FRONTIER_PROTOCOL["tier_a_roles"] if role not in covered
     )
@@ -326,12 +403,23 @@ def generative_perplexity(
             "evaluator_identity must carry 'model' and 'revision' — GenPPL "
             "values are not comparable across evaluator identities"
         )
+    if not texts:
+        raise ValueError(
+            "generative_perplexity over zero texts — an empty generation "
+            "run has no GenPPL; record the failed cell instead (#159 review)"
+        )
     total_nll = 0.0
     total_tokens = 0
     for text in texts:
         nll, token_count = evaluator(text)
         total_nll += nll
         total_tokens += token_count
+    if total_tokens == 0:
+        raise ValueError(
+            "the evaluator scored zero tokens across all texts (all "
+            "single-token/empty after tokenization) — GenPPL is undefined; "
+            "record the failed cell instead (#159 review)"
+        )
     return {
         "genppl": math.exp(total_nll / total_tokens),
         "token_count": total_tokens,
@@ -353,14 +441,55 @@ def text_unigram_entropy(
     return -sum(count / total * math.log(count / total) for count in counts.values())
 
 
+def causal_evaluator_from(
+    model: Any,
+    tokenizer: Any,
+    *,
+    device: str = "cpu",
+    max_length: int = 1024,
+) -> Callable[[str], tuple[float, int]]:
+    """The injectable NLL core behind :func:`hf_causal_evaluator` —
+    unit-testable with fakes (#159 review).
+
+    Aggregation note (deliberate, load-bearing): the corpus GenPPL in
+    :func:`generative_perplexity` is token-weighted —
+    ``exp(total_nll / total_tokens)`` — matching the canonical MDLM
+    reference (torchmetrics.Perplexity accumulation), NOT a mean of
+    per-text perplexities; the two diverge substantially on real data.
+    Divergence note: every scored token counts, including EOS — the MDLM
+    reference masks EOS-and-after.  Comparisons against paper GenPPL
+    numbers must match that choice or record the difference.
+    """
+    import torch
+
+    def evaluator(text: str) -> tuple[float, int]:
+        encoded = tokenizer(
+            text, return_tensors="pt", truncation=True, max_length=max_length
+        ).input_ids.to(device)
+        if encoded.shape[1] < 2:
+            return 0.0, 0
+        with torch.no_grad():
+            logits = model(encoded).logits
+        log_probs = torch.log_softmax(logits[:, :-1].float(), dim=-1)
+        targets = encoded[:, 1:]
+        token_nll = -log_probs.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
+        return float(token_nll.sum()), int(targets.numel())
+
+    return evaluator
+
+
 def hf_causal_evaluator(
-    model_name: str, *, revision: str, device: str = "cpu"
-) -> tuple[Callable[[str], tuple[float, int]], dict[str, str]]:
+    model_name: str,
+    *,
+    revision: str,
+    device: str = "cpu",
+    max_length: int = 1024,
+) -> tuple[Callable[[str], tuple[float, int]], dict[str, Any]]:
     """A real GenPPL evaluator over a Hugging Face causal LM (lazy imports;
     heavyweight — for actual runs, not unit tests).  Returns
     ``(evaluator, evaluator_identity)`` ready for
-    :func:`generative_perplexity`."""
-    import torch
+    :func:`generative_perplexity`; ``max_length`` rides in the identity
+    because truncation changes GenPPL."""
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(model_name, revision=revision)
@@ -369,17 +498,14 @@ def hf_causal_evaluator(
         .to(device)
         .eval()
     )
-
-    def evaluator(text: str) -> tuple[float, int]:
-        encoded = tokenizer(text, return_tensors="pt").input_ids.to(device)
-        with torch.no_grad():
-            logits = model(encoded).logits
-        log_probs = torch.log_softmax(logits[:, :-1].float(), dim=-1)
-        targets = encoded[:, 1:]
-        token_nll = -log_probs.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
-        return float(token_nll.sum()), int(targets.numel())
-
-    return evaluator, {"model": model_name, "revision": revision}
+    evaluator = causal_evaluator_from(
+        model, tokenizer, device=device, max_length=max_length
+    )
+    return evaluator, {
+        "model": model_name,
+        "revision": revision,
+        "max_length": max_length,
+    }
 
 
 def measure_throughput_cells(
