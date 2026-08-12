@@ -61,7 +61,8 @@ def parse_args():
         help="#130 packed held-out rows for the MAUVE reference (optional)",
     )
     parser.add_argument(
-        "--skip-throughput", action="store_true",
+        "--skip-throughput",
+        action="store_true",
         help="skip batch 1/8/32 cells (record them as missing with reason)",
     )
     return parser.parse_args()
@@ -72,7 +73,6 @@ def generate_samples(model, tokenizer, args):
     stream (eval.py single-rank semantics: one global seed, batches drawn
     sequentially from the same stream)."""
     import torch
-
     from unturtle_elf.sampler import run_generation_request
 
     class Request:
@@ -81,7 +81,6 @@ def generate_samples(model, tokenizer, args):
     texts, all_ids = [], []
     executed = None
     torch.manual_seed(args.seed)
-    generator = torch.Generator().manual_seed(args.seed)  # CPU-path stream
     start = time.perf_counter()
     remaining = args.num_samples
     while remaining > 0:
@@ -205,9 +204,9 @@ def canonical_column(texts, t5_ids, args, device):
 
 def throughput_cells(model, args):
     import torch
+    from unturtle_elf.sampler import run_generation_request
 
     from unturtle.eval.frontier import measure_throughput_cells
-    from unturtle_elf.sampler import run_generation_request
 
     class Request:
         kwargs = {}
@@ -238,6 +237,11 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
 
     import torch
+    from unturtle_elf.loader import (
+        DEFAULT_CHECKPOINT,
+        DEFAULT_REVISION,
+        load_elf_model,
+    )
 
     from unturtle.eval.frontier import (
         FRONTIER_PROTOCOL_VERSION,
@@ -245,11 +249,6 @@ def main():
         frontier_record,
         missing_cell,
         write_jsonl,
-    )
-    from unturtle_elf.loader import (
-        DEFAULT_CHECKPOINT,
-        DEFAULT_REVISION,
-        load_elf_model,
     )
 
     print(f"[1/5] loading ELF-B on {args.device} ...", flush=True)
