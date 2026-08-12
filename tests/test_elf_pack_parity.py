@@ -432,6 +432,25 @@ class TestReviewPins160:
         assert (remasked[:, 2:] == pad_id).all()
 
 
+class TestRngScoping:
+    def test_sampling_does_not_pollute_the_callers_global_rng(self):
+        """Review F5 (#160): the reference CUDA paths need global seeding
+        (oracle behavior), but a LIBRARY call must not reset the caller's
+        stream to seed 42 as a side effect — the seeding is scoped inside
+        torch.random.fork_rng."""
+        pack_model = _tiny_pack_model()
+        torch.manual_seed(9999)
+        state_before = torch.random.get_rng_state()
+        TestAdapterTrajectoryParity()._run_pack(
+            pack_model, solver="ode", steps=2, time_schedule="uniform"
+        )
+        assert torch.equal(torch.random.get_rng_state(), state_before)
+        # ...and the caller's stream continues where it left off.
+        draw = torch.randn(())
+        torch.manual_seed(9999)
+        assert torch.equal(torch.randn(()), draw)
+
+
 class TestLoaderKeyPolicy:
     """Stage-1 pin 1 (fast tier): checkpoint key coverage is LOUD — the
     issue's 'wrong checkpoint key silently dropped' mutation target."""
