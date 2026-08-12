@@ -121,9 +121,7 @@ class TestNoPromotionAndProbeSeparation:
         with pytest.raises(ValueError, match="load_flm_model"):
             hub.resolve_generation("flm", ExistingMaskedModel(), bd3lm_requested=False)
         with pytest.raises(ValueError, match="load_fmlm_model"):
-            hub.resolve_generation(
-                "fmlm", ExistingMaskedModel(), bd3lm_requested=False
-            )
+            hub.resolve_generation("fmlm", ExistingMaskedModel(), bd3lm_requested=False)
 
     def test_an_flm_denoiser_does_not_satisfy_the_fmlm_probe(self):
         """THE #155 tripwire: the flow map is a different model contract
@@ -137,9 +135,7 @@ class TestNoPromotionAndProbeSeparation:
         class FlmOnly:
             is_flm_denoiser = True
 
-        assert (
-            hub.resolve_generation("flm", FlmOnly(), bd3lm_requested=False) == "flm"
-        )
+        assert hub.resolve_generation("flm", FlmOnly(), bd3lm_requested=False) == "flm"
         with pytest.raises(ValueError, match="flow map"):
             hub.resolve_generation("fmlm", FlmOnly(), bd3lm_requested=False)
 
