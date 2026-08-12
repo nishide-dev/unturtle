@@ -205,16 +205,27 @@ def canonical_column(texts, t5_ids, args, device):
         **diversity_guards(t5_ids),
     }
     heldout = pathlib.Path(args.owt_heldout)
+    heldout_meta = heldout.parent / f"{heldout.name}.json"
     mauve_note = None
-    if heldout.exists():
-        import torch as _torch
+    if heldout.is_file() and heldout_meta.exists():
+        # The #130 packing format: a raw uint16 memmap of
+        # (num_rows, block_size) gpt2 token ids with a sibling .json.
+        import numpy as np
 
         from unturtle.eval import mauve_score
 
-        rows = _torch.load(heldout / "rows.pt", weights_only=True)[: len(texts)]
+        meta = json.loads(heldout_meta.read_text())
+        memmap = np.memmap(
+            heldout,
+            dtype=np.uint16,
+            mode="r",
+            shape=(meta["num_rows"], meta["block_size"]),
+        )
         reference = [
-            gpt2_tokenizer.decode(row.tolist(), skip_special_tokens=True)
-            for row in rows
+            gpt2_tokenizer.decode(
+                np.asarray(row, dtype=np.int64).tolist(), skip_special_tokens=True
+            )
+            for row in memmap[: len(texts)]
         ]
         quality["mauve"] = mauve_score(
             reference, texts, featurize_model_name="gpt2", max_text_length=256
