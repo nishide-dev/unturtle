@@ -33,14 +33,20 @@ import pytest
 
 class TestDeterministicTasks:
     def test_tasks_are_deterministic_in_the_seed(self):
+        """Compared by CONTENT (kind/source/target), not by name: the name
+        embeds the seed, so a whole-task comparison would read 'different'
+        even if the seed stopped driving the actual token content (a
+        battery survivor caught exactly that)."""
         from unturtle.eval.dependency_slice import dependency_tasks
 
-        assert dependency_tasks(n_per_kind=4, seed=0) == dependency_tasks(
-            n_per_kind=4, seed=0
-        )
-        assert dependency_tasks(n_per_kind=4, seed=0) != dependency_tasks(
-            n_per_kind=4, seed=1
-        )
+        def content(seed):
+            return [
+                (task.kind, task.source, task.target)
+                for task in dependency_tasks(n_per_kind=4, seed=seed)
+            ]
+
+        assert content(0) == content(0)
+        assert content(0) != content(1)
 
     def test_the_three_coupled_kinds_are_present(self):
         from unturtle.eval.dependency_slice import dependency_tasks
