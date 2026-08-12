@@ -42,6 +42,12 @@ _MODEL_FACTORIES = {"ELF-B": "ELF_B", "ELF-M": "ELF_M", "ELF-L": "ELF_L"}
 
 _ENCODER_DIMS = {"t5-small": 512, "t5-base": 768, "t5-large": 1024}
 
+# The CE head size is tokenizer.vocab_size (official eval.py:127) — 32100
+# for the T5 family — NOT the encoder's padded 32128 embedding table
+# (t5_encoder.py).  Verified against the real ELF-B checkpoint
+# (unembed_kernel: [512, 32100]); recorded as a Stage-0 freeze correction.
+_TOKENIZER_VOCAB = {"t5-small": 32100, "t5-base": 32100, "t5-large": 32100}
+
 
 @dataclass(frozen=True)
 class ElfCheckpointInfo:
@@ -110,7 +116,7 @@ def build_elf_model(raw_config: dict[str, Any]) -> Any:
         num_time_tokens=int(raw_config.get("num_time_tokens", 4)),
         num_self_cond_cfg_tokens=int(raw_config.get("num_self_cond_cfg_tokens", 4)),
         num_model_mode_tokens=int(raw_config.get("num_model_mode_tokens", 0)),
-        vocab_size=32128,  # t5 tokenizer family (Stage-0: t5-small vocab)
+        vocab_size=_TOKENIZER_VOCAB[encoder_name],
     )
 
 
