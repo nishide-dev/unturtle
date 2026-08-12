@@ -342,7 +342,15 @@ class TestAnalyticMinimizers:
 class TestSeams:
     def test_self_conditioning_target_is_detached(self):
         """The SC-guided v target comes from two no-grad forwards and is
-        detached — gradients flow ONLY through the single training forward."""
+        detached — gradients flow ONLY through the single training forward.
+
+        Battery note: removing the explicit `.detach()` is INERT — both SC
+        forwards already run under `torch.no_grad()`, so the target has no
+        grad_fn either way (verified: requires_grad False, grad_fn None with
+        the detach removed).  The assertion pins the PROPERTY, which the
+        no_grad seams are what actually guarantee; the mutant that kills it
+        is removing a no_grad (covered by the oracle differential, which
+        would see the extra graph)."""
         from unturtle_elf.training import elf_training_loss
 
         config = TrainConfig()
@@ -362,12 +370,18 @@ class TestSeams:
         loss.backward()  # must not error (no second-graph retain needed)
 
     def test_gradients_reach_the_model_but_not_the_encoder(self):
+        """The encoder must be excluded by the no_grad SEAM, not merely by
+        a requires_grad=False fixture: a frozen-by-flag encoder makes the
+        `@torch.no_grad()` mutant invisible (the first battery proved it),
+        so this test uses a TRAINABLE encoder — only the seam can keep its
+        gradient None."""
         from unturtle_elf.training import elf_training_loss
 
         config = TrainConfig()
         batch = _batch()
         model = _tiny_model(seed=2)
         encoder = FrozenEncoder()
+        encoder.table.requires_grad_(True)  # adversarial: seam must still hold
 
         torch.manual_seed(17)
         loss, _, _ = elf_training_loss(
