@@ -42,11 +42,14 @@ from typing import Any, Callable
 from unturtle.eval.frontier import (
     FRONTIER_PROTOCOL,
     frontier_record,
+    generative_perplexity,
     measure_throughput_cells,
+    text_unigram_entropy,
 )
 
 __all__ = [
     "ar_generation_config",
+    "canonical_quality_column",
     "ar_nfe",
     "build_control_record",
     "measure_control_throughput",
@@ -218,3 +221,37 @@ def net_revision_stats(trajectory: list[Any]) -> dict[str, Any]:
         "revision_events": events,
         "steps_observed": len(trajectory),
     }
+
+
+def canonical_quality_column(
+    texts: list[str],
+    *,
+    evaluator: Callable[[str], tuple[float, int]],
+    evaluator_identity: dict[str, str],
+    tokenize: Callable[[str], list[int]],
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The #152 canonical quality cells for one generation run.
+
+    #153 and #155 each hand-rolled this column; the AR and MDLM producers
+    share this one instead so the canonical column cannot drift a third
+    time.  `evaluator`/`tokenize` are injected — the caller supplies the
+    frozen `hf_causal_evaluator("gpt2-large", ...)` and the matching
+    tokenizer, and tests supply fakes.  Corpus-pooled entropy under the
+    common tokenizer (NOT the ELF or FLM official entropy semantics).
+    """
+    # No empty-input guard here: `generative_perplexity` already refuses a
+    # zero-text run, and the #165 battery could not kill a duplicate
+    # (mutant M11 survived because the lower layer raises first).
+    genppl = generative_perplexity(
+        texts, evaluator=evaluator, evaluator_identity=evaluator_identity
+    )
+    quality = {
+        "genppl": genppl["genppl"],
+        "genppl_evaluator": dict(evaluator_identity),
+        "unigram_entropy": text_unigram_entropy(texts, tokenize=tokenize),
+        "sample_count": len(texts),
+        "collapse_flags": [],
+    }
+    quality.update(extra or {})
+    return quality

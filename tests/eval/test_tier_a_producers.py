@@ -288,6 +288,92 @@ class TestCoverageAccounting:
         assert "uniform_state" in tier_a_gaps([record])
 
 
+class TestCanonicalQualityColumn:
+    """The canonical column helper shared by the AR and MDLM producers.
+
+    #153/#155 each hand-rolled this; a third copy for #165 would be a third
+    chance to drift, so the shared version is pinned here.  The evaluator is
+    injected, so these tests need no download.
+    """
+
+    def test_quality_carries_evaluator_identity_with_the_score(self):
+        from unturtle.eval.producers import canonical_quality_column
+
+        quality = canonical_quality_column(
+            ["a b a", "b b c"],
+            evaluator=_fake_evaluator,
+            evaluator_identity={"model": "fake", "revision": "r1"},
+            tokenize=lambda text: [ord(c) for c in text if c != " "],
+        )
+        assert quality["genppl"] == pytest.approx(3.0)
+        assert quality["genppl_evaluator"] == {"model": "fake", "revision": "r1"}
+        assert quality["unigram_entropy"] > 0
+        assert quality["sample_count"] == 2
+        assert quality["collapse_flags"] == []
+
+    def test_an_unidentified_evaluator_is_refused(self):
+        """Protocol v1: GenPPL never travels without evaluator identity."""
+        from unturtle.eval.producers import canonical_quality_column
+
+        with pytest.raises(ValueError, match="identity"):
+            canonical_quality_column(
+                ["a b"],
+                evaluator=_fake_evaluator,
+                evaluator_identity={},
+                tokenize=lambda text: [1, 2],
+            )
+
+    def test_empty_texts_are_refused_rather_than_scored(self):
+        """The refusal lives in `generative_perplexity`; pinned here because
+        the producers pass through it and must not add a fallback."""
+        from unturtle.eval.producers import canonical_quality_column
+
+        with pytest.raises(ValueError, match="zero texts"):
+            canonical_quality_column(
+                [],
+                evaluator=_fake_evaluator,
+                evaluator_identity={"model": "fake", "revision": "r1"},
+                tokenize=lambda text: [1],
+            )
+
+    def test_genppl_is_corpus_pooled_not_a_per_text_mean(self):
+        """Long and short texts must be TOKEN-weighted.  A per-text mean of
+        the two perplexities below is 5.5; the corpus value is ~3.06 —
+        wildly different, and only the pooled one matches the MDLM
+        reference (#152)."""
+        import math
+
+        from unturtle.eval.producers import canonical_quality_column
+
+        def evaluator(text):
+            # "long" carries 100 tokens at ppl 3; "short" 2 tokens at ppl 8.
+            if text == "long":
+                return math.log(3.0) * 100, 100
+            return math.log(8.0) * 2, 2
+
+        quality = canonical_quality_column(
+            ["long", "short"],
+            evaluator=evaluator,
+            evaluator_identity={"model": "fake", "revision": "r1"},
+            tokenize=lambda text: [ord(c) for c in text],
+        )
+        pooled = math.exp((math.log(3.0) * 100 + math.log(8.0) * 2) / 102)
+        assert quality["genppl"] == pytest.approx(pooled)
+        assert quality["genppl"] == pytest.approx(3.06, abs=0.02)
+        assert quality["genppl"] != pytest.approx((3.0 + 8.0) / 2)
+
+
+def _fake_evaluator(text):
+    """One text -> (total_nll_nats, token_count), the frontier contract.
+
+    Constant per-token NLL of log(3), so corpus GenPPL is exactly 3.0.
+    """
+    import math
+
+    tokens = len(text.replace(" ", ""))
+    return math.log(3.0) * tokens, tokens
+
+
 def _quality():
     return {
         "genppl": 24.0,
