@@ -207,7 +207,8 @@ def canonical_column(texts, token_ids, eos_id, args, device):
     from unturtle.eval.producers import (
         canonical_evaluator_identity,
         canonical_quality_column,
-        content_rows,
+        guard_rows,
+        guard_scope_note,
         stack_sample_ids,
     )
 
@@ -232,7 +233,10 @@ def canonical_column(texts, token_ids, eos_id, args, device):
     # so a denoised/padded tail cannot dilute collapse detection (#167
     # review 3).  Batches can end at different widths, hence the explicit
     # ragged-safe stack (#167 review 2).
-    content = content_rows(token_ids, eos_id=eos_id)
+    # AR: EOS ends generation, so the guards see the pre-EOS content —
+    # which is also exactly what the evaluator scored.
+    eos_means = "end_of_generation"
+    content = guard_rows(token_ids, eos_id=eos_id, eos_means=eos_means)
     sample_ids, pad_meta = stack_sample_ids(content, pad_id=eos_id)
     quality = canonical_quality_column(
         texts,
@@ -242,7 +246,7 @@ def canonical_column(texts, token_ids, eos_id, args, device):
         sample_ids=sample_ids,
     )
     quality_scope = {
-        "guard_input": "content tokens (each row cut at its first EOS)",
+        "guard_input": guard_scope_note(eos_means=eos_means),
         **pad_meta,
     }
     mauve_note = None

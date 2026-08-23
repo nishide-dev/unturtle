@@ -52,6 +52,8 @@ __all__ = [
     "ar_batch_forwards",
     "canvas_diagnostics",
     "content_rows",
+    "guard_rows",
+    "guard_scope_note",
     "revision_diagnostics",
     "canonical_evaluator_identity",
     "decision_preflight",
@@ -727,3 +729,47 @@ def revision_diagnostics(trajectory: list[Any]) -> dict[str, Any]:
     stats = net_revision_stats(trajectory)
     stats["status"] = "measured"
     return stats
+
+
+#: What an EOS token means for a family, which decides the guard scope.
+_EOS_SEMANTICS = {
+    # AR: EOS ends generation, everything after it is padding the model
+    # never produced as content.
+    "end_of_generation": "cut each row at its first EOS",
+    # Masked / uniform diffusion on a fixed canvas: the model was trained
+    # on packed text where EOS delimits documents, so an early EOS is
+    # ordinary content.  The canvas IS the output — it is what gets decoded
+    # and scored — so the guards must see all of it.
+    "document_delimiter": "keep the whole canvas row",
+}
+
+
+def guard_rows(
+    rows: list[list[int]], *, eos_id: int, eos_means: str
+) -> list[list[int]]:
+    """Guard input rows under the family's EOS semantics.
+
+    The guards must measure what the EVALUATOR scored.  Getting this wrong
+    is not a cosmetic mismatch: the first #165 decision run cut MDLM rows at
+    the first gpt2 EOS and reported `distinct_fraction 0.0047` /
+    `pooled_unigram_entropy 0.086` off an average of 6.9 tokens per row,
+    while GenPPL and entropy scored the full ~1024-token decoded canvas.
+    MDLM trains on packed OWT, so its EOS is a document delimiter, and the
+    frozen ELF/FMLM precedent passes ALL generated ids to the guards.
+    """
+    if eos_means not in _EOS_SEMANTICS:
+        raise ValueError(
+            f"unknown eos_means {eos_means!r}; choose "
+            f"{sorted(_EOS_SEMANTICS)} — the guard scope has to match what "
+            "the evaluator scored"
+        )
+    if eos_means == "document_delimiter":
+        return [list(row) for row in rows]
+    return content_rows(rows, eos_id=eos_id)
+
+
+def guard_scope_note(*, eos_means: str) -> str:
+    """The record's own statement of which guard scope it used."""
+    if eos_means not in _EOS_SEMANTICS:
+        raise ValueError(f"unknown eos_means {eos_means!r}")
+    return f"{eos_means}: {_EOS_SEMANTICS[eos_means]}"

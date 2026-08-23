@@ -284,7 +284,14 @@ def canonical_column(texts, content_ids, args, device):
         sample_ids=sample_ids,
     )
     quality_scope = {
-        "guard_input": "content tokens (canvas trimmed at the first EOS)",
+        # The native sampler already trims at the first EOS before decoding
+        # (`_trim_at_eos`), so the guards see exactly the tokens the
+        # evaluator scored.  The untrimmed canvas rides separately under
+        # `canvas_diagnostics` (#165 run 2: the guard scope must match the
+        # scored text, and it differs per family).
+        "guard_input": "trimmed completion as decoded by the native "
+        "sampler (_trim_at_eos), pad filler stripped",
+        "canvas_scope": "full canvas reported separately in extra.canvas_diagnostics",
         **pad_meta,
     }
     mauve_note = None

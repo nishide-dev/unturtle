@@ -870,6 +870,54 @@ class TestUniformStateAccounting:
         assert deviating["protocol_context_match"] is False
 
 
+class TestGuardScopePerFamily:
+    """The guard input must match what the EVALUATOR scored (#165 run 2).
+
+    The first decision run exposed a real bug: the MDLM producer cut guard
+    rows at the first gpt2 EOS, but MDLM was trained on packed OWT where
+    EOS is a DOCUMENT DELIMITER, so an early EOS is ordinary content, not a
+    stop signal.  Its 1000-sample record came back with
+    `distinct_fraction 0.0047` and `pooled_unigram_entropy 0.086` from an
+    average of 6.9 tokens per row, while GenPPL/entropy scored the full
+    ~1024-token decoded canvas (122.84 / 7.56).  The frozen ELF/FMLM
+    precedent passes ALL generated ids to `diversity_guards`.
+
+    So the scope is per-family, not universal:
+      * AR: EOS ends generation -> guards see the pre-EOS content;
+      * masked/uniform diffusion on a fixed canvas: the canvas IS the
+        output (that is what gets decoded) -> guards see the canvas.
+    """
+
+    def test_ar_scope_cuts_at_eos(self):
+        from unturtle.eval.producers import guard_rows
+
+        rows = guard_rows([[5, 7, 99, 1, 2]], eos_id=99, eos_means="end_of_generation")
+        assert rows == [[5, 7]]
+
+    def test_canvas_scope_keeps_the_whole_row(self):
+        """Mutation target: applying the AR rule to a canvas family, which
+        is exactly the bug the first run hit."""
+        from unturtle.eval.producers import guard_rows
+
+        rows = guard_rows([[5, 7, 99, 1, 2]], eos_id=99, eos_means="document_delimiter")
+        assert rows == [[5, 7, 99, 1, 2]]
+
+    def test_an_unknown_eos_semantics_is_refused(self):
+        from unturtle.eval.producers import guard_rows
+
+        with pytest.raises(ValueError, match="eos_means"):
+            guard_rows([[1, 2]], eos_id=99, eos_means="whatever")
+
+    def test_the_guard_scope_is_recorded(self):
+        """A record must say which rule it used, so a 0.0047 can be told
+        apart from a real collapse."""
+        from unturtle.eval.producers import guard_scope_note
+
+        note = guard_scope_note(eos_means="document_delimiter")
+        assert "canvas" in note.lower() or "delimiter" in note.lower()
+        assert "document_delimiter" in note
+
+
 class TestContentVsCanvasScope:
     """#167 review 3: canonical guards must see the CONTENT tokens.
 

@@ -220,7 +220,8 @@ def canonical_column(texts, token_ids, eos_id, args, device):
     from unturtle.eval.producers import (
         canonical_evaluator_identity,
         canonical_quality_column,
-        content_rows,
+        guard_rows,
+        guard_scope_note,
         stack_sample_ids,
     )
 
@@ -239,7 +240,12 @@ def canonical_column(texts, token_ids, eos_id, args, device):
     gpt2_tokenizer = AutoTokenizer.from_pretrained(
         "gpt2-large", revision=args.evaluator_revision
     )
-    content = content_rows(token_ids, eos_id=eos_id)
+    # MDLM trains on packed OWT, so EOS delimits documents rather than
+    # ending generation: the whole 1024 canvas is the output and is what
+    # gets decoded and scored.  Cutting at the first EOS measured 6.9
+    # tokens per row against a ~1024-token scored text (#165 run 2).
+    eos_means = "document_delimiter"
+    content = guard_rows(token_ids, eos_id=eos_id, eos_means=eos_means)
     sample_ids, pad_meta = stack_sample_ids(content, pad_id=eos_id)
     quality = canonical_quality_column(
         texts,
@@ -249,7 +255,7 @@ def canonical_column(texts, token_ids, eos_id, args, device):
         sample_ids=sample_ids,
     )
     quality_scope = {
-        "guard_input": "content tokens (each row cut at its first EOS)",
+        "guard_input": guard_scope_note(eos_means=eos_means),
         **pad_meta,
     }
     mauve_note = None
