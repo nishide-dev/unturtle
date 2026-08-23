@@ -37,6 +37,7 @@ model loading.  Producers stay thin scripts under `benchmarks/`.
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any, Callable
 
 from unturtle.eval.frontier import (
@@ -50,6 +51,8 @@ from unturtle.eval.frontier import (
 __all__ = [
     "ar_generation_config",
     "canonical_quality_column",
+    "global_rng_from",
+    "pinned_global_rng",
     "ar_nfe",
     "build_control_record",
     "measure_control_throughput",
@@ -255,3 +258,40 @@ def canonical_quality_column(
     }
     quality.update(extra or {})
     return quality
+
+
+def global_rng_from(generator: Any) -> int:
+    """Draw one seed from the cell's generator, advancing its stream.
+
+    `transformers.generate()` has no `generator=` parameter — passing one
+    raises `ValueError: The following model_kwargs are not used by the
+    model` — and its sampling reads the GLOBAL torch RNG.  The protocol's
+    "one cell-owned generator" is therefore honoured indirectly: every
+    batch's global seed is DRAWN from the cell generator, so the stream
+    advances exactly as it would if the sampler took the generator
+    directly, and a per-batch reset cannot masquerade as compliance.
+    """
+    import torch
+
+    return int(torch.randint(0, 2**31 - 1, (1,), generator=generator).item())
+
+
+@contextlib.contextmanager
+def pinned_global_rng(seed: int):
+    """Pin the global torch RNG to `seed`, then restore the caller's state.
+
+    Without the restore, a generation call would silently reposition the
+    global stream that everything else in the producer (MAUVE subsampling,
+    a later throughput cell) draws from.
+    """
+    import torch
+
+    cpu_state = torch.get_rng_state()
+    cuda_states = torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+    try:
+        torch.manual_seed(seed)
+        yield seed
+    finally:
+        torch.set_rng_state(cpu_state)
+        if cuda_states is not None:
+            torch.cuda.set_rng_state_all(cuda_states)

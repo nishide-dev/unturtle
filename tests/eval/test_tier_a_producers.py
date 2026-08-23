@@ -247,6 +247,50 @@ class TestGeneratorOwnership:
         assert len({generator_id for _, generator_id in seen}) == 1
 
 
+class TestGlobalRngSeam:
+    """`transformers.generate()` has NO `generator=` parameter — passing one
+    raises `ValueError: model_kwargs are not used by the model`, and its
+    sampling reads the GLOBAL torch RNG.  The protocol still requires one
+    cell-owned generator, so the producers derive a seed from the cell's
+    generator and pin the global RNG for the duration, restoring whatever
+    was there before.  Verified against transformers 5.x, torch 2.10.
+    """
+
+    def test_seed_is_derived_from_the_cell_generator(self):
+        from unturtle.eval.producers import global_rng_from
+
+        cell = torch.Generator().manual_seed(42)
+        first = global_rng_from(cell)
+        second = global_rng_from(cell)
+        # Consecutive draws from the SAME generator differ: the stream
+        # advances, so a per-batch reset cannot mimic it.
+        assert first != second
+        fresh = torch.Generator().manual_seed(42)
+        assert global_rng_from(fresh) == first
+
+    def test_the_surrounding_global_rng_is_restored(self):
+        from unturtle.eval.producers import global_rng_from, pinned_global_rng
+
+        torch.manual_seed(1234)
+        before = torch.rand(3)
+        torch.manual_seed(1234)
+        with pinned_global_rng(global_rng_from(torch.Generator().manual_seed(7))):
+            torch.rand(5)  # burn the pinned stream
+        after = torch.rand(3)
+        assert torch.equal(before, after), (
+            "generation must not advance the caller's global RNG stream"
+        )
+
+    def test_the_pinned_stream_is_reproducible(self):
+        from unturtle.eval.producers import pinned_global_rng
+
+        with pinned_global_rng(99):
+            a = torch.rand(4)
+        with pinned_global_rng(99):
+            b = torch.rand(4)
+        assert torch.equal(a, b)
+
+
 class TestCoverageAccounting:
     def test_a_valid_control_record_closes_its_gap(self):
         from unturtle.eval.producers import build_control_record
@@ -361,6 +405,59 @@ class TestCanonicalQualityColumn:
         assert quality["genppl"] == pytest.approx(pooled)
         assert quality["genppl"] == pytest.approx(3.06, abs=0.02)
         assert quality["genppl"] != pytest.approx((3.0 + 8.0) / 2)
+
+
+class TestMdlmRevisionPin:
+    """#165 needs the published MDLM checkpoint pinned to
+    d0958fa851335ece6c15260ce0025f030673c0fb.  Before this, `load_mdlm_owt`
+    had no `revision` parameter at all, so a record naming a revision was
+    describing whatever `main` happened to be."""
+
+    def test_revision_reaches_every_download(self, monkeypatch):
+        import huggingface_hub
+
+        from unturtle.models.backbones.mdlm_dit import convert_mdlm_owt
+
+        seen = []
+
+        def fake_download(repo_id, filename, **kwargs):
+            seen.append((filename, kwargs.get("revision")))
+            raise _StopDownload
+
+        monkeypatch.setattr(huggingface_hub, "hf_hub_download", fake_download)
+        with pytest.raises(_StopDownload):
+            convert_mdlm_owt.load_mdlm_owt(revision="pinned-sha")
+        assert seen == [("config.json", "pinned-sha")]
+
+    def test_config_and_weights_cannot_come_from_different_revisions(self, monkeypatch):
+        """Mutation target: threading `revision` into only one of the two
+        downloads.  A config/weights mismatch would load silently."""
+        import huggingface_hub
+
+        from unturtle.models.backbones.mdlm_dit import convert_mdlm_owt
+
+        seen = []
+        real = huggingface_hub.hf_hub_download
+
+        def fake_download(repo_id, filename, **kwargs):
+            seen.append((filename, kwargs.get("revision")))
+            if filename == "model.safetensors":
+                raise _StopDownload
+            return real(repo_id, filename, **kwargs)
+
+        monkeypatch.setattr(huggingface_hub, "hf_hub_download", fake_download)
+        with pytest.raises(_StopDownload):
+            convert_mdlm_owt.load_mdlm_owt(
+                revision="d0958fa851335ece6c15260ce0025f030673c0fb"
+            )
+        assert len(seen) == 2
+        assert {revision for _, revision in seen} == {
+            "d0958fa851335ece6c15260ce0025f030673c0fb"
+        }
+
+
+class _StopDownload(Exception):
+    """Stops the loader once the download arguments have been observed."""
 
 
 def _fake_evaluator(text):
