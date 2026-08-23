@@ -21,11 +21,13 @@ verdict needs (official + canonical #152 evaluator columns, GenPPL /
 entropy / MAUVE, collapse guards, 50%/100% decision checkpoints, sign
 agreement).  Do not read a GO / FAIL / UNDECIDABLE verdict from its output.
 
-Also unresolved before a decision run: the frozen heldout split is the tail
-of the FULL dataset while this scaffold uses the tail of a 3-shard subset,
-and the oracle shuffles its DataLoader (`shuffle=True`) whereas this
-consumes rows sequentially.  Those are protocol deviations awaiting either
-a re-freeze or alignment.
+Data handling matches the Stage-0 freeze (#164 review, finding 1): the
+heldout split is the tail 2,048 rows of the FULL official split, and rows
+are visited in a SHUFFLED order like the oracle's DataLoader
+(`shuffle=True`, data_utils.py:77 / train.py:287).  `--shards` therefore
+only bounds how much TRAINING data is materialized; the heldout indices are
+computed against the full 9,737,184-row split and their shards are always
+fetched.
 
 Frozen (Stage-0 comment, unchanged): **300M token presentations per seed**,
 seeds **42 and 43**, effective batch **64 x 1024** via grad accumulation,
@@ -33,10 +35,10 @@ seeds **42 and 43**, effective batch **64 x 1024** via grad accumulation,
 0.9999, bf16 autocast with fp32 master params, heldout = the deterministic
 tail of the materialized rows.
 
-Data: only ~293k rows are needed for 300M presentations, so this fetches
-the first N shards of `openwebtext-t5@0a8443e8` (129,829 rows each) rather
-than the full 37.4GB — a disk decision, not a protocol change; the rows are
-a deterministic PREFIX of the official split.
+Data: 300M presentations need ~293k rows, so training materializes the
+first `--shards` arrow files of `openwebtext-t5@0a8443e8` (129,829 rows
+each); the frozen heldout tail lives in the LAST shard, which is fetched
+separately.  Disk stays bounded without moving the evaluation split.
 
 Two modes:
 
@@ -64,6 +66,8 @@ import time
 DATASET = "embedded-language-flows/openwebtext-t5"
 DATASET_REVISION = "0a8443e847ee6206e4737a6b9a93218347eabc08"
 ROWS_PER_SHARD = 129_829
+TOTAL_SHARDS = 75
+TOTAL_ROWS = 9_737_184  # dataset_info.json at the frozen revision
 
 # --- frozen Stage-0 numbers -------------------------------------------------
 TOKENS_PER_SEED = 300_000_000
@@ -99,23 +103,25 @@ def parse_args():
     return parser.parse_args()
 
 
-def materialize_rows(shards: int) -> list[str]:
-    """Download the first ``shards`` arrow files at the frozen revision."""
+def _shard_path(index: int) -> str:
     from huggingface_hub import hf_hub_download
 
-    paths = []
-    for index in range(shards):
-        name = f"data-{index:05d}-of-00075.arrow"
-        paths.append(
-            hf_hub_download(
-                DATASET,
-                name,
-                revision=DATASET_REVISION,
-                repo_type="dataset",
-            )
-        )
-        print(f"  shard {index}: {name}", flush=True)
-    return paths
+    name = f"data-{index:05d}-of-{TOTAL_SHARDS:05d}.arrow"
+    path = hf_hub_download(
+        DATASET, name, revision=DATASET_REVISION, repo_type="dataset"
+    )
+    print(f"  shard {index}: {name}", flush=True)
+    return path
+
+
+def materialize_rows(shards: int) -> tuple[list[str], list[str]]:
+    """Fetch the TRAINING shards (a prefix) and, separately, the LAST shard
+    which contains the frozen heldout tail of the full official split."""
+    train_paths = [_shard_path(index) for index in range(shards)]
+    heldout_paths = (
+        train_paths[-1:] if shards >= TOTAL_SHARDS else [_shard_path(TOTAL_SHARDS - 1)]
+    )
+    return train_paths, heldout_paths
 
 
 def load_dataset_rows(paths: list[str]):
@@ -239,11 +245,20 @@ def main():
     )
 
     print("[1/5] materializing dataset shards ...", flush=True)
-    paths = materialize_rows(args.shards)
-    table = load_dataset_rows(paths)
-    total_rows = table.num_rows
-    heldout_start = total_rows - HELDOUT_ROWS
-    print(f"  rows: {total_rows:,} (heldout tail: {HELDOUT_ROWS})", flush=True)
+    train_paths, heldout_paths = materialize_rows(args.shards)
+    table = load_dataset_rows(train_paths)
+    heldout_table = load_dataset_rows(heldout_paths)
+    train_rows = table.num_rows
+    # The FROZEN heldout split: the last HELDOUT_ROWS rows of the full
+    # official split, which live at the end of the final shard.
+    heldout_start = heldout_table.num_rows - HELDOUT_ROWS
+    assert heldout_start >= 0, "final shard smaller than the heldout tail"
+    print(
+        f"  train rows: {train_rows:,} from {args.shards} shard(s) | "
+        f"heldout: last {HELDOUT_ROWS} rows of the full "
+        f"{TOTAL_ROWS:,}-row split",
+        flush=True,
+    )
 
     print("[2/5] building ELF-B + frozen T5 encoder ...", flush=True)
     config_path = hf_hub_download(
@@ -297,6 +312,12 @@ def main():
     partition = muon_parameter_partition(model)
     ema = init_ema(model)
     generator = torch.Generator().manual_seed(seed)
+    # Oracle parity: the official DataLoader shuffles (data_utils.py:77,
+    # train.py:287).  A seed-derived permutation gives the same property
+    # while staying exactly reproducible and resumable via `row_cursor`.
+    row_order = torch.randperm(
+        train_rows, generator=torch.Generator().manual_seed(seed + 7919)
+    )
 
     tokens_per_step = EFFECTIVE_BATCH * SEQUENCE_LENGTH
     if args.smoke:
@@ -360,7 +381,9 @@ def main():
             for index in range(n_batches):
                 start = heldout_start + index * args.microbatch
                 batch = make_batch(
-                    table, range(start, start + args.microbatch), args.device
+                    heldout_table,
+                    range(start, start + args.microbatch),
+                    args.device,
                 )
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                     loss, metrics, _ = elf_training_loss(
@@ -429,7 +452,7 @@ def main():
         set_lr(step)
         for _ in range(accum):
             indices = [
-                (row_cursor + offset) % heldout_start
+                int(row_order[(row_cursor + offset) % train_rows])
                 for offset in range(args.microbatch)
             ]
             row_cursor += args.microbatch
@@ -508,7 +531,9 @@ def main():
     fresh.load_state_dict(payload["model"], strict=True)
     fresh.eval()
     model.eval()
-    probe = make_batch(table, range(heldout_start, heldout_start + 2), args.device)
+    probe = make_batch(
+        heldout_table, range(heldout_start, heldout_start + 2), args.device
+    )
     x0 = encoder_shim(probe["input_ids"], probe["attention_mask"])
     x0 = (x0 - config.latent_mean) / config.latent_std
     with torch.no_grad():
@@ -541,7 +566,10 @@ def main():
             "tokens_target": tokens_target,
             "warmup_steps": warmup_steps,
             "shards": args.shards,
-            "rows": total_rows,
+            "train_rows": train_rows,
+            "total_split_rows": TOTAL_ROWS,
+            "data_order": "seed-derived permutation (oracle shuffle=True)",
+            "heldout_split": "tail of the FULL official split (Stage-0 freeze)",
             "heldout_rows": HELDOUT_ROWS,
             "resumed_from": args.resume_from,
             "first_step": first_step,
