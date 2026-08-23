@@ -42,6 +42,8 @@ import json
 import pathlib
 import time
 
+from unturtle.eval.producers import CANONICAL_EVALUATOR_REVISION
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -54,6 +56,19 @@ def parse_args():
     parser.add_argument("--num-samples", type=int, default=1000)
     parser.add_argument("--max-new-tokens", type=int, default=1024)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--mode",
+        choices=("smoke", "decision"),
+        default="smoke",
+        help="smoke: wiring only, NO Tier-A role claim. decision: verifies "
+        "the frozen conditions (1000 samples, seed 42, MAUVE reference, "
+        "pinned evaluator) and claims the role",
+    )
+    parser.add_argument(
+        "--evaluator-revision",
+        default=CANONICAL_EVALUATOR_REVISION,
+        help="immutable commit of the canonical gpt2-large evaluator",
+    )
     parser.add_argument("--out", required=True)
     parser.add_argument(
         "--owt-heldout",
@@ -135,6 +150,9 @@ def generate_samples(model, tokenizer, config, args):
             )
         # Drop the BOS prompt column: only GENERATED tokens count.
         generated = out[:, 1:]
+        # The executed forward count for this batch IS the generated width
+        # (content lengths exclude EOS and are off by one, #167 review 2).
+        batch_forwards = ar_batch_forwards(generated_width=generated.shape[1])
         batch_lengths = []
         for row in generated:
             ids = row.tolist()
@@ -144,9 +162,9 @@ def generate_samples(model, tokenizer, config, args):
             lengths.append(len(ids))
             token_ids.append(row.tolist())
             texts.append(tokenizer.decode(ids, skip_special_tokens=True))
-        # The batch forwarded until its LONGEST row finished; every sample in
-        # it paid for all of those forwards (#165 review F1).
-        batches.append((ar_batch_forwards(batch_lengths), len(batch_lengths)))
+        # Every sample in the batch paid for all of those forwards
+        # (#165 review F1).
+        batches.append((batch_forwards, len(batch_lengths)))
         print(f"  generated {len(texts)}/{args.num_samples}", flush=True)
     return (
         texts[: args.num_samples],
@@ -181,27 +199,52 @@ def warm_generation(model, tokenizer, config, args):
         torch.cuda.synchronize()
 
 
-def canonical_column(texts, token_ids, args, device):
+def canonical_column(texts, token_ids, eos_id, args, device):
+    """The #152 canonical column, scored on CONTENT tokens."""
     from transformers import AutoTokenizer
 
     from unturtle.eval.frontier import hf_causal_evaluator
-    from unturtle.eval.producers import canonical_quality_column
-
-    evaluator, identity = hf_causal_evaluator(
-        "gpt2-large", revision="main", device=device, max_length=1024
+    from unturtle.eval.producers import (
+        canonical_evaluator_identity,
+        canonical_quality_column,
+        content_rows,
+        stack_sample_ids,
     )
-    gpt2_tokenizer = AutoTokenizer.from_pretrained("gpt2-large")
-    import torch
 
+    # Pinned to an immutable commit: `main` moves, and GenPPL is not
+    # comparable across evaluator identities (#167 review 4).
+    evaluator, _raw_identity = hf_causal_evaluator(
+        "gpt2-large",
+        revision=args.evaluator_revision,
+        device=device,
+        max_length=1024,
+    )
+    identity = canonical_evaluator_identity(
+        model="gpt2-large",
+        revision=args.evaluator_revision,
+        tokenizer_revision=args.evaluator_revision,
+    )
+    identity["max_length"] = 1024
+    gpt2_tokenizer = AutoTokenizer.from_pretrained(
+        "gpt2-large", revision=args.evaluator_revision
+    )
+    # The guards run on the CONTENT tokens (each row cut at its first EOS),
+    # so a denoised/padded tail cannot dilute collapse detection (#167
+    # review 3).  Batches can end at different widths, hence the explicit
+    # ragged-safe stack (#167 review 2).
+    content = content_rows(token_ids, eos_id=eos_id)
+    sample_ids, pad_meta = stack_sample_ids(content, pad_id=eos_id)
     quality = canonical_quality_column(
         texts,
         evaluator=evaluator,
         evaluator_identity=identity,
         tokenize=gpt2_tokenizer.encode,
-        # The guards run on the model's OWN token ids (untruncated rows), so
-        # a collapsed sample set is visible even if decoding hides it.
-        sample_ids=torch.tensor(token_ids, dtype=torch.long),
+        sample_ids=sample_ids,
     )
+    quality_scope = {
+        "guard_input": "content tokens (each row cut at its first EOS)",
+        **pad_meta,
+    }
     mauve_note = None
     heldout = pathlib.Path(args.owt_heldout)
     heldout_meta = heldout.parent / f"{heldout.name}.json"
@@ -234,13 +277,14 @@ def canonical_column(texts, token_ids, args, device):
         }
     else:
         mauve_note = f"reference texts not found at {heldout}; MAUVE omitted"
-    return quality, mauve_note
+    return quality, mauve_note, quality_scope
 
 
 def throughput_cells(model, tokenizer, config, args):
     import torch
 
     from unturtle.eval.producers import (
+        ar_batch_forwards,
         global_rng_from,
         measure_control_throughput,
         pinned_global_rng,
@@ -251,7 +295,7 @@ def throughput_cells(model, tokenizer, config, args):
     def run_batch(batch_size, generator):
         prompt = torch.full((batch_size, 1), bos, dtype=torch.long, device=args.device)
         with torch.no_grad(), pinned_global_rng(global_rng_from(generator)):
-            model.generate(
+            out = model.generate(
                 prompt,
                 attention_mask=torch.ones_like(prompt),
                 do_sample=True,
@@ -264,6 +308,20 @@ def throughput_cells(model, tokenizer, config, args):
             )
         if torch.cuda.is_available():
             torch.cuda.synchronize()
+        # Natural EOS makes forward counts differ by batch size, so each
+        # cell carries the work IT executed (#167 review 5).
+        generated = out[:, 1:]
+        lengths = []
+        for row in generated:
+            ids = row.tolist()
+            if tokenizer.eos_token_id in ids:
+                ids = ids[: ids.index(tokenizer.eos_token_id)]
+            lengths.append(len(ids))
+        return {
+            "forwards_executed": ar_batch_forwards(generated_width=generated.shape[1]),
+            "content_length_mean": sum(lengths) / len(lengths),
+            "content_length_max": max(lengths),
+        }
 
     def warmup():
         run_batch(1, torch.Generator().manual_seed(args.seed))
@@ -275,12 +333,32 @@ def main():
     import torch
 
     from unturtle.eval.frontier import write_jsonl
-    from unturtle.eval.producers import ar_nfe_from_batches, build_control_record
+    from unturtle.eval.producers import (
+        ar_nfe_from_batches,
+        build_control_record,
+        canvas_diagnostics,
+        decision_preflight,
+        stack_sample_ids,
+    )
 
     args = parse_args()
     out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     eval_device = args.eval_device or args.device
+
+    # A tiny smoke must not be able to close a Tier-A gap: `claimed_role` is
+    # None unless every frozen condition holds (#167 review 1).  Checked
+    # BEFORE the run so a non-conforming decision request fails fast.
+    heldout = pathlib.Path(args.owt_heldout)
+    claimed_role = decision_preflight(
+        mode=args.mode,
+        role="ar_control",
+        num_samples=args.num_samples,
+        seed=args.seed,
+        mauve_available=heldout.is_file()
+        and (heldout.parent / f"{heldout.name}.json").exists(),
+        evaluator_revision=args.evaluator_revision,
+    )
 
     model, tokenizer, config = load_model(args)
 
@@ -304,14 +382,21 @@ def main():
     del model
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    quality, mauve_note = canonical_column(texts, token_ids, args, eval_device)
+    quality, mauve_note, quality_scope = canonical_column(
+        texts, token_ids, tokenizer.eos_token_id, args, eval_device
+    )
+    # Full-width ids (untruncated rows, ragged-safe) for the secondary
+    # canvas-style diagnostics only.
+    full_width_ids, _full_pad_meta = stack_sample_ids(
+        token_ids, pad_id=tokenizer.eos_token_id
+    )
 
     # NFE per sample = sample-weighted mean of the per-batch forward counts,
     # NOT the mean of EOS-truncated lengths (#165 review F1).
     executed_nfe = ar_nfe_from_batches(batches)
     executed_tokens = sum(lengths) / len(lengths)
     record = build_control_record(
-        role="ar_control",
+        role=claimed_role,
         family="ar",
         method="gpt2-lmhead",
         checkpoint=f"{args.model}@{args.revision}",
@@ -359,6 +444,13 @@ def main():
             "requested_max_new_tokens": args.max_new_tokens,
             "generated_tokens_mean": executed_tokens,
             "forwards_per_batch": [forwards for forwards, _ in batches],
+            "quality_scope": quality_scope,
+            "mode": args.mode,
+            # Full-width diagnostics under canvas-prefixed names, so they
+            # cannot be read as the canonical guards (#167 review 3).
+            "full_width_diagnostics": canvas_diagnostics(
+                full_width_ids, content_widths=lengths
+            ),
             "generated_tokens_min": min(lengths),
             "generated_tokens_max": max(lengths),
             "nfe_note": "AR NFE counts token forwards billed to the "

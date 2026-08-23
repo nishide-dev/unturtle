@@ -56,6 +56,8 @@ import json
 import pathlib
 import time
 
+from unturtle.eval.producers import CANONICAL_EVALUATOR_REVISION
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -74,6 +76,14 @@ def parse_args():
         help="drop the upstream noise-removal step (NOT the official default)",
     )
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--mode",
+        choices=("smoke", "decision"),
+        default="smoke",
+        help="smoke: wiring only, NO Tier-A role claim. decision: verifies "
+        "the frozen conditions and claims the role",
+    )
+    parser.add_argument("--evaluator-revision", default=CANONICAL_EVALUATOR_REVISION)
     parser.add_argument("--out", required=True)
     parser.add_argument("--owt-heldout", default="data/owt/heldout.bin")
     parser.add_argument("--eval-device", default=None)
@@ -98,7 +108,16 @@ def load_model(args):
     return model, int(mask_id)
 
 
-def sample_batch(model, mask_id, batch_size, args, generator, step_counter=None):
+def sample_batch(
+    model,
+    mask_id,
+    batch_size,
+    args,
+    generator,
+    step_counter=None,
+    capture_trajectory=False,
+    trajectory_out=None,
+):
     """One batch through the Unturtle `mdlm` loop, then the upstream
     noise-removal step.  Returns the committed token ids."""
     import torch
@@ -116,12 +135,21 @@ def sample_batch(model, mask_id, batch_size, args, generator, step_counter=None)
     # The loop's own step_callback fires once per executed step, so the
     # recorded count is OBSERVED, not the request echoed back (#165 F3).
     observed = []
+    # Committed-state snapshots, so the record can report MEASURED revision
+    # rather than the theoretical capability (#167 review 3).  The loop's
+    # stream_callback hands over a clone per step.
+    trajectory = []
     with torch.no_grad(), pinned_global_rng(global_rng_from(generator)):
         out = model.generate(
             prompt,
             algorithm="mdlm",
             steps=args.steps,
             step_callback=lambda i, total: observed.append(i),
+            stream_callback=(
+                (lambda i, total, x: trajectory.append(x.detach().cpu().clone()))
+                if capture_trajectory
+                else None
+            ),
             max_length=args.sequence_length,
             mask_token_id=mask_id,
             alg="origin",
@@ -139,6 +167,8 @@ def sample_batch(model, mask_id, batch_size, args, generator, step_counter=None)
             )
     if step_counter is not None:
         step_counter.append(max(observed) if observed else 0)
+    if trajectory_out is not None:
+        trajectory_out.extend(trajectory)
     return x
 
 
@@ -149,10 +179,21 @@ def generate_samples(model, mask_id, tokenizer, args):
     texts: list[str] = []
     ids_all = []
     step_counts: list[int] = []
+    trajectory: list = []
     while len(texts) < args.num_samples:
         batch = min(args.batch_size, args.num_samples - len(texts))
+        # Snapshots only on the FIRST batch: a full trajectory is
+        # steps x batch x length and would dominate memory.
+        first_batch = not texts
         x = sample_batch(
-            model, mask_id, batch, args, generator, step_counter=step_counts
+            model,
+            mask_id,
+            batch,
+            args,
+            generator,
+            step_counter=step_counts,
+            capture_trajectory=first_batch,
+            trajectory_out=trajectory if first_batch else None,
         )
         for row in x:
             ids = row.tolist()
@@ -168,28 +209,49 @@ def generate_samples(model, mask_id, tokenizer, args):
         texts[: args.num_samples],
         ids_all[: args.num_samples],
         step_counts[0],
+        trajectory,
     )
 
 
-def canonical_column(texts, token_ids, args, device):
+def canonical_column(texts, token_ids, eos_id, args, device):
     from transformers import AutoTokenizer
 
     from unturtle.eval.frontier import hf_causal_evaluator
-    from unturtle.eval.producers import canonical_quality_column
-
-    evaluator, identity = hf_causal_evaluator(
-        "gpt2-large", revision="main", device=device, max_length=1024
+    from unturtle.eval.producers import (
+        canonical_evaluator_identity,
+        canonical_quality_column,
+        content_rows,
+        stack_sample_ids,
     )
-    gpt2_tokenizer = AutoTokenizer.from_pretrained("gpt2-large")
-    import torch
 
+    evaluator, _raw_identity = hf_causal_evaluator(
+        "gpt2-large",
+        revision=args.evaluator_revision,
+        device=device,
+        max_length=1024,
+    )
+    identity = canonical_evaluator_identity(
+        model="gpt2-large",
+        revision=args.evaluator_revision,
+        tokenizer_revision=args.evaluator_revision,
+    )
+    identity["max_length"] = 1024
+    gpt2_tokenizer = AutoTokenizer.from_pretrained(
+        "gpt2-large", revision=args.evaluator_revision
+    )
+    content = content_rows(token_ids, eos_id=eos_id)
+    sample_ids, pad_meta = stack_sample_ids(content, pad_id=eos_id)
     quality = canonical_quality_column(
         texts,
         evaluator=evaluator,
         evaluator_identity=identity,
         tokenize=gpt2_tokenizer.encode,
-        sample_ids=torch.tensor(token_ids, dtype=torch.long),
+        sample_ids=sample_ids,
     )
+    quality_scope = {
+        "guard_input": "content tokens (each row cut at its first EOS)",
+        **pad_meta,
+    }
     mauve_note = None
     heldout = pathlib.Path(args.owt_heldout)
     heldout_meta = heldout.parent / f"{heldout.name}.json"
@@ -222,18 +284,30 @@ def canonical_column(texts, token_ids, args, device):
         }
     else:
         mauve_note = f"reference texts not found at {heldout}; MAUVE omitted"
-    return quality, mauve_note
+    return quality, mauve_note, quality_scope
 
 
 def throughput_cells(model, mask_id, args):
     import torch
 
-    from unturtle.eval.producers import measure_control_throughput
+    from unturtle.eval.producers import mdlm_nfe, measure_control_throughput
 
     def run_batch(batch_size, generator):
-        sample_batch(model, mask_id, batch_size, args, generator)
+        cell_steps: list[int] = []
+        sample_batch(
+            model, mask_id, batch_size, args, generator, step_counter=cell_steps
+        )
         if torch.cuda.is_available():
             torch.cuda.synchronize()
+        executed = cell_steps[0] if cell_steps else 0
+        return {
+            "forwards_executed": mdlm_nfe(
+                steps_executed=executed,
+                noise_removal=not args.no_noise_removal,
+            ),
+            "steps_executed": executed,
+            "sequence_length": args.sequence_length,
+        }
 
     def warmup():
         run_batch(1, torch.Generator().manual_seed(args.seed))
@@ -246,13 +320,31 @@ def main():
     from transformers import AutoTokenizer
 
     from unturtle.eval.frontier import write_jsonl
-    from unturtle.eval.producers import build_control_record, mdlm_nfe
+    from unturtle.eval.producers import (
+        build_control_record,
+        canvas_diagnostics,
+        decision_preflight,
+        mdlm_nfe,
+        revision_diagnostics,
+        stack_sample_ids,
+    )
 
     args = parse_args()
     out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     eval_device = args.eval_device or args.device
     noise_removal = not args.no_noise_removal
+
+    heldout = pathlib.Path(args.owt_heldout)
+    claimed_role = decision_preflight(
+        mode=args.mode,
+        role="masked_discrete",
+        num_samples=args.num_samples,
+        seed=args.seed,
+        mauve_available=heldout.is_file()
+        and (heldout.parent / f"{heldout.name}.json").exists(),
+        evaluator_revision=args.evaluator_revision,
+    )
 
     model, mask_id = load_model(args)
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
@@ -268,7 +360,9 @@ def main():
         torch.cuda.reset_peak_memory_stats()
 
     started = time.perf_counter()
-    texts, ids_all, observed_steps = generate_samples(model, mask_id, tokenizer, args)
+    texts, ids_all, observed_steps, trajectory = generate_samples(
+        model, mask_id, tokenizer, args
+    )
     generation_seconds = time.perf_counter() - started
     (out / "samples.json").write_text(json.dumps(texts, ensure_ascii=False))
 
@@ -280,10 +374,19 @@ def main():
     del model
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    quality, mauve_note = canonical_column(texts, ids_all, args, eval_device)
+    quality, mauve_note, quality_scope = canonical_column(
+        texts, ids_all, tokenizer.eos_token_id, args, eval_device
+    )
+    full_width_ids, _ = stack_sample_ids(ids_all, pad_id=tokenizer.eos_token_id)
+    content_widths = [
+        len(row)
+        if tokenizer.eos_token_id not in row
+        else row.index(tokenizer.eos_token_id)
+        for row in ids_all
+    ]
 
     record = build_control_record(
-        role="masked_discrete",
+        role=claimed_role,
         family="mdlm",
         method="mdlm-owt",
         checkpoint=f"{args.repo}@{args.revision}",
@@ -350,6 +453,14 @@ def main():
                 "distribution-identical",
             },
             "mauve_note": mauve_note,
+            "quality_scope": quality_scope,
+            "mode": args.mode,
+            "full_width_diagnostics": canvas_diagnostics(
+                full_width_ids, content_widths=content_widths
+            ),
+            # MEASURED revision from the first batch's committed states —
+            # `net_revision_stats` previously reached no record (#167 F3).
+            "revision_diagnostics": revision_diagnostics(trajectory),
         },
     )
     write_jsonl([record], out / "frontier_record.jsonl")

@@ -40,14 +40,19 @@ here BEFORE any measurement:
              needed here (the AR producer needs it because
              `transformers.generate()` rejects the kwarg).
 
-Deviation recorded, not hidden: Sumi is trained on a packed fixed-length
-canvas and denoises the WHOLE canvas every step (`canvas_length` default
-2048, ceiling 4864 = `max_position_embeddings`), while `max_new_tokens` is
-only the content budget before the anchored EOS,BOS delimiter.  This cell
-therefore runs `canvas_length=1024` so the forwarded context MATCHES the
-#152 protocol, and `uniform_state_compute_scope` records whether that
-match holds.  A cell run at the model's own 2048 default is protocol-
-deviating and says so in the record.
+Canvas decision (fixed by the #167 review, recorded before any quality
+output): **the main decision cell is canvas 1024**, matching the #152
+protocol context; **the model's native 2048 is a protocol-deviating
+secondary curve point**.  The main table has to satisfy the protocol
+context, and there is no reason to swap the main table to 2048.
+
+The deviation is recorded, never hidden: Sumi is trained on a packed
+fixed-length canvas and denoises the WHOLE canvas every step
+(`canvas_length` default 2048, ceiling 4864 = `max_position_embeddings`),
+while `max_new_tokens` is only the content budget before the anchored
+EOS,BOS delimiter.  `uniform_state_compute_scope` records whether the
+forwarded canvas matches the protocol context, so a 2048 secondary cell
+carries `protocol_context_match: False` in its own record.
 
 Confounds are LABELLED, and they are large: ~7B params, ~1.5T training
 tokens, a different tokenizer (100,278) and a different corpus.  This is an
@@ -59,6 +64,8 @@ import argparse
 import json
 import pathlib
 import time
+
+from unturtle.eval.producers import CANONICAL_EVALUATOR_REVISION
 
 
 def parse_args():
@@ -81,6 +88,14 @@ def parse_args():
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--sampler", default="ancestral")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--mode",
+        choices=("smoke", "decision"),
+        default="smoke",
+        help="smoke: wiring only, NO Tier-A role claim. decision: verifies "
+        "the frozen conditions and claims the role",
+    )
+    parser.add_argument("--evaluator-revision", default=CANONICAL_EVALUATOR_REVISION)
     parser.add_argument("--out", required=True)
     parser.add_argument("--owt-heldout", default="data/owt/heldout.bin")
     parser.add_argument("--eval-device", default=None)
@@ -117,7 +132,15 @@ def load_model(args):
     return model, tokenizer
 
 
-def sample_batch(model, batch_size, args, generator, step_counter=None):
+def sample_batch(
+    model,
+    batch_size,
+    args,
+    generator,
+    step_counter=None,
+    capture_trajectory=False,
+    trajectory_out=None,
+):
     """One batch through the NATIVE Sumi sampler.
 
     `generation_sumi.generate` accepts `generator=` and threads it into
@@ -137,9 +160,14 @@ def sample_batch(model, batch_size, args, generator, step_counter=None):
     # the recorded step count is OBSERVED rather than the request echoed
     # back (#165 review F3).
     observed = []
+    trajectory = []
 
     def progress_callback(state):
         observed.append(int(state["step"]))
+        # Committed-state snapshots, so revision is MEASURED rather than
+        # inferred from the sampler's capability (#167 review 3).
+        if capture_trajectory:
+            trajectory.append(state["z"].detach().cpu().clone())
 
     prompt = torch.full((batch_size, 1), bos, dtype=torch.long, device=args.device)
     with torch.no_grad():
@@ -158,6 +186,8 @@ def sample_batch(model, batch_size, args, generator, step_counter=None):
         )
     if step_counter is not None:
         step_counter.append(max(observed) if observed else 0)
+    if trajectory_out is not None:
+        trajectory_out.extend(trajectory)
     return out.sequences, out.canvas
 
 
@@ -170,12 +200,21 @@ def generate_samples(model, tokenizer, args):
         pad_id = model.config.eos_token_id
     texts: list[str] = []
     lengths: list[int] = []
-    token_ids: list[list[int]] = []
+    content_ids: list[list[int]] = []
+    canvas_ids: list[list[int]] = []
     step_counts: list[int] = []
+    trajectory: list = []
     while len(texts) < args.num_samples:
         batch = min(args.batch_size, args.num_samples - len(texts))
+        first_batch = not texts
         sequences, canvas = sample_batch(
-            model, batch, args, generator, step_counter=step_counts
+            model,
+            batch,
+            args,
+            generator,
+            step_counter=step_counts,
+            capture_trajectory=first_batch,
+            trajectory_out=trajectory if first_batch else None,
         )
         for row, canvas_row in zip(sequences, canvas, strict=True):
             ids = row.tolist()
@@ -187,9 +226,10 @@ def generate_samples(model, tokenizer, args):
             while content and content[-1] == pad_id:
                 content = content[:-1]
             lengths.append(len(content))
-            # Diversity guards run on the FULL canvas: fixed width across
-            # samples, and the untrimmed ids are the model's own output.
-            token_ids.append(canvas_row.tolist())
+            # Canonical guards need the CONTENT tokens; the full canvas is
+            # kept separately for the secondary diagnostics (#167 review 3).
+            content_ids.append(content)
+            canvas_ids.append(canvas_row.tolist())
             texts.append(tokenizer.decode(ids, skip_special_tokens=True))
         print(f"  generated {len(texts)}/{args.num_samples}", flush=True)
     if len(set(step_counts)) != 1:
@@ -200,30 +240,53 @@ def generate_samples(model, tokenizer, args):
     return (
         texts[: args.num_samples],
         lengths[: args.num_samples],
-        token_ids[: args.num_samples],
+        content_ids[: args.num_samples],
+        canvas_ids[: args.num_samples],
         step_counts[0],
+        trajectory,
     )
 
 
-def canonical_column(texts, token_ids, args, device):
+def canonical_column(texts, content_ids, args, device):
     from transformers import AutoTokenizer
 
     from unturtle.eval.frontier import hf_causal_evaluator
-    from unturtle.eval.producers import canonical_quality_column
-
-    evaluator, identity = hf_causal_evaluator(
-        "gpt2-large", revision="main", device=device, max_length=1024
+    from unturtle.eval.producers import (
+        canonical_evaluator_identity,
+        canonical_quality_column,
+        stack_sample_ids,
     )
-    gpt2_tokenizer = AutoTokenizer.from_pretrained("gpt2-large")
-    import torch
 
+    evaluator, _raw_identity = hf_causal_evaluator(
+        "gpt2-large",
+        revision=args.evaluator_revision,
+        device=device,
+        max_length=1024,
+    )
+    identity = canonical_evaluator_identity(
+        model="gpt2-large",
+        revision=args.evaluator_revision,
+        tokenizer_revision=args.evaluator_revision,
+    )
+    identity["max_length"] = 1024
+    gpt2_tokenizer = AutoTokenizer.from_pretrained(
+        "gpt2-large", revision=args.evaluator_revision
+    )
+    # Guards on CONTENT tokens: the canvas tail is denoised context nobody
+    # reads, and its diversity would mask a collapsed decoded region (#167
+    # review 3).
+    sample_ids, pad_meta = stack_sample_ids(content_ids, pad_id=0)
     quality = canonical_quality_column(
         texts,
         evaluator=evaluator,
         evaluator_identity=identity,
         tokenize=gpt2_tokenizer.encode,
-        sample_ids=torch.tensor(token_ids, dtype=torch.long),
+        sample_ids=sample_ids,
     )
+    quality_scope = {
+        "guard_input": "content tokens (canvas trimmed at the first EOS)",
+        **pad_meta,
+    }
     mauve_note = None
     heldout = pathlib.Path(args.owt_heldout)
     heldout_meta = heldout.parent / f"{heldout.name}.json"
@@ -256,7 +319,7 @@ def canonical_column(texts, token_ids, args, device):
         }
     else:
         mauve_note = f"reference texts not found at {heldout}; MAUVE omitted"
-    return quality, mauve_note
+    return quality, mauve_note, quality_scope
 
 
 def throughput_cells(model, args):
@@ -265,9 +328,16 @@ def throughput_cells(model, args):
     from unturtle.eval.producers import measure_control_throughput
 
     def run_batch(batch_size, generator):
-        sample_batch(model, batch_size, args, generator)
+        cell_steps: list[int] = []
+        sample_batch(model, batch_size, args, generator, step_counter=cell_steps)
         if torch.cuda.is_available():
             torch.cuda.synchronize()
+        executed = cell_steps[0] if cell_steps else 0
+        return {
+            "forwards_executed": executed,
+            "steps_executed": executed,
+            "sequence_length": args.canvas_length,
+        }
 
     def warmup():
         run_batch(1, torch.Generator().manual_seed(args.seed))
@@ -283,6 +353,10 @@ def main():
     from unturtle.eval.frontier import write_jsonl
     from unturtle.eval.producers import (
         build_control_record,
+        canvas_diagnostics,
+        decision_preflight,
+        revision_diagnostics,
+        stack_sample_ids,
         uniform_state_compute_scope,
         uniform_state_nfe,
     )
@@ -291,6 +365,17 @@ def main():
     out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     eval_device = args.eval_device or args.device
+
+    heldout = pathlib.Path(args.owt_heldout)
+    claimed_role = decision_preflight(
+        mode=args.mode,
+        role="uniform_state",
+        num_samples=args.num_samples,
+        seed=args.seed,
+        mauve_available=heldout.is_file()
+        and (heldout.parent / f"{heldout.name}.json").exists(),
+        evaluator_revision=args.evaluator_revision,
+    )
 
     model, tokenizer = load_model(args)
 
@@ -306,7 +391,9 @@ def main():
         torch.cuda.reset_peak_memory_stats()
 
     started = time.perf_counter()
-    texts, lengths, token_ids, observed_steps = generate_samples(model, tokenizer, args)
+    texts, lengths, content_ids, canvas_ids, observed_steps, trajectory = (
+        generate_samples(model, tokenizer, args)
+    )
     generation_seconds = time.perf_counter() - started
     (out / "samples.json").write_text(json.dumps(texts, ensure_ascii=False))
 
@@ -316,7 +403,10 @@ def main():
     del model
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    quality, mauve_note = canonical_column(texts, token_ids, args, eval_device)
+    quality, mauve_note, quality_scope = canonical_column(
+        texts, content_ids, args, eval_device
+    )
+    canvas_tensor, _ = stack_sample_ids(canvas_ids, pad_id=0)
 
     scope = uniform_state_compute_scope(
         canvas_length=args.canvas_length,
@@ -324,7 +414,7 @@ def main():
         prompt_length=1,
     )
     record = build_control_record(
-        role="uniform_state",
+        role=claimed_role,
         family="uniform_diffusion",
         method="sumi",
         checkpoint=f"{args.repo}@{args.revision}",
@@ -385,6 +475,15 @@ def main():
             "temperature 1.0); the model card's example (64 steps, "
             "temperature 0.7) is an example, not the default",
             "mauve_note": mauve_note,
+            "quality_scope": quality_scope,
+            "mode": args.mode,
+            # The canvas is the model's real compute scope, so its
+            # entropy/diversity ride as CANVAS-named diagnostics — never as
+            # the canonical guards (#167 review 3).
+            "canvas_diagnostics": canvas_diagnostics(
+                canvas_tensor, content_widths=lengths
+            ),
+            "revision_diagnostics": revision_diagnostics(trajectory),
         },
     )
     write_jsonl([record], out / "frontier_record.jsonl")

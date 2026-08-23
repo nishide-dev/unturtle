@@ -50,6 +50,12 @@ from unturtle.eval.frontier import (
 
 __all__ = [
     "ar_batch_forwards",
+    "canvas_diagnostics",
+    "content_rows",
+    "revision_diagnostics",
+    "canonical_evaluator_identity",
+    "decision_preflight",
+    "stack_sample_ids",
     "ar_generation_config",
     "ar_nfe_from_batches",
     "canonical_quality_column",
@@ -186,12 +192,42 @@ def measure_control_throughput(
     warmup: Callable[[], Any] | None = None,
     unsupported: dict[int, str] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Protocol throughput cells for a control producer — a thin pass-through
-    to `measure_throughput_cells` so every producer inherits the same
-    one-generator / warmup-outside / typed-cell discipline."""
-    return measure_throughput_cells(
-        run_batch, seed=seed, warmup=warmup, unsupported=unsupported
+    """Protocol throughput cells, each carrying its own EXECUTED work.
+
+    Wraps `measure_throughput_cells` so every producer inherits the same
+    one-generator / warmup-outside / typed-cell discipline, and merges
+    whatever `run_batch` returns into that batch's cell.  Natural EOS makes
+    forward counts differ by batch size, and the record's top-level NFE
+    comes from the quality run's batch — so without per-cell work, batch
+    scaling and generation-length differences cannot be separated (#167
+    review 5).
+
+    `run_batch` may return a mapping of work counters (e.g.
+    `forwards_executed`, `content_length_mean`); `token_work` (forwards x
+    batch size) is derived when the forward count is present.  A
+    `run_batch` that returns nothing leaves the cell with timings only —
+    work is never fabricated.
+    """
+    work: dict[int, Any] = {}
+
+    def run_and_capture(batch_size: int, generator: Any) -> Any:
+        result = run_batch(batch_size, generator)
+        if isinstance(result, dict):
+            work[batch_size] = result
+        return result
+
+    cells = measure_throughput_cells(
+        run_and_capture, seed=seed, warmup=warmup, unsupported=unsupported
     )
+    for batch_size, counters in work.items():
+        cell_entry = cells.get(f"batch_{batch_size}")
+        if cell_entry is None or cell_entry.get("status") != "ok":
+            continue
+        cell_entry["value"].update(counters)
+        forwards = counters.get("forwards_executed")
+        if forwards is not None:
+            cell_entry["value"]["token_work"] = int(forwards) * int(batch_size)
+    return cells
 
 
 def net_revision_stats(trajectory: list[Any]) -> dict[str, Any]:
@@ -470,20 +506,26 @@ def derive_device_generator(generator: Any, *, device: Any) -> Any:
     return derived
 
 
-def ar_batch_forwards(row_lengths: list[int]) -> int:
+def ar_batch_forwards(*, generated_width: int) -> int:
     """Denoiser calls one AR batch actually executed.
 
     `generate()` does not stop when ONE row emits EOS — it keeps forwarding
     the whole batch until every row finishes or `max_new_tokens` is hit, and
-    each forward processes the full batch.  The executed count is therefore
-    the LONGEST row, not the mean of EOS-truncated lengths.  Measured on
-    gpt2: 32 forwards executed while the truncated lengths were
-    [3, 32, 32, 32] (mean 24.75) — a 23% undercount in the direction that
-    makes the AR control look cheaper than it was (#165 review F1).
+    each forward processes the full batch (#165 review F1: 32 forwards
+    executed against a 24.75 mean of truncated lengths).
+
+    The executed count is the WIDTH of the generated tensor, taken directly
+    rather than reconstructed from content lengths: EOS is excluded from a
+    content length, so `max(lengths)` is off by one whenever any row stops.
+    Measured on gpt2 with EOS forced on the first generated token: one
+    forward ran while every content length was 0 (#167 review 2).
     """
-    if not row_lengths:
-        raise ValueError("no rows in this batch — nothing was generated")
-    return int(max(row_lengths))
+    if generated_width < 1:
+        raise ValueError(
+            f"generated width {generated_width} implies no forwards; a batch "
+            "that ran produced at least one column"
+        )
+    return int(generated_width)
 
 
 def ar_nfe_from_batches(batches: list[tuple[int, int]]) -> float:
@@ -499,3 +541,189 @@ def ar_nfe_from_batches(batches: list[tuple[int, int]]) -> float:
     if total_samples == 0:
         raise ValueError("no samples across the recorded batches")
     return sum(forwards * size for forwards, size in batches) / total_samples
+
+
+def stack_sample_ids(
+    rows: list[list[int]], *, pad_id: int
+) -> tuple[Any, dict[str, Any]]:
+    """Stack per-sample id lists into the `[N, L]` tensor the guards need.
+
+    Batches can end at different widths — a batch whose rows all stop early
+    is narrower than one that runs to the budget — so `torch.tensor(rows)`
+    raises a ragged-tensor error.  Padding is explicit and REPORTED: the
+    filler inflates `distinct_fraction`-style guards toward whatever token
+    `pad_id` is, so a record must be able to say how much of its guard
+    input was filler (#167 review 2).
+    """
+    import torch
+
+    if not rows:
+        raise ValueError("no rows to stack — the cell generated nothing")
+    width = max(len(row) for row in rows)
+    padded_rows = sum(1 for row in rows if len(row) < width)
+    stacked = torch.full((len(rows), width), pad_id, dtype=torch.long)
+    for index, row in enumerate(rows):
+        if row:
+            stacked[index, : len(row)] = torch.tensor(row, dtype=torch.long)
+    return stacked, {
+        "width": int(width),
+        "pad_id": int(pad_id),
+        "padded_rows": int(padded_rows),
+        "row_count": len(rows),
+    }
+
+
+#: The frozen decision-run conditions (#165 Stage-0 freeze, amended by the
+#: #167 review: the canonical evaluator is pinned to a commit, not `main`).
+DECISION_SAMPLE_COUNT = 1000
+DECISION_SEED = 42
+CANONICAL_EVALUATOR_MODEL = "gpt2-large"
+CANONICAL_EVALUATOR_REVISION = "32b71b12589c2f8d625668d2335a01cac3249519"
+
+_FLOATING_REVISIONS = frozenset({"main", "master", "refs/heads/main", "HEAD", ""})
+
+
+def canonical_evaluator_identity(
+    *,
+    model: str,
+    revision: str | None,
+    tokenizer_revision: str | None,
+) -> dict[str, str]:
+    """The canonical evaluator's IMMUTABLE identity.
+
+    `hf_causal_evaluator` records whatever revision it is handed, so passing
+    `main` produces an identity that cannot name the commit that scored the
+    run — and `main` moves.  GenPPL is not comparable across evaluator
+    identities, so a floating revision silently breaks the one property the
+    protocol relies on (#167 review 4).
+
+    The entropy tokenizer is pinned separately because it moves
+    independently of the scorer, and the `transformers` version rides along:
+    a scoring change in the library is not visible in either SHA.
+    """
+    import transformers
+
+    for label, value in (
+        ("revision", revision),
+        ("tokenizer revision", tokenizer_revision),
+    ):
+        if value is None or str(value).strip() in _FLOATING_REVISIONS:
+            raise ValueError(
+                f"canonical evaluator {label} {value!r} is not an identity — "
+                "pin an immutable commit SHA (a branch name moves, so "
+                "GenPPL values recorded under it are not comparable)"
+            )
+    return {
+        "model": model,
+        "revision": str(revision),
+        "tokenizer_revision": str(tokenizer_revision),
+        "transformers_version": transformers.__version__,
+    }
+
+
+def decision_preflight(
+    *,
+    mode: str,
+    role: str,
+    num_samples: int,
+    seed: int,
+    mauve_available: bool,
+    evaluator_revision: str | None,
+) -> str | None:
+    """Whether this run may claim its Tier-A role.
+
+    Returns the role in `decision` mode once every frozen condition holds,
+    and `None` in `smoke` mode — a record with `tier_a_role=None` cannot
+    close a gap in `tier_a_gaps()`.
+
+    Before this, `--num-samples 4` produced a role-claiming record and a
+    missing MAUVE reference only left a note, so a wiring smoke satisfied
+    the coverage check exactly like a decision run (#167 review 1).
+    """
+    if mode not in ("smoke", "decision"):
+        raise ValueError(
+            f"unknown mode {mode!r}: use 'smoke' (no role claim) or "
+            "'decision' (verified frozen conditions)"
+        )
+    if mode == "smoke":
+        return None
+    if num_samples != DECISION_SAMPLE_COUNT:
+        raise ValueError(
+            f"decision mode requires the frozen sample budget "
+            f"{DECISION_SAMPLE_COUNT}, got {num_samples}"
+        )
+    if seed != DECISION_SEED:
+        raise ValueError(
+            f"decision mode requires the frozen seed {DECISION_SEED}, got {seed}"
+        )
+    if not mauve_available:
+        raise ValueError(
+            "decision mode requires the MAUVE reference (#130 OWT held-out); "
+            "a missing reference is a blocked run, not a note on a valid one"
+        )
+    canonical_evaluator_identity(
+        model=CANONICAL_EVALUATOR_MODEL,
+        revision=evaluator_revision,
+        tokenizer_revision=evaluator_revision,
+    )
+    return role
+
+
+def content_rows(rows: list[list[int]], *, eos_id: int) -> list[list[int]]:
+    """Each row cut at its first EOS — the tokens a reader actually sees.
+
+    The canonical guards must run on these, not on the full canvas: a
+    denoised tail nobody reads contributes its own diversity and can hide a
+    collapsed decoded region (#167 review 3).  An empty content row is
+    RETURNED as empty rather than dropped, so the guard denominator cannot
+    shrink silently.
+    """
+    cut = []
+    for row in rows:
+        if eos_id in row:
+            cut.append(row[: row.index(eos_id)])
+        else:
+            cut.append(list(row))
+    return cut
+
+
+def canvas_diagnostics(canvas: Any, *, content_widths: list[int]) -> dict[str, Any]:
+    """Full-canvas entropy/diversity, under CANVAS-prefixed names.
+
+    Kept deliberately distinct from the canonical guard keys so a
+    canvas-wide number can never be read as the canonical column's collapse
+    detection (#167 review 3).
+    """
+    from unturtle.eval.generation_metrics import (
+        distinct_fraction,
+        pooled_unigram_entropy,
+    )
+
+    return {
+        "canvas_width": int(canvas.shape[-1]),
+        "canvas_pooled_unigram_entropy": pooled_unigram_entropy(canvas),
+        "canvas_distinct_fraction": distinct_fraction(canvas),
+        "content_width_mean": (
+            sum(content_widths) / len(content_widths) if content_widths else 0.0
+        ),
+    }
+
+
+def revision_diagnostics(trajectory: list[Any]) -> dict[str, Any]:
+    """Measured revision for the record, or an explicit "not captured".
+
+    `net_revision_stats` existed and was tested but reached no record — the
+    Sumi producer kept step NUMBERS only, so no cell ever carried measured
+    revision (#167 review 3).  A trajectory shorter than two snapshots is
+    reported as uncaptured rather than as zero revision, which would read as
+    a measurement.
+    """
+    if len(trajectory) < 2:
+        return {
+            "status": "not_captured",
+            "reason": "fewer than two committed-state snapshots were kept; "
+            "revision cannot be measured from a single state",
+        }
+    stats = net_revision_stats(trajectory)
+    stats["status"] = "measured"
+    return stats

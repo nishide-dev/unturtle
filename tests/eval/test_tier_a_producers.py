@@ -73,21 +73,21 @@ class TestArProducerSemantics:
         # No truncation knobs: the diffusion anchors do not use them either.
         assert config["top_k"] is None and config["top_p"] is None
 
-    def test_ar_nfe_bills_the_longest_row_not_the_mean(self):
-        """`generate()` keeps forwarding the WHOLE batch until the longest
-        row finishes, so per-batch forwards == max(row lengths).  Billing the
-        mean of EOS-truncated lengths understates the compute actually spent
-        — measured: 32 forwards executed against a 24.75 mean when one row
-        of four stopped at token 3 (#165 review F1)."""
+    def test_ar_batch_forwards_is_the_generated_width(self):
+        """Forwards executed is the WIDTH of the generated tensor.
+
+        Content lengths (EOS excluded) are off by one whenever a row stops:
+        measured on gpt2 with EOS forced on the first generated token, one
+        forward ran while every content length was 0 — NFE 0 against 1
+        executed (#167 review 2).  `generated.shape[1]` is the executed
+        count directly, with no reconstruction from lengths.
+        """
         from unturtle.eval.producers import ar_batch_forwards
 
-        assert ar_batch_forwards([3, 32, 32, 32]) == 32
-        assert ar_batch_forwards([8]) == 8
-        # `max([])` raises ValueError too, so match the DIAGNOSTIC: without
-        # it the failure reads "max() arg is an empty sequence" and says
-        # nothing about an empty batch (the plain guard was unkillable).
-        with pytest.raises(ValueError, match="no rows in this batch"):
-            ar_batch_forwards([])
+        assert ar_batch_forwards(generated_width=32) == 32
+        assert ar_batch_forwards(generated_width=1) == 1
+        with pytest.raises(ValueError, match="no forwards|width"):
+            ar_batch_forwards(generated_width=0)
 
     def test_ar_nfe_sums_the_per_batch_forward_counts(self):
         """Across batches the cell's NFE per sample is the mean of the
@@ -110,6 +110,201 @@ class TestArProducerSemantics:
         assert ar_nfe(generated_tokens=1024) == 1024
         with pytest.raises(ValueError, match="executed"):
             ar_nfe(generated_tokens=None)
+
+
+class TestDecisionPreflight:
+    """#167 review 1: a tiny smoke must not be able to close a Tier-A gap.
+
+    `--num-samples 4` still produced a record carrying `tier_a_role`, and a
+    missing MAUVE reference only left a note — so a wiring smoke satisfied
+    `tier_a_gaps()` exactly like a decision run.  A record may claim a role
+    ONLY in decision mode, which verifies the frozen conditions.
+    """
+
+    def test_smoke_mode_produces_no_role_claim(self):
+        from unturtle.eval.producers import decision_preflight
+
+        role = decision_preflight(
+            mode="smoke",
+            role="ar_control",
+            num_samples=4,
+            seed=42,
+            mauve_available=False,
+            evaluator_revision="32b71b12589c2f8d625668d2335a01cac3249519",
+        )
+        assert role is None, "a smoke run must not claim a Tier-A role"
+
+    def test_decision_mode_requires_the_frozen_sample_budget(self):
+        from unturtle.eval.producers import decision_preflight
+
+        with pytest.raises(ValueError, match="1000|sample"):
+            decision_preflight(
+                mode="decision",
+                role="ar_control",
+                num_samples=4,
+                seed=42,
+                mauve_available=True,
+                evaluator_revision="32b71b12589c2f8d625668d2335a01cac3249519",
+            )
+
+    def test_decision_mode_requires_the_frozen_seed(self):
+        from unturtle.eval.producers import decision_preflight
+
+        with pytest.raises(ValueError, match="seed"):
+            decision_preflight(
+                mode="decision",
+                role="ar_control",
+                num_samples=1000,
+                seed=7,
+                mauve_available=True,
+                evaluator_revision="32b71b12589c2f8d625668d2335a01cac3249519",
+            )
+
+    def test_decision_mode_requires_the_mauve_reference(self):
+        """A missing reference used to degrade to a note while the role
+        claim stood."""
+        from unturtle.eval.producers import decision_preflight
+
+        with pytest.raises(ValueError, match="MAUVE|reference"):
+            decision_preflight(
+                mode="decision",
+                role="ar_control",
+                num_samples=1000,
+                seed=42,
+                mauve_available=False,
+                evaluator_revision="32b71b12589c2f8d625668d2335a01cac3249519",
+            )
+
+    def test_decision_mode_refuses_a_floating_evaluator_revision(self):
+        """#167 review 4: `main` is not an identity — it moves."""
+        from unturtle.eval.producers import decision_preflight
+
+        with pytest.raises(ValueError, match="main|commit|revision"):
+            decision_preflight(
+                mode="decision",
+                role="ar_control",
+                num_samples=1000,
+                seed=42,
+                mauve_available=True,
+                evaluator_revision="main",
+            )
+
+    def test_a_conforming_decision_run_returns_the_role(self):
+        from unturtle.eval.producers import decision_preflight
+
+        assert (
+            decision_preflight(
+                mode="decision",
+                role="masked_discrete",
+                num_samples=1000,
+                seed=42,
+                mauve_available=True,
+                evaluator_revision="32b71b12589c2f8d625668d2335a01cac3249519",
+            )
+            == "masked_discrete"
+        )
+
+    def test_an_unknown_mode_is_refused(self):
+        from unturtle.eval.producers import decision_preflight
+
+        with pytest.raises(ValueError, match="mode"):
+            decision_preflight(
+                mode="whatever",
+                role="ar_control",
+                num_samples=1000,
+                seed=42,
+                mauve_available=True,
+                evaluator_revision="32b71b12589c2f8d625668d2335a01cac3249519",
+            )
+
+
+class TestSmokeCannotCloseAGap:
+    """The end-to-end property #167 review 1 asks for: a smoke-mode record
+    must not satisfy `tier_a_gaps()`."""
+
+    def test_a_roleless_record_leaves_the_gap_open(self):
+        from unturtle.eval.producers import build_control_record, decision_preflight
+
+        role = decision_preflight(
+            mode="smoke",
+            role="ar_control",
+            num_samples=4,
+            seed=42,
+            mauve_available=False,
+            evaluator_revision="32b71b12589c2f8d625668d2335a01cac3249519",
+        )
+        record = build_control_record(
+            role=role,
+            family="ar",
+            method="gpt2-medium",
+            checkpoint="x@1",
+            seed=42,
+            quality=_quality(),
+            systems=_systems(),
+            confounds=["scale"],
+            official={},
+        )
+        assert record["tier_a_role"] is None
+        assert "ar_control" in tier_a_gaps([record])
+
+    def test_a_decision_record_closes_it(self):
+        from unturtle.eval.producers import build_control_record, decision_preflight
+
+        role = decision_preflight(
+            mode="decision",
+            role="ar_control",
+            num_samples=1000,
+            seed=42,
+            mauve_available=True,
+            evaluator_revision="32b71b12589c2f8d625668d2335a01cac3249519",
+        )
+        record = build_control_record(
+            role=role,
+            family="ar",
+            method="gpt2-medium",
+            checkpoint="x@1",
+            seed=42,
+            quality=_quality(),
+            systems=_systems(),
+            confounds=["scale"],
+            official={},
+        )
+        assert "ar_control" not in tier_a_gaps([record])
+
+
+class TestEvaluatorIdentity:
+    """#167 review 4: the canonical evaluator must be pinned to a commit,
+    and the record must carry the provider it was resolved with."""
+
+    def test_a_floating_revision_is_refused(self):
+        from unturtle.eval.producers import canonical_evaluator_identity
+
+        with pytest.raises(ValueError, match="main|commit"):
+            canonical_evaluator_identity(
+                model="gpt2-large", revision="main", tokenizer_revision="main"
+            )
+
+    def test_identity_carries_model_tokenizer_and_transformers_version(self):
+        from unturtle.eval.producers import canonical_evaluator_identity
+
+        sha = "32b71b12589c2f8d625668d2335a01cac3249519"
+        identity = canonical_evaluator_identity(
+            model="gpt2-large", revision=sha, tokenizer_revision=sha
+        )
+        assert identity["model"] == "gpt2-large"
+        assert identity["revision"] == sha
+        assert identity["tokenizer_revision"] == sha
+        assert identity["transformers_version"]
+
+    def test_the_tokenizer_revision_must_also_be_pinned(self):
+        """The entropy tokenizer moves independently of the scorer."""
+        from unturtle.eval.producers import canonical_evaluator_identity
+
+        sha = "32b71b12589c2f8d625668d2335a01cac3249519"
+        with pytest.raises(ValueError, match="tokenizer"):
+            canonical_evaluator_identity(
+                model="gpt2-large", revision=sha, tokenizer_revision=None
+            )
 
 
 class TestRoleGuards:
@@ -486,6 +681,33 @@ class TestCanonicalQualityColumn:
         assert quality["sample_count"] == 2
         assert quality["collapse_flags"] == []
 
+    def test_ragged_batches_are_padded_before_the_guards(self):
+        """Batches can end at different widths (a batch whose rows all stop
+        early is narrower), so stacking raw id lists raises a ragged-tensor
+        error.  The producer pads to a rectangle with an explicit filler and
+        records that it did (#167 review 2)."""
+        from unturtle.eval.producers import stack_sample_ids
+
+        stacked, meta = stack_sample_ids([[1, 2, 3], [4, 5]], pad_id=0)
+        assert stacked.shape == (2, 3)
+        assert stacked.tolist() == [[1, 2, 3], [4, 5, 0]]
+        assert meta["padded_rows"] == 1
+        assert meta["pad_id"] == 0
+        assert meta["width"] == 3
+
+    def test_uniform_width_batches_report_no_padding(self):
+        from unturtle.eval.producers import stack_sample_ids
+
+        stacked, meta = stack_sample_ids([[1, 2], [3, 4]], pad_id=0)
+        assert stacked.shape == (2, 2)
+        assert meta["padded_rows"] == 0
+
+    def test_stacking_nothing_is_refused(self):
+        from unturtle.eval.producers import stack_sample_ids
+
+        with pytest.raises(ValueError, match="no rows|empty"):
+            stack_sample_ids([], pad_id=0)
+
     def test_diversity_guards_are_part_of_the_canonical_column(self):
         """#153/#155 both splat `diversity_guards(...)` into the canonical
         column, and `_KNOWN_QUALITY_KEYS` reserves the three slots.  A
@@ -646,6 +868,110 @@ class TestUniformStateAccounting:
             canvas_length=2048, content_budget=1024, prompt_length=1
         )
         assert deviating["protocol_context_match"] is False
+
+
+class TestContentVsCanvasScope:
+    """#167 review 3: canonical guards must see the CONTENT tokens.
+
+    Running them over the full canvas lets the untouched tail's diversity
+    hide a collapsed decoded region — the tail is denoised context nobody
+    reads.  Full-canvas entropy and revision stay as secondary diagnostics
+    under their own names.
+    """
+
+    def test_content_rows_stop_at_the_first_eos(self):
+        from unturtle.eval.producers import content_rows
+
+        rows = content_rows([[5, 7, 9, 99, 1, 2], [5, 99, 3, 4, 5, 6]], eos_id=99)
+        assert rows == [[5, 7, 9], [5]]
+
+    def test_a_row_without_eos_keeps_its_whole_length(self):
+        from unturtle.eval.producers import content_rows
+
+        assert content_rows([[1, 2, 3]], eos_id=99) == [[1, 2, 3]]
+
+    def test_an_empty_content_row_is_surfaced_not_silently_dropped(self):
+        """A row whose first token is EOS has no content; dropping it would
+        shrink the guard denominator without saying so."""
+        from unturtle.eval.producers import content_rows
+
+        rows = content_rows([[99, 1, 2], [3, 4]], eos_id=99)
+        assert rows == [[], [3, 4]]
+
+    def test_canvas_diagnostics_stay_under_separate_names(self):
+        from unturtle.eval.producers import canvas_diagnostics
+
+        canvas = torch.tensor([[1, 2, 3, 3], [4, 4, 4, 4]])
+        diag = canvas_diagnostics(canvas, content_widths=[2, 1])
+        assert "canvas_pooled_unigram_entropy" in diag
+        assert "canvas_distinct_fraction" in diag
+        assert diag["canvas_width"] == 4
+        assert diag["content_width_mean"] == pytest.approx(1.5)
+        # These are NOT the canonical guard names, so they cannot be mistaken
+        # for the canonical column's collapse detection.
+        assert "pooled_unigram_entropy" not in diag
+        assert "distinct_fraction" not in diag
+
+    def test_revision_stats_ride_the_record_when_a_trajectory_exists(self):
+        """`net_revision_stats` was tested but never wired: the Sumi
+        producer only kept step NUMBERS, so no record carried measured
+        revision (#167 review 3)."""
+        from unturtle.eval.producers import revision_diagnostics
+
+        trajectory = [
+            torch.tensor([[5, 7]]),
+            torch.tensor([[5, 3]]),
+            torch.tensor([[5, 3]]),
+        ]
+        diag = revision_diagnostics(trajectory)
+        assert diag["revised_positions"] == 1
+        assert diag["revision_events"] == 1
+        assert diag["steps_observed"] == 3
+
+    def test_revision_diagnostics_says_so_when_nothing_was_captured(self):
+        from unturtle.eval.producers import revision_diagnostics
+
+        diag = revision_diagnostics([])
+        assert diag["status"] == "not_captured"
+        assert "revised_positions" not in diag
+
+
+class TestThroughputWork:
+    """#167 review 5: each throughput cell needs its own executed work.
+
+    Natural EOS makes forward counts differ by batch size, and the
+    top-level NFE comes from the quality run's batch — so without per-cell
+    work, batch scaling and generation-length differences are inseparable.
+    """
+
+    def test_each_cell_carries_its_own_executed_work(self):
+        from unturtle.eval.producers import measure_control_throughput
+
+        widths = {1: 1024, 8: 512, 32: 128}
+
+        def run_batch(batch_size, generator):
+            return {
+                "forwards_executed": widths[batch_size],
+                "content_length_mean": widths[batch_size] / 2,
+            }
+
+        cells = measure_control_throughput(run_batch, seed=42)
+        for batch_size, width in widths.items():
+            value = cells[f"batch_{batch_size}"]["value"]
+            assert value["forwards_executed"] == width
+            assert value["content_length_mean"] == width / 2
+            # token-work = forwards x batch, the work the cell actually did
+            assert value["token_work"] == width * batch_size
+
+    def test_a_cell_that_reports_no_work_is_still_typed(self):
+        """A `run_batch` that returns nothing must not fabricate work."""
+        from unturtle.eval.producers import measure_control_throughput
+
+        cells = measure_control_throughput(lambda b, g: None, seed=42)
+        for cell_value in cells.values():
+            assert cell_value["status"] == "ok"
+            assert "forwards_executed" not in cell_value["value"]
+            assert cell_value["value"]["samples_per_second"] > 0
 
 
 class TestMdlmNoiseRemoval:
