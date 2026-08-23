@@ -407,6 +407,108 @@ class TestCanonicalQualityColumn:
         assert quality["genppl"] != pytest.approx((3.0 + 8.0) / 2)
 
 
+class TestMdlmNoiseRemoval:
+    """Upstream MDLM's `sampling.noise_removal=True` (config default) runs
+    ONE extra forward after the loop and overwrites every position with the
+    argmax of the SUBS-parameterized logits.  Unturtle's `alg="origin"`
+    loop has no equivalent, so the producer supplies it — verbatim, at the
+    producer layer, with zero core edits (#153/#155 precedent).
+
+    Audited against dev/repos/mdlm/diffusion.py:658-696 (`_sample`) and
+    :261-277 (`_subs_parameterization`).
+    """
+
+    def test_subs_pins_unmasked_positions_to_themselves(self):
+        from unturtle.eval.producers import subs_parameterization
+
+        mask_id = 3
+        xt = torch.tensor([[1, mask_id, 2]])
+        logits = torch.zeros(1, 3, 4)
+        logits[0, 0, 2] = 10.0  # would argmax to token 2 at an UNMASKED slot
+        out = subs_parameterization(logits, xt, mask_index=mask_id)
+        # Position 0 is unmasked and holds token 1: SUBS forces it there.
+        assert out[0, 0].argmax().item() == 1
+        assert out[0, 0, 1].item() == 0.0
+        assert out[0, 0, 2].item() <= -1e6
+        # The masked position keeps a real distribution...
+        assert out[0, 1, mask_id].item() <= -1e6  # ...minus the mask token
+        assert torch.allclose(out[0, 1].exp().sum(), torch.tensor(1.0), atol=1e-5)
+
+    def test_noise_removal_replaces_the_loop_output_by_argmax(self):
+        """The extra forward is DETERMINISTIC: no sampling, no temperature."""
+        from unturtle.eval.producers import mdlm_noise_removal
+
+        mask_id = 3
+        x = torch.tensor([[1, mask_id, 2]])
+        calls = []
+
+        def forward(input_ids):
+            calls.append(input_ids.clone())
+            logits = torch.zeros(1, 3, 4)
+            logits[0, 1, 0] = 5.0  # the masked slot should commit token 0
+            return logits
+
+        out = mdlm_noise_removal(x, forward=forward, mask_index=mask_id)
+        assert len(calls) == 1, "noise removal is exactly one extra forward"
+        assert torch.equal(calls[0], x)
+        assert out.tolist() == [[1, 0, 2]]
+
+    def test_noise_removal_is_deterministic_not_sampled(self):
+        """Mutation target: committing by multinomial draw instead of argmax.
+
+        The masked slot below is a NEAR-TIE (0.5 / 0.3 / 0.2 after SUBS), so
+        a sampler would disagree with itself across runs and across RNG
+        states, while the upstream argmax always commits the same token.
+        """
+        from unturtle.eval.producers import mdlm_noise_removal
+
+        mask_id = 3
+        x = torch.full((64, 1), mask_id, dtype=torch.long)
+
+        def forward(input_ids):
+            import math
+
+            logits = torch.zeros(input_ids.shape[0], 1, 4)
+            logits[:, :, 0] = math.log(0.5)
+            logits[:, :, 1] = math.log(0.3)
+            logits[:, :, 2] = math.log(0.2)
+            logits[:, :, mask_id] = math.log(1e-9)
+            return logits
+
+        runs = []
+        for seed in (0, 1, 2):
+            torch.manual_seed(seed)
+            runs.append(mdlm_noise_removal(x, forward=forward, mask_index=mask_id))
+        # Every position, every seed: the same token.  A multinomial draw
+        # over (0.5, 0.3, 0.2) would put ~50% of the 64 rows elsewhere.
+        for run in runs:
+            assert run.unique().tolist() == [0], "noise removal must argmax, not sample"
+        assert torch.equal(runs[0], runs[1]) and torch.equal(runs[1], runs[2])
+
+    def test_noise_removal_never_emits_the_mask_token(self):
+        """Mutation target: skipping SUBS inside noise removal.  A raw argmax
+        could commit the mask id itself and the sample would carry a literal
+        mask token into the evaluator."""
+        from unturtle.eval.producers import mdlm_noise_removal
+
+        mask_id = 3
+        x = torch.tensor([[mask_id, mask_id]])
+
+        def forward(input_ids):
+            logits = torch.zeros(1, 2, 4)
+            logits[..., mask_id] = 100.0  # mask is the raw argmax everywhere
+            return logits
+
+        out = mdlm_noise_removal(x, forward=forward, mask_index=mask_id)
+        assert mask_id not in out.flatten().tolist()
+
+    def test_nfe_accounting_includes_the_extra_forward(self):
+        from unturtle.eval.producers import mdlm_nfe
+
+        assert mdlm_nfe(steps_executed=128, noise_removal=True) == 129
+        assert mdlm_nfe(steps_executed=128, noise_removal=False) == 128
+
+
 class TestMdlmRevisionPin:
     """#165 needs the published MDLM checkpoint pinned to
     d0958fa851335ece6c15260ce0025f030673c0fb.  Before this, `load_mdlm_owt`

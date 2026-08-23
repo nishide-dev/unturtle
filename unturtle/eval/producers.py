@@ -52,6 +52,9 @@ __all__ = [
     "ar_generation_config",
     "canonical_quality_column",
     "global_rng_from",
+    "mdlm_nfe",
+    "mdlm_noise_removal",
+    "subs_parameterization",
     "pinned_global_rng",
     "ar_nfe",
     "build_control_record",
@@ -295,3 +298,66 @@ def pinned_global_rng(seed: int):
         torch.set_rng_state(cpu_state)
         if cuda_states is not None:
             torch.cuda.set_rng_state_all(cuda_states)
+
+
+#: Upstream MDLM's stand-in for -inf; kept as a finite value so
+#: `logsumexp` stays well-behaved (dev/repos/mdlm/diffusion.py).
+_NEG_INFINITY = -1_000_000.0
+
+
+def subs_parameterization(logits: Any, xt: Any, *, mask_index: int) -> Any:
+    """Upstream MDLM SUBS parameterization, ported verbatim.
+
+    Reference: `MDLM._subs_parameterization`
+    (dev/repos/mdlm/diffusion.py:261-277).  Three steps, in order:
+
+    1. the mask column gets -inf, so the model can never re-emit MASK;
+    2. renormalize to log-probabilities;
+    3. UNMASKED positions are pinned to the token they already hold
+       (-inf everywhere else, 0 at the held token) — a committed token is
+       never revised.
+
+    On the published mdlm-owt checkpoint step 1 is nearly a no-op — the
+    trained model puts P(mask) ~ 3.9e-08 on an all-masked input — but it is
+    load-bearing for the argmax in :func:`mdlm_noise_removal`, where a
+    single -inf decides whether a literal mask token can be committed.
+    """
+    import torch
+
+    logits = logits.clone()
+    logits[:, :, mask_index] += _NEG_INFINITY
+    logits = logits - torch.logsumexp(logits, dim=-1, keepdim=True)
+    unmasked = xt != mask_index
+    logits[unmasked] = _NEG_INFINITY
+    logits[unmasked, xt[unmasked]] = 0.0
+    return logits
+
+
+def mdlm_noise_removal(
+    x: Any,
+    *,
+    forward: Callable[[Any], Any],
+    mask_index: int,
+) -> Any:
+    """Upstream MDLM's `sampling.noise_removal` final step (config default).
+
+    Reference: `MDLM._sample`, the `if self.config.sampling.noise_removal`
+    tail (dev/repos/mdlm/diffusion.py:690-696).  ONE extra forward at
+    t = eps whose SUBS argmax replaces the whole sequence — deterministic,
+    no temperature, no sampling.  Unturtle's `alg="origin"` loop has no
+    equivalent (its last step samples the remaining masks instead), so the
+    producer adds this rather than editing the core loop.
+
+    SUBS runs INSIDE this step: without it a raw argmax could commit the
+    mask id itself, and a literal mask token would reach the evaluator.
+    """
+    logits = forward(x)
+    return subs_parameterization(logits, x, mask_index=mask_index).argmax(dim=-1)
+
+
+def mdlm_nfe(*, steps_executed: int, noise_removal: bool) -> int:
+    """Denoiser calls for one MDLM sample: the executed loop steps plus the
+    noise-removal forward when it runs.  Upstream's default (steps 128 +
+    noise_removal) is 129 calls, not 128 — a compute cell that reports 128
+    understates the cost of the official configuration."""
+    return int(steps_executed) + (1 if noise_removal else 0)
