@@ -325,6 +325,25 @@ class TestDeviceGeneratorDerivation:
         fresh = torch.Generator().manual_seed(42)
         assert derive_device_generator(fresh, device="cpu").initial_seed() == first
 
+    def test_derivation_accepts_a_generator_on_any_device(self):
+        """A cell generator may itself live on CUDA (a caller that seeded it
+        device-side).  `torch.randint` requires the generator's device to
+        match the output tensor's, so the draw must follow the GENERATOR's
+        device, not assume CPU."""
+        from unturtle.eval.producers import derive_device_generator, global_rng_from
+
+        cpu_cell = torch.Generator().manual_seed(3)
+        assert isinstance(global_rng_from(cpu_cell), int)
+        assert derive_device_generator(cpu_cell, device="cpu").device.type == "cpu"
+
+        if torch.cuda.is_available():
+            cuda_cell = torch.Generator(device="cuda").manual_seed(3)
+            # Neither call may raise "Expected a 'cpu' device type for
+            # generator but found 'cuda'".
+            assert isinstance(global_rng_from(cuda_cell), int)
+            derived = derive_device_generator(cuda_cell, device="cuda")
+            assert derived.device.type == "cuda"
+
     def test_a_generator_already_on_the_device_is_still_derived_from(self):
         """The derivation must not short-circuit when devices happen to
         match: skipping it would stop advancing the cell stream."""

@@ -279,7 +279,12 @@ def global_rng_from(generator: Any) -> int:
     """
     import torch
 
-    return int(torch.randint(0, 2**31 - 1, (1,), generator=generator).item())
+    # The draw must happen on the GENERATOR's device: torch.randint requires
+    # the two to match, and a cell generator may itself be device-side.
+    device = getattr(generator, "device", None)
+    return int(
+        torch.randint(0, 2**31 - 1, (1,), generator=generator, device=device).item()
+    )
 
 
 @contextlib.contextmanager
