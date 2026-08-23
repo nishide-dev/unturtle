@@ -73,6 +73,35 @@ class TestArProducerSemantics:
         # No truncation knobs: the diffusion anchors do not use them either.
         assert config["top_k"] is None and config["top_p"] is None
 
+    def test_ar_nfe_bills_the_longest_row_not_the_mean(self):
+        """`generate()` keeps forwarding the WHOLE batch until the longest
+        row finishes, so per-batch forwards == max(row lengths).  Billing the
+        mean of EOS-truncated lengths understates the compute actually spent
+        — measured: 32 forwards executed against a 24.75 mean when one row
+        of four stopped at token 3 (#165 review F1)."""
+        from unturtle.eval.producers import ar_batch_forwards
+
+        assert ar_batch_forwards([3, 32, 32, 32]) == 32
+        assert ar_batch_forwards([8]) == 8
+        # `max([])` raises ValueError too, so match the DIAGNOSTIC: without
+        # it the failure reads "max() arg is an empty sequence" and says
+        # nothing about an empty batch (the plain guard was unkillable).
+        with pytest.raises(ValueError, match="no rows in this batch"):
+            ar_batch_forwards([])
+
+    def test_ar_nfe_sums_the_per_batch_forward_counts(self):
+        """Across batches the cell's NFE per sample is the mean of the
+        per-batch forward counts — each sample in a batch paid for every
+        forward that batch executed."""
+        from unturtle.eval.producers import ar_nfe_from_batches
+
+        # Batch A ran 32 forwards for 4 samples, batch B ran 10 for 2.
+        assert ar_nfe_from_batches([(32, 4), (10, 2)]) == pytest.approx(
+            (32 * 4 + 10 * 2) / 6
+        )
+        with pytest.raises(ValueError, match="empty|no batches"):
+            ar_nfe_from_batches([])
+
     def test_ar_nfe_equals_generated_tokens_and_is_executed(self):
         """AR is one forward per token; the record must carry the EXECUTED
         count, and it must not be silently inherited from the request."""
@@ -152,6 +181,43 @@ class TestRoleGuards:
         assert "genppl_official" not in record["quality"]
         assert record["tier_a_role"] == "ar_control"
         assert record["extra"]["confounds"]
+
+    def test_step_fields_reach_the_protocol_validator(self):
+        """`frontier_record` rejects a requested step count with no executed
+        one.  Stashing the pair in `extra` made that check unreachable, so
+        `build_control_record` forwards the protocol fields (#165 review
+        F3)."""
+        from unturtle.eval.producers import build_control_record
+
+        record = build_control_record(
+            role="masked_discrete",
+            family="mdlm",
+            method="mdlm-owt",
+            checkpoint="x@1",
+            seed=42,
+            steps_requested=128,
+            steps_executed=128,
+            quality=_quality(),
+            systems=_systems(),
+            confounds=["scale"],
+            official={},
+        )
+        assert record["steps_requested"] == 128
+        assert record["steps_executed"] == 128
+
+        with pytest.raises(ValueError, match="executed"):
+            build_control_record(
+                role="masked_discrete",
+                family="mdlm",
+                method="mdlm-owt",
+                checkpoint="x@1",
+                seed=42,
+                steps_requested=128,
+                quality=_quality(),
+                systems=_systems(),
+                confounds=["scale"],
+                official={},
+            )
 
     def test_all_three_batch_cells_are_required(self):
         from unturtle.eval.producers import build_control_record
@@ -412,12 +478,59 @@ class TestCanonicalQualityColumn:
             evaluator=_fake_evaluator,
             evaluator_identity={"model": "fake", "revision": "r1"},
             tokenize=lambda text: [ord(c) for c in text if c != " "],
+            sample_ids=torch.tensor([[1, 2, 1], [2, 2, 3]]),
         )
         assert quality["genppl"] == pytest.approx(3.0)
         assert quality["genppl_evaluator"] == {"model": "fake", "revision": "r1"}
         assert quality["unigram_entropy"] > 0
         assert quality["sample_count"] == 2
         assert quality["collapse_flags"] == []
+
+    def test_diversity_guards_are_part_of_the_canonical_column(self):
+        """#153/#155 both splat `diversity_guards(...)` into the canonical
+        column, and `_KNOWN_QUALITY_KEYS` reserves the three slots.  A
+        control record without them is the one arm where a collapsed but
+        low-GenPPL sample set would go unflagged (#165 review F2)."""
+        from unturtle.eval.producers import canonical_quality_column
+
+        quality = canonical_quality_column(
+            ["a b a", "b b c"],
+            evaluator=_fake_evaluator,
+            evaluator_identity={"model": "fake", "revision": "r1"},
+            tokenize=lambda text: [ord(c) for c in text if c != " "],
+            sample_ids=torch.tensor([[1, 2, 1], [2, 2, 3]]),
+        )
+        for key in (
+            "distinct_fraction",
+            "pooled_unigram_entropy",
+            "unique_rows_fraction",
+        ):
+            assert key in quality, f"{key} missing from the canonical column"
+
+    def test_omitting_sample_ids_is_refused_not_silently_skipped(self):
+        """Mutation target: making the guards optional.  Silently dropping
+        them is exactly the drift the shared helper exists to prevent.
+
+        Omitting the argument entirely is a TypeError (it is a required
+        keyword); passing None reaches the explicit refusal below.  Both
+        fail loudly, which is the property under test."""
+        from unturtle.eval.producers import canonical_quality_column
+
+        with pytest.raises(TypeError, match="sample_ids"):
+            canonical_quality_column(
+                ["a b"],
+                evaluator=_fake_evaluator,
+                evaluator_identity={"model": "fake", "revision": "r1"},
+                tokenize=lambda text: [1, 2],
+            )
+        with pytest.raises(ValueError, match="sample_ids|diversity"):
+            canonical_quality_column(
+                ["a b"],
+                evaluator=_fake_evaluator,
+                evaluator_identity={"model": "fake", "revision": "r1"},
+                tokenize=lambda text: [1, 2],
+                sample_ids=None,
+            )
 
     def test_an_unidentified_evaluator_is_refused(self):
         """Protocol v1: GenPPL never travels without evaluator identity."""
@@ -429,6 +542,7 @@ class TestCanonicalQualityColumn:
                 evaluator=_fake_evaluator,
                 evaluator_identity={},
                 tokenize=lambda text: [1, 2],
+                sample_ids=torch.tensor([[1, 2]]),
             )
 
     def test_empty_texts_are_refused_rather_than_scored(self):
@@ -442,6 +556,7 @@ class TestCanonicalQualityColumn:
                 evaluator=_fake_evaluator,
                 evaluator_identity={"model": "fake", "revision": "r1"},
                 tokenize=lambda text: [1],
+                sample_ids=torch.tensor([[1]]),
             )
 
     def test_genppl_is_corpus_pooled_not_a_per_text_mean(self):
@@ -464,6 +579,7 @@ class TestCanonicalQualityColumn:
             evaluator=evaluator,
             evaluator_identity={"model": "fake", "revision": "r1"},
             tokenize=lambda text: [ord(c) for c in text],
+            sample_ids=torch.tensor([[1, 2], [3, 4]]),
         )
         pooled = math.exp((math.log(3.0) * 100 + math.log(8.0) * 2) / 102)
         assert quality["genppl"] == pytest.approx(pooled)
@@ -640,7 +756,11 @@ class TestMdlmRevisionPin:
     had no `revision` parameter at all, so a record naming a revision was
     describing whatever `main` happened to be."""
 
-    def test_revision_reaches_every_download(self, monkeypatch):
+    def test_the_first_download_is_pinned(self, monkeypatch):
+        """Pins only the FIRST download (the fake stops there).  The
+        every-download property is covered by the next test, which lets the
+        config through — this one would not see a one-sided pin (#165
+        review F6)."""
         import huggingface_hub
 
         from unturtle.models.backbones.mdlm_dit import convert_mdlm_owt

@@ -49,7 +49,9 @@ from unturtle.eval.frontier import (
 )
 
 __all__ = [
+    "ar_batch_forwards",
     "ar_generation_config",
+    "ar_nfe_from_batches",
     "canonical_quality_column",
     "derive_device_generator",
     "global_rng_from",
@@ -125,6 +127,8 @@ def build_control_record(
     systems: dict[str, Any],
     confounds: list[str],
     official: dict[str, Any],
+    steps_requested: int | None = None,
+    steps_executed: int | None = None,
     decoding: Any = None,
     provider: dict[str, Any] | None = None,
     extra: dict[str, Any] | None = None,
@@ -166,6 +170,11 @@ def build_control_record(
         quality=quality,
         systems=systems,
         decoding=decoding,
+        # The protocol's own step fields, so its "requested without
+        # executed" validator can see them — stashing them in `extra` made
+        # that check structurally unreachable (#165 review F3).
+        steps_requested=steps_requested,
+        steps_executed=steps_executed,
         extra=merged_extra,
     )
 
@@ -238,6 +247,7 @@ def canonical_quality_column(
     evaluator: Callable[[str], tuple[float, int]],
     evaluator_identity: dict[str, str],
     tokenize: Callable[[str], list[int]],
+    sample_ids: Any,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The #152 canonical quality cells for one generation run.
@@ -248,7 +258,23 @@ def canonical_quality_column(
     frozen `hf_causal_evaluator("gpt2-large", ...)` and the matching
     tokenizer, and tests supply fakes.  Corpus-pooled entropy under the
     common tokenizer (NOT the ELF or FLM official entropy semantics).
+
+    `sample_ids` (a `[N, L]` token tensor in the model's OWN vocabulary) is
+    MANDATORY: `diversity_guards` rides in the canonical column of every
+    existing frontier record, and `_KNOWN_QUALITY_KEYS` reserves its three
+    slots.  Since GenPPL is entropy-sensitive, an arm without the guards is
+    the arm where a collapsed but low-GenPPL sample set goes unflagged
+    (#165 review F2).
     """
+    from unturtle.eval.generation_metrics import diversity_guards
+
+    if sample_ids is None:
+        raise ValueError(
+            "sample_ids is required: the canonical column carries "
+            "diversity_guards (distinct_fraction / pooled_unigram_entropy / "
+            "unique_rows_fraction) in every frontier record, and dropping "
+            "them silently is the drift this helper exists to prevent"
+        )
     # No empty-input guard here: `generative_perplexity` already refuses a
     # zero-text run, and the #165 battery could not kill a duplicate
     # (mutant M11 survived because the lower layer raises first).
@@ -261,6 +287,7 @@ def canonical_quality_column(
         "unigram_entropy": text_unigram_entropy(texts, tokenize=tokenize),
         "sample_count": len(texts),
         "collapse_flags": [],
+        **diversity_guards(sample_ids),
     }
     quality.update(extra or {})
     return quality
@@ -441,3 +468,34 @@ def derive_device_generator(generator: Any, *, device: Any) -> Any:
     derived = torch.Generator(device=device)
     derived.manual_seed(seed)
     return derived
+
+
+def ar_batch_forwards(row_lengths: list[int]) -> int:
+    """Denoiser calls one AR batch actually executed.
+
+    `generate()` does not stop when ONE row emits EOS — it keeps forwarding
+    the whole batch until every row finishes or `max_new_tokens` is hit, and
+    each forward processes the full batch.  The executed count is therefore
+    the LONGEST row, not the mean of EOS-truncated lengths.  Measured on
+    gpt2: 32 forwards executed while the truncated lengths were
+    [3, 32, 32, 32] (mean 24.75) — a 23% undercount in the direction that
+    makes the AR control look cheaper than it was (#165 review F1).
+    """
+    if not row_lengths:
+        raise ValueError("no rows in this batch — nothing was generated")
+    return int(max(row_lengths))
+
+
+def ar_nfe_from_batches(batches: list[tuple[int, int]]) -> float:
+    """Per-sample NFE across a cell's batches.
+
+    `batches` is `[(forwards_executed, batch_size), ...]`.  Every sample in
+    a batch paid for every forward that batch executed, so the per-sample
+    figure is the sample-weighted mean of the per-batch forward counts.
+    """
+    if not batches:
+        raise ValueError("no batches — the cell generated nothing")
+    total_samples = sum(size for _, size in batches)
+    if total_samples == 0:
+        raise ValueError("no samples across the recorded batches")
+    return sum(forwards * size for forwards, size in batches) / total_samples

@@ -101,7 +101,11 @@ def generate_samples(model, tokenizer, config, args):
     """
     import torch
 
-    from unturtle.eval.producers import global_rng_from, pinned_global_rng
+    from unturtle.eval.producers import (
+        ar_batch_forwards,
+        global_rng_from,
+        pinned_global_rng,
+    )
 
     generator = torch.Generator().manual_seed(args.seed)
     bos = tokenizer.bos_token_id
@@ -109,6 +113,8 @@ def generate_samples(model, tokenizer, config, args):
         raise RuntimeError(f"{args.model} has no bos_token_id to start from")
     texts: list[str] = []
     lengths: list[int] = []
+    token_ids: list[list[int]] = []
+    batches: list[tuple[int, int]] = []
     while len(texts) < args.num_samples:
         batch = min(args.batch_size, args.num_samples - len(texts))
         prompt = torch.full((batch, 1), bos, dtype=torch.long, device=args.device)
@@ -129,14 +135,25 @@ def generate_samples(model, tokenizer, config, args):
             )
         # Drop the BOS prompt column: only GENERATED tokens count.
         generated = out[:, 1:]
+        batch_lengths = []
         for row in generated:
             ids = row.tolist()
             if tokenizer.eos_token_id in ids:
                 ids = ids[: ids.index(tokenizer.eos_token_id)]
+            batch_lengths.append(len(ids))
             lengths.append(len(ids))
+            token_ids.append(row.tolist())
             texts.append(tokenizer.decode(ids, skip_special_tokens=True))
+        # The batch forwarded until its LONGEST row finished; every sample in
+        # it paid for all of those forwards (#165 review F1).
+        batches.append((ar_batch_forwards(batch_lengths), len(batch_lengths)))
         print(f"  generated {len(texts)}/{args.num_samples}", flush=True)
-    return texts[: args.num_samples], lengths[: args.num_samples]
+    return (
+        texts[: args.num_samples],
+        lengths[: args.num_samples],
+        token_ids[: args.num_samples],
+        batches,
+    )
 
 
 def warm_generation(model, tokenizer, config, args):
@@ -164,7 +181,7 @@ def warm_generation(model, tokenizer, config, args):
         torch.cuda.synchronize()
 
 
-def canonical_column(texts, args, device):
+def canonical_column(texts, token_ids, args, device):
     from transformers import AutoTokenizer
 
     from unturtle.eval.frontier import hf_causal_evaluator
@@ -174,11 +191,16 @@ def canonical_column(texts, args, device):
         "gpt2-large", revision="main", device=device, max_length=1024
     )
     gpt2_tokenizer = AutoTokenizer.from_pretrained("gpt2-large")
+    import torch
+
     quality = canonical_quality_column(
         texts,
         evaluator=evaluator,
         evaluator_identity=identity,
         tokenize=gpt2_tokenizer.encode,
+        # The guards run on the model's OWN token ids (untruncated rows), so
+        # a collapsed sample set is visible even if decoding hides it.
+        sample_ids=torch.tensor(token_ids, dtype=torch.long),
     )
     mauve_note = None
     heldout = pathlib.Path(args.owt_heldout)
@@ -253,7 +275,7 @@ def main():
     import torch
 
     from unturtle.eval.frontier import write_jsonl
-    from unturtle.eval.producers import ar_nfe, build_control_record
+    from unturtle.eval.producers import ar_nfe_from_batches, build_control_record
 
     args = parse_args()
     out = pathlib.Path(args.out)
@@ -270,7 +292,9 @@ def main():
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
     started = time.perf_counter()
-    texts, lengths = generate_samples(model, tokenizer, config, args)
+    texts, lengths, token_ids, batches = generate_samples(
+        model, tokenizer, config, args
+    )
     generation_seconds = time.perf_counter() - started
     (out / "samples.json").write_text(json.dumps(texts, ensure_ascii=False))
 
@@ -280,8 +304,11 @@ def main():
     del model
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    quality, mauve_note = canonical_column(texts, args, eval_device)
+    quality, mauve_note = canonical_column(texts, token_ids, args, eval_device)
 
+    # NFE per sample = sample-weighted mean of the per-batch forward counts,
+    # NOT the mean of EOS-truncated lengths (#165 review F1).
+    executed_nfe = ar_nfe_from_batches(batches)
     executed_tokens = sum(lengths) / len(lengths)
     record = build_control_record(
         role="ar_control",
@@ -291,10 +318,14 @@ def main():
         seed=args.seed,
         quality=quality,
         systems={
-            # NFE from the MEAN executed generated length, not from
-            # --max-new-tokens: early EOS makes the request an upper bound.
-            "nfe": ar_nfe(generated_tokens=round(executed_tokens)),
-            "sequence_length": args.max_new_tokens,
+            # Executed forwards per sample.  A batch keeps forwarding until
+            # its longest row finishes, so this is >= the mean generated
+            # length and <= --max-new-tokens.
+            "nfe": executed_nfe,
+            # The forwarded length, matching how NFE is billed — the
+            # requested budget and the mean generated length are separate
+            # fields in `extra` (#165 review F7).
+            "sequence_length": max(forwards for forwards, _ in batches),
             "solver": "ar-cached-sampling",
             "throughput": throughput,
             "peak_memory_bytes": peak,
@@ -325,11 +356,16 @@ def main():
         },
         extra={
             "generation_seconds": generation_seconds,
+            "requested_max_new_tokens": args.max_new_tokens,
             "generated_tokens_mean": executed_tokens,
+            "forwards_per_batch": [forwards for forwards, _ in batches],
             "generated_tokens_min": min(lengths),
             "generated_tokens_max": max(lengths),
-            "nfe_note": "AR NFE counts token forwards; it is not comparable "
-            "to a diffusion step count",
+            "nfe_note": "AR NFE counts token forwards billed to the "
+            "longest row of each batch (generate() forwards the whole batch "
+            "until every row finishes); it is not comparable to a diffusion "
+            "step count. GenPPL is scored on EOS-truncated text while NFE "
+            "is billed to the untruncated run.",
             "mauve_note": mauve_note,
         },
     )

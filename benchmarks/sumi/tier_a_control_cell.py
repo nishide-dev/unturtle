@@ -117,7 +117,7 @@ def load_model(args):
     return model, tokenizer
 
 
-def sample_batch(model, batch_size, args, generator):
+def sample_batch(model, batch_size, args, generator, step_counter=None):
     """One batch through the NATIVE Sumi sampler.
 
     `generation_sumi.generate` accepts `generator=` and threads it into
@@ -133,6 +133,14 @@ def sample_batch(model, batch_size, args, generator):
 
     generator = derive_device_generator(generator, device=args.device)
     bos = model.config.bos_token_id
+    # The sampler's own progress_callback fires once per executed step, so
+    # the recorded step count is OBSERVED rather than the request echoed
+    # back (#165 review F3).
+    observed = []
+
+    def progress_callback(state):
+        observed.append(int(state["step"]))
+
     prompt = torch.full((batch_size, 1), bos, dtype=torch.long, device=args.device)
     with torch.no_grad():
         out = model.generate(
@@ -146,7 +154,10 @@ def sample_batch(model, batch_size, args, generator):
             canvas_length=args.canvas_length,
             max_new_tokens=args.canvas_length - 3,
             generator=generator,
+            progress_callback=progress_callback,
         )
+    if step_counter is not None:
+        step_counter.append(max(observed) if observed else 0)
     return out.sequences, out.canvas
 
 
@@ -154,20 +165,47 @@ def generate_samples(model, tokenizer, args):
     import torch
 
     generator = torch.Generator().manual_seed(args.seed)
+    pad_id = model.config.pad_token_id
+    if pad_id is None:
+        pad_id = model.config.eos_token_id
     texts: list[str] = []
     lengths: list[int] = []
+    token_ids: list[list[int]] = []
+    step_counts: list[int] = []
     while len(texts) < args.num_samples:
         batch = min(args.batch_size, args.num_samples - len(texts))
-        sequences, _canvas = sample_batch(model, batch, args, generator)
-        for row in sequences:
+        sequences, canvas = sample_batch(
+            model, batch, args, generator, step_counter=step_counts
+        )
+        for row, canvas_row in zip(sequences, canvas, strict=True):
             ids = row.tolist()
-            lengths.append(len(ids))
+            # `_trim_at_eos` cuts each row at its first EOS and then RIGHT-PADS
+            # the batch back into a rectangle, so len(row) is the batch's
+            # longest row, not this sample's content length.  Strip the pad
+            # filler to get the real length (#165 review F4).
+            content = ids
+            while content and content[-1] == pad_id:
+                content = content[:-1]
+            lengths.append(len(content))
+            # Diversity guards run on the FULL canvas: fixed width across
+            # samples, and the untrimmed ids are the model's own output.
+            token_ids.append(canvas_row.tolist())
             texts.append(tokenizer.decode(ids, skip_special_tokens=True))
         print(f"  generated {len(texts)}/{args.num_samples}", flush=True)
-    return texts[: args.num_samples], lengths[: args.num_samples]
+    if len(set(step_counts)) != 1:
+        raise RuntimeError(
+            f"batches executed differing step counts {sorted(set(step_counts))} "
+            "— the cell would have no single executed step count to record"
+        )
+    return (
+        texts[: args.num_samples],
+        lengths[: args.num_samples],
+        token_ids[: args.num_samples],
+        step_counts[0],
+    )
 
 
-def canonical_column(texts, args, device):
+def canonical_column(texts, token_ids, args, device):
     from transformers import AutoTokenizer
 
     from unturtle.eval.frontier import hf_causal_evaluator
@@ -177,11 +215,14 @@ def canonical_column(texts, args, device):
         "gpt2-large", revision="main", device=device, max_length=1024
     )
     gpt2_tokenizer = AutoTokenizer.from_pretrained("gpt2-large")
+    import torch
+
     quality = canonical_quality_column(
         texts,
         evaluator=evaluator,
         evaluator_identity=identity,
         tokenize=gpt2_tokenizer.encode,
+        sample_ids=torch.tensor(token_ids, dtype=torch.long),
     )
     mauve_note = None
     heldout = pathlib.Path(args.owt_heldout)
@@ -265,7 +306,7 @@ def main():
         torch.cuda.reset_peak_memory_stats()
 
     started = time.perf_counter()
-    texts, lengths = generate_samples(model, tokenizer, args)
+    texts, lengths, token_ids, observed_steps = generate_samples(model, tokenizer, args)
     generation_seconds = time.perf_counter() - started
     (out / "samples.json").write_text(json.dumps(texts, ensure_ascii=False))
 
@@ -275,7 +316,7 @@ def main():
     del model
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    quality, mauve_note = canonical_column(texts, args, eval_device)
+    quality, mauve_note = canonical_column(texts, token_ids, args, eval_device)
 
     scope = uniform_state_compute_scope(
         canvas_length=args.canvas_length,
@@ -288,9 +329,11 @@ def main():
         method="sumi",
         checkpoint=f"{args.repo}@{args.revision}",
         seed=args.seed,
+        steps_requested=args.steps,
+        steps_executed=observed_steps,
         quality=quality,
         systems={
-            "nfe": uniform_state_nfe(steps_executed=args.steps),
+            "nfe": uniform_state_nfe(steps_executed=observed_steps),
             "sequence_length": scope["sequence_length"],
             "solver": f"{args.sampler}-uniform-diffusion",
             "throughput": throughput,
@@ -328,9 +371,13 @@ def main():
         extra={
             "generation_seconds": generation_seconds,
             "steps_requested": args.steps,
-            "steps_executed": args.steps,
+            # OBSERVED, via the sampler's own progress_callback — not the
+            # requested count re-labelled (#165 review F3).
+            "steps_executed": observed_steps,
             "compute_scope": scope,
-            "decoded_length_mean": sum(lengths) / len(lengths),
+            "content_length_mean": sum(lengths) / len(lengths),
+            "content_length_min": min(lengths),
+            "content_length_max": max(lengths),
             "role_fit": "true uniform state — canvas initialized from "
             "randint(0, vocab_size), no mask token, ancestral posterior on "
             "the one-hot simplex (audited: generation_sumi.py)",

@@ -98,7 +98,7 @@ def load_model(args):
     return model, int(mask_id)
 
 
-def sample_batch(model, mask_id, batch_size, args, generator):
+def sample_batch(model, mask_id, batch_size, args, generator, step_counter=None):
     """One batch through the Unturtle `mdlm` loop, then the upstream
     noise-removal step.  Returns the committed token ids."""
     import torch
@@ -113,11 +113,15 @@ def sample_batch(model, mask_id, batch_size, args, generator):
     # the mask token, so a single-column all-mask prompt yields a fully
     # masked canvas of `sequence_length` — upstream's `_sample_prior`.
     prompt = torch.full((batch_size, 1), mask_id, dtype=torch.long, device=args.device)
+    # The loop's own step_callback fires once per executed step, so the
+    # recorded count is OBSERVED, not the request echoed back (#165 F3).
+    observed = []
     with torch.no_grad(), pinned_global_rng(global_rng_from(generator)):
         out = model.generate(
             prompt,
             algorithm="mdlm",
             steps=args.steps,
+            step_callback=lambda i, total: observed.append(i),
             max_length=args.sequence_length,
             mask_token_id=mask_id,
             alg="origin",
@@ -133,6 +137,8 @@ def sample_batch(model, mask_id, batch_size, args, generator):
                 forward=lambda ids: model(input_ids=ids).logits,
                 mask_index=mask_id,
             )
+    if step_counter is not None:
+        step_counter.append(max(observed) if observed else 0)
     return x
 
 
@@ -142,18 +148,30 @@ def generate_samples(model, mask_id, tokenizer, args):
     generator = torch.Generator().manual_seed(args.seed)
     texts: list[str] = []
     ids_all = []
+    step_counts: list[int] = []
     while len(texts) < args.num_samples:
         batch = min(args.batch_size, args.num_samples - len(texts))
-        x = sample_batch(model, mask_id, batch, args, generator)
+        x = sample_batch(
+            model, mask_id, batch, args, generator, step_counter=step_counts
+        )
         for row in x:
             ids = row.tolist()
             ids_all.append(ids)
             texts.append(tokenizer.decode(ids, skip_special_tokens=True))
         print(f"  generated {len(texts)}/{args.num_samples}", flush=True)
-    return texts[: args.num_samples], ids_all[: args.num_samples]
+    if len(set(step_counts)) != 1:
+        raise RuntimeError(
+            f"batches executed differing step counts {sorted(set(step_counts))} "
+            "— the cell would have no single executed step count to record"
+        )
+    return (
+        texts[: args.num_samples],
+        ids_all[: args.num_samples],
+        step_counts[0],
+    )
 
 
-def canonical_column(texts, args, device):
+def canonical_column(texts, token_ids, args, device):
     from transformers import AutoTokenizer
 
     from unturtle.eval.frontier import hf_causal_evaluator
@@ -163,11 +181,14 @@ def canonical_column(texts, args, device):
         "gpt2-large", revision="main", device=device, max_length=1024
     )
     gpt2_tokenizer = AutoTokenizer.from_pretrained("gpt2-large")
+    import torch
+
     quality = canonical_quality_column(
         texts,
         evaluator=evaluator,
         evaluator_identity=identity,
         tokenize=gpt2_tokenizer.encode,
+        sample_ids=torch.tensor(token_ids, dtype=torch.long),
     )
     mauve_note = None
     heldout = pathlib.Path(args.owt_heldout)
@@ -247,7 +268,7 @@ def main():
         torch.cuda.reset_peak_memory_stats()
 
     started = time.perf_counter()
-    texts, ids_all = generate_samples(model, mask_id, tokenizer, args)
+    texts, ids_all, observed_steps = generate_samples(model, mask_id, tokenizer, args)
     generation_seconds = time.perf_counter() - started
     (out / "samples.json").write_text(json.dumps(texts, ensure_ascii=False))
 
@@ -259,7 +280,7 @@ def main():
     del model
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    quality, mauve_note = canonical_column(texts, args, eval_device)
+    quality, mauve_note = canonical_column(texts, ids_all, args, eval_device)
 
     record = build_control_record(
         role="masked_discrete",
@@ -267,9 +288,11 @@ def main():
         method="mdlm-owt",
         checkpoint=f"{args.repo}@{args.revision}",
         seed=args.seed,
+        steps_requested=args.steps,
+        steps_executed=observed_steps,
         quality=quality,
         systems={
-            "nfe": mdlm_nfe(steps_executed=args.steps, noise_removal=noise_removal),
+            "nfe": mdlm_nfe(steps_executed=observed_steps, noise_removal=noise_removal),
             "sequence_length": args.sequence_length,
             "solver": "ddpm-ancestral" + ("+noise-removal" if noise_removal else ""),
             "throughput": throughput,
@@ -305,8 +328,18 @@ def main():
         extra={
             "generation_seconds": generation_seconds,
             "steps_requested": args.steps,
-            "steps_executed": args.steps,
+            "steps_executed": observed_steps,
+            # Counted AFTER noise removal, which scrubs the mask column by
+            # construction — so 0 is expected under the default and only
+            # informative with --no-noise-removal (#165 review F5).
             "residual_mask_tokens": residual_masks,
+            "residual_mask_scope": (
+                "post-noise-removal (structurally 0: SUBS gives the mask "
+                "column -inf before the argmax)"
+                if noise_removal
+                else "post-loop, no noise removal — a non-zero count here "
+                "means the loop left masks uncommitted"
+            ),
             "upstream_alignment": {
                 "reference": "dev/repos/mdlm/diffusion.py",
                 "ddpm_vs_origin": "equidistributional (measured 0.749 vs "
