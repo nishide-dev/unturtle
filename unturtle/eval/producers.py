@@ -51,6 +51,7 @@ from unturtle.eval.frontier import (
 __all__ = [
     "ar_generation_config",
     "canonical_quality_column",
+    "derive_device_generator",
     "global_rng_from",
     "mdlm_nfe",
     "mdlm_noise_removal",
@@ -414,3 +415,24 @@ def uniform_state_compute_scope(
         "note": "Sumi denoises the full canvas every step; sequence_length "
         "is the forwarded canvas, not the content budget",
     }
+
+
+def derive_device_generator(generator: Any, *, device: Any) -> Any:
+    """A generator on `device`, seeded from the cell's generator.
+
+    `measure_throughput_cells` (#152) owns one CPU generator, but some
+    native samplers require the generator to live on the model's device —
+    Sumi's `_ancestral_step` raises `RuntimeError: Expected a 'cuda' device
+    type for generator but found 'cpu'`.  Deriving keeps the protocol's
+    single-stream property: the cell generator advances exactly once per
+    derivation, so consecutive batches cannot share an RNG stream.
+
+    Never short-circuits when the devices already match — skipping the draw
+    would stop the cell stream from advancing.
+    """
+    import torch
+
+    seed = global_rng_from(generator)
+    derived = torch.Generator(device=device)
+    derived.manual_seed(seed)
+    return derived

@@ -291,6 +291,51 @@ class TestGlobalRngSeam:
         assert torch.equal(a, b)
 
 
+class TestDeviceGeneratorDerivation:
+    """Some native samplers require a generator on the SAME device as the
+    model — Sumi's `_ancestral_step` calls `torch.multinomial(...,
+    generator=...)` on CUDA tensors and raises `RuntimeError: Expected a
+    'cuda' device type for generator but found 'cpu'`.
+
+    `measure_throughput_cells` (#152) owns one CPU generator by design, so
+    the producer DERIVES a device generator from it — the cell generator
+    still advances once per batch, exactly as it would if handed over
+    directly.  Deriving, not replacing: a fresh per-batch generator would
+    break the protocol's single-stream requirement.
+    """
+
+    def test_derived_generator_lands_on_the_requested_device(self):
+        from unturtle.eval.producers import derive_device_generator
+
+        cell = torch.Generator().manual_seed(42)
+        derived = derive_device_generator(cell, device="cpu")
+        assert derived.device.type == "cpu"
+
+    def test_the_cell_stream_advances_once_per_derivation(self):
+        """Mutation target: seeding the derived generator from a constant.
+        Two batches would then share an identical RNG stream and the
+        throughput cells would silently measure the same sample twice."""
+        from unturtle.eval.producers import derive_device_generator
+
+        cell = torch.Generator().manual_seed(42)
+        first = derive_device_generator(cell, device="cpu").initial_seed()
+        second = derive_device_generator(cell, device="cpu").initial_seed()
+        assert first != second
+        # Reproducible from the same cell seed.
+        fresh = torch.Generator().manual_seed(42)
+        assert derive_device_generator(fresh, device="cpu").initial_seed() == first
+
+    def test_a_generator_already_on_the_device_is_still_derived_from(self):
+        """The derivation must not short-circuit when devices happen to
+        match: skipping it would stop advancing the cell stream."""
+        from unturtle.eval.producers import derive_device_generator
+
+        cell = torch.Generator().manual_seed(7)
+        before = cell.get_state().clone()
+        derive_device_generator(cell, device="cpu")
+        assert not torch.equal(cell.get_state(), before)
+
+
 class TestCoverageAccounting:
     def test_a_valid_control_record_closes_its_gap(self):
         from unturtle.eval.producers import build_control_record
