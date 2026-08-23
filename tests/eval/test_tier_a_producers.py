@@ -198,6 +198,32 @@ class TestNetRevision:
         assert stats["revised_positions"] == 0
         assert stats["revision_fraction"] == 0.0
 
+    def test_a_token_that_returns_to_its_original_value_still_counts(self):
+        """Mutation target: comparing each snapshot to the FIRST one instead
+        of to its predecessor.  A token that flips away and back has been
+        revised twice; a first-vs-last diff would score it as untouched and
+        under-report how much work the sampler redid."""
+        from unturtle.eval.producers import net_revision_stats
+
+        trajectory = [
+            torch.tensor([[5, 7]]),
+            torch.tensor([[5, 3]]),
+            torch.tensor([[5, 7]]),  # position 1 returns to its first value
+        ]
+        stats = net_revision_stats(trajectory)
+        assert stats["revised_positions"] == 1
+        assert stats["revision_fraction"] == pytest.approx(0.5)
+        # `revised_positions` alone cannot see the round trip: cumulative
+        # "differs from predecessor" and "differs from the first state" are
+        # provably the same set of positions.  The redone work shows up only
+        # in the event count — two flips here, one for a monotone change.
+        assert stats["revision_events"] == 2
+        monotone = net_revision_stats(
+            [torch.tensor([[5, 7]]), torch.tensor([[5, 3]]), torch.tensor([[5, 3]])]
+        )
+        assert monotone["revised_positions"] == 1
+        assert monotone["revision_events"] == 1
+
     def test_a_single_snapshot_cannot_claim_revision(self):
         from unturtle.eval.producers import net_revision_stats
 
@@ -217,9 +243,7 @@ class TestGeneratorOwnership:
             seen.append((batch_size, id(generator)))
 
         cells = measure_control_throughput(run_batch, seed=42)
-        assert set(cells) == {
-            f"batch_{b}" for b in FRONTIER_PROTOCOL["batch_sizes"]
-        }
+        assert set(cells) == {f"batch_{b}" for b in FRONTIER_PROTOCOL["batch_sizes"]}
         assert len({generator_id for _, generator_id in seen}) == 1
 
 

@@ -119,17 +119,14 @@ def build_control_record(
 ) -> dict[str, Any]:
     """A protocol-v1 record for one Tier-A control role.
 
-    Adds three producer-level guards on top of `frontier_record`: the role
-    must be a protocol role, `confounds` must be non-empty, and the
-    official column is forced into `extra` so it can never be conflated
-    with the canonical `quality` fields.  DFM-as-uniform_state is rejected
-    by `frontier_record` itself.
+    Adds the two producer-level guards `frontier_record` does not own:
+    `confounds` must be non-empty, and the official column is forced into
+    `extra` so it can never be conflated with the canonical `quality`
+    fields.  Role validity and the DFM-as-uniform_state refusal stay with
+    `frontier_record` (#152) — duplicating them here was verified inert by
+    the #165 mutation battery (mutant M3 could not be killed because the
+    protocol layer already rejects both cases).
     """
-    if role not in FRONTIER_PROTOCOL["tier_a_roles"]:
-        raise ValueError(
-            f"unknown Tier-A role {role!r}; protocol roles: "
-            f"{FRONTIER_PROTOCOL['tier_a_roles']}"
-        )
     if not confounds:
         raise ValueError(
             "confounds must be recorded explicitly (scale / training data / "
@@ -194,6 +191,7 @@ def net_revision_stats(trajectory: list[Any]) -> dict[str, Any]:
 
     first = trajectory[0]
     changed = torch.zeros_like(first, dtype=torch.bool)
+    events = 0
     previous = first
     for snapshot in trajectory[1:]:
         if snapshot.shape != first.shape:
@@ -201,7 +199,9 @@ def net_revision_stats(trajectory: list[Any]) -> dict[str, Any]:
                 f"snapshot shape {tuple(snapshot.shape)} != "
                 f"{tuple(first.shape)}; net revision compares aligned states"
             )
-        changed |= snapshot != previous
+        step_changed = snapshot != previous
+        changed |= step_changed
+        events += int(step_changed.sum())
         previous = snapshot
     total = int(changed.numel())
     revised = int(changed.sum())
@@ -209,5 +209,12 @@ def net_revision_stats(trajectory: list[Any]) -> dict[str, Any]:
         "revised_positions": revised,
         "total_positions": total,
         "revision_fraction": revised / total if total else 0.0,
+        # How many times a committed token was OVERWRITTEN, summed over
+        # positions and steps.  This is the quantity `revised_positions`
+        # cannot express: a token that flips away and back counts twice.
+        # (Cumulative "differs from predecessor" and "differs from the
+        # first state" select provably identical position sets, so the
+        # event count is the only observable difference between them.)
+        "revision_events": events,
         "steps_observed": len(trajectory),
     }
