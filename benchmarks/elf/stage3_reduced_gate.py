@@ -12,7 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""#154 Stage 3: ELF reduced-scale OWT eligibility gate.
+"""#154 Stage 3: ELF reduced-scale OWT training SCAFFOLD.
+
+STATUS (#164 review): this is a training scaffold, NOT a decision-ready
+gate runner.  It trains under the frozen budget and records the training /
+heldout curve, but it does NOT yet emit the measurements the frozen Stage-3
+verdict needs (official + canonical #152 evaluator columns, GenPPL /
+entropy / MAUVE, collapse guards, 50%/100% decision checkpoints, sign
+agreement).  Do not read a GO / FAIL / UNDECIDABLE verdict from its output.
+
+Also unresolved before a decision run: the frozen heldout split is the tail
+of the FULL dataset while this scaffold uses the tail of a 3-shard subset,
+and the oracle shuffles its DataLoader (`shuffle=True`) whereas this
+consumes rows sequentially.  Those are protocol deviations awaiting either
+a re-freeze or alignment.
 
 Frozen (Stage-0 comment, unchanged): **300M token presentations per seed**,
 seeds **42 and 43**, effective batch **64 x 1024** via grad accumulation,
@@ -71,6 +84,12 @@ def parse_args():
     parser.add_argument("--microbatch", type=int, default=4)
     parser.add_argument("--out", required=True)
     parser.add_argument("--shards", type=int, default=3)
+    parser.add_argument(
+        "--resume-from",
+        default=None,
+        help="checkpoint to continue from; restores model/EMA/optimizer/RNG/"
+        "cursor so the trajectory continues rather than restarting",
+    )
     parser.add_argument(
         "--smoke-steps",
         type=int,
@@ -279,12 +298,22 @@ def main():
     ema = init_ema(model)
     generator = torch.Generator().manual_seed(seed)
 
-    tokens_target = (
-        args.smoke_steps * EFFECTIVE_BATCH * SEQUENCE_LENGTH
-        if args.smoke
-        else TOKENS_PER_SEED
-    )
-    total_steps = tokens_target // (EFFECTIVE_BATCH * SEQUENCE_LENGTH)
+    tokens_per_step = EFFECTIVE_BATCH * SEQUENCE_LENGTH
+    if args.smoke:
+        total_steps = args.smoke_steps
+    else:
+        # A fixed batch cannot hit 300,000,000 exactly (#164 review,
+        # finding 5).  The FROZEN choice is the CEIL step count, so the run
+        # never presents FEWER tokens than the budget:
+        #   4,578 steps x 65,536 = 300,023,808 >= 300,000,000
+        total_steps = -(-TOKENS_PER_SEED // tokens_per_step)
+    tokens_target = total_steps * tokens_per_step
+    if not args.smoke:
+        assert total_steps == 4578 and tokens_target == 300_023_808, (
+            f"frozen Stage-3 budget drift: {total_steps} steps / "
+            f"{tokens_target} tokens (expected 4578 / 300023808)"
+        )
+        assert tokens_target >= TOKENS_PER_SEED
     accum = EFFECTIVE_BATCH // args.microbatch
     warmup_steps = max(1, int(total_steps * WARMUP_FRACTION))
     print(
@@ -304,35 +333,99 @@ def main():
         for group in optimizer.param_groups:
             group["lr"] = LEARNING_RATE * scale
 
+    HELDOUT_EVAL_SEED = 12345
+
     @torch.no_grad()
     def heldout_loss(n_batches=4):
-        model.eval()
-        losses = []
-        local = torch.Generator().manual_seed(12345)  # fixed heldout stream
-        for index in range(n_batches):
-            start = heldout_start + index * args.microbatch
-            batch = make_batch(
-                table, range(start, start + args.microbatch), args.device
-            )
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                loss, metrics, _ = elf_training_loss(
-                    model, encoder_shim, batch, config, dropout_generator=local
+        """Hermetic heldout evaluation (#164 review, finding 3).
+
+        The objective draws t / noise / decoder lambda+noise / SC mask+scale
+        from the GLOBAL RNG, and the oracle's `model.train()` would re-enable
+        dropout after our `eval()`.  So this: (a) snapshots and restores the
+        global CPU and CUDA RNG around the whole evaluation, so a checkpoint
+        eval cannot shift the training trajectory; (b) reseeds the global
+        stream to a FIXED eval seed so every checkpoint sees the identical
+        heldout stream; (c) passes `training_mode=False` so dropout stays off.
+        """
+        cpu_state = torch.get_rng_state()
+        cuda_state = (
+            torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+        )
+        was_training = model.training
+        try:
+            model.eval()
+            torch.manual_seed(HELDOUT_EVAL_SEED)
+            local = torch.Generator().manual_seed(HELDOUT_EVAL_SEED)
+            losses, l2_values = [], []
+            for index in range(n_batches):
+                start = heldout_start + index * args.microbatch
+                batch = make_batch(
+                    table, range(start, start + args.microbatch), args.device
                 )
-            losses.append(float(loss))
-        model.train()
-        return sum(losses) / len(losses)
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                    loss, metrics, _ = elf_training_loss(
+                        model,
+                        encoder_shim,
+                        batch,
+                        config,
+                        dropout_generator=local,
+                        training_mode=False,
+                    )
+                losses.append(float(loss))
+                l2_values.append(float(metrics["l2_loss"]))
+            return {
+                "combined": sum(losses) / len(losses),
+                "denoiser_l2": sum(l2_values) / len(l2_values),
+            }
+        finally:
+            if was_training:
+                model.train()
+            torch.set_rng_state(cpu_state)
+            if cuda_state is not None:
+                torch.cuda.set_rng_state_all(cuda_state)
 
     history = []
     row_cursor = 0
     tokens_seen = 0
+    first_step = 0
+    if args.resume_from:
+        state = torch.load(args.resume_from, weights_only=False)
+        model.load_state_dict(state["model"], strict=True)
+        optimizer = build_muon_optimizer(model, lr=LEARNING_RATE)
+        optimizer.load_state_dict(state["optimizer"])
+        ema = {name: tensor.clone() for name, tensor in state["ema"].items()}
+        torch.set_rng_state(state["cpu_rng"])
+        if state.get("cuda_rng") is not None and torch.cuda.is_available():
+            torch.cuda.set_rng_state_all(state["cuda_rng"])
+        generator.set_state(state["dropout_generator"])
+        row_cursor = state["row_cursor"]
+        tokens_seen = state["tokens"]
+        history = state.get("history", [])
+        first_step = state["step"]
+        print(
+            f"  resumed from {args.resume_from}: step {first_step}, "
+            f"{tokens_seen:,} tokens, cursor {row_cursor}",
+            flush=True,
+        )
     start_time = time.perf_counter()
     checkpoint_every = max(1, total_steps // 5)
 
     baseline = heldout_loss()
-    print(f"  heldout@init: {baseline:.4f}", flush=True)
-    history.append({"step": 0, "tokens": 0, "heldout": baseline})
+    print(
+        f"  heldout@init: {baseline['combined']:.4f} "
+        f"(denoiser L2 {baseline['denoiser_l2']:.4f})",
+        flush=True,
+    )
+    history.append(
+        {
+            "step": 0,
+            "tokens": 0,
+            "heldout": baseline["combined"],
+            "heldout_denoiser_l2": baseline["denoiser_l2"],
+        }
+    )
 
-    for step in range(total_steps):
+    for step in range(first_step, total_steps):
         set_lr(step)
         for _ in range(accum):
             indices = [
@@ -367,31 +460,50 @@ def main():
                 "train_loss": float(loss.detach()),
                 "train_ce": float(metrics["ce_loss"]),
                 "train_l2": float(metrics["l2_loss"]),
-                "heldout": heldout,
+                "heldout": heldout["combined"],
+                "heldout_denoiser_l2": heldout["denoiser_l2"],
                 "elapsed_seconds": elapsed,
                 "peak_memory_bytes": torch.cuda.max_memory_allocated(),
             }
             history.append(record)
             print(
                 f"  step {step + 1}/{total_steps} tokens {tokens_seen:,} "
-                f"heldout {heldout:.4f} ({elapsed:.0f}s)",
+                f"heldout {heldout['combined']:.4f} "
+                f"L2 {heldout['denoiser_l2']:.4f} ({elapsed:.0f}s)",
                 flush=True,
             )
+            # FULL training state (#164 review, finding 4): model + EMA +
+            # optimizer + both RNG streams + the data cursor, so a resumed
+            # run can continue the SAME trajectory rather than merely
+            # reproducing a forward pass.
             torch.save(
                 {
                     "model": model.state_dict(),
                     "ema": ema,
                     "optimizer": optimizer.state_dict(),
+                    "cpu_rng": torch.get_rng_state(),
+                    "cuda_rng": (
+                        torch.cuda.get_rng_state_all()
+                        if torch.cuda.is_available()
+                        else None
+                    ),
+                    "dropout_generator": generator.get_state(),
+                    "row_cursor": row_cursor,
+                    "history": history,
                     "step": step + 1,
                     "tokens": tokens_seen,
                     "seed": seed,
                     "smoke": args.smoke,
                 },
-                out / "checkpoint_last.pt",
+                out / f"checkpoint_step{step + 1}.pt",
             )
 
-    print("[4/5] checkpoint/resume round trip ...", flush=True)
-    payload = torch.load(out / "checkpoint_last.pt", weights_only=True)
+    print("[4/5] model-state save/load forward identity ...", flush=True)
+    # NAMED PRECISELY (#164 review, finding 4): this checks that reloading
+    # the MODEL state reproduces the forward pass.  It is NOT a training-
+    # resume identity claim; that requires the N-vs-(N save/restore +1)
+    # comparison, which `tests/test_elf_training_resume.py` covers.
+    payload = torch.load(out / f"checkpoint_step{total_steps}.pt", weights_only=False)
     fresh = build_elf_model(raw_config).to(args.device)
     fresh.load_state_dict(payload["model"], strict=True)
     fresh.eval()
@@ -406,7 +518,7 @@ def main():
         before, _ = model(pair, t_probe, deterministic=True, self_cond_cfg_scale=scale)
         after, _ = fresh(pair, t_probe, deterministic=True, self_cond_cfg_scale=scale)
     roundtrip_ok = bool(torch.equal(before, after))
-    print(f"  resume output identical: {roundtrip_ok}", flush=True)
+    print(f"  model-state forward identical: {roundtrip_ok}", flush=True)
     model.train()
 
     print("[5/5] writing report ...", flush=True)
@@ -431,6 +543,8 @@ def main():
             "shards": args.shards,
             "rows": total_rows,
             "heldout_rows": HELDOUT_ROWS,
+            "resumed_from": args.resume_from,
+            "first_step": first_step,
         },
         "dataset": {"repo": DATASET, "revision": DATASET_REVISION},
         "checkpoint": {"repo": DEFAULT_CHECKPOINT, "revision": DEFAULT_REVISION},
@@ -438,7 +552,7 @@ def main():
             "muon": len(partition["muon"]),
             "adam": len(partition["adam"]),
         },
-        "roundtrip_identical": roundtrip_ok,
+        "model_state_forward_identical": roundtrip_ok,
         "history": history,
         "peak_memory_bytes": int(torch.cuda.max_memory_allocated()),
         "wall_seconds": time.perf_counter() - start_time,

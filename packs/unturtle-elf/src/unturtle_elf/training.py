@@ -65,6 +65,7 @@ def elf_training_loss(
     config: Any,
     *,
     dropout_generator: torch.Generator,
+    training_mode: bool = True,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor], dict[str, torch.Tensor]]:
     """The ELF objective for one batch — train_step.py:31-261 minus
     backward/optimizer.  Returns ``(loss, metrics, aux)`` where ``aux``
@@ -230,7 +231,13 @@ def elf_training_loss(
             return (base_v_target + sc_guidance).detach()
         return base_v_target
 
-    model.train()
+    # train_step.py:198 calls model.train() unconditionally — correct for a
+    # training step, WRONG for heldout evaluation (it re-enables dropout
+    # after the caller set eval()).  `training_mode=False` is an ADAPTATION
+    # for evaluation only; the default reproduces the oracle exactly.
+    if training_mode:
+        model.train()
+    deterministic_forward = not training_mode
 
     # train_step.py:200-206 — mixed input, one forward for both heads.
     denoiser_t = t
@@ -259,7 +266,7 @@ def elf_training_loss(
     net_out, decoder_logits = model(
         model_input,
         t_mixed,
-        deterministic=False,
+        deterministic=deterministic_forward,
         self_cond_cfg_scale=self_cond_cfg_scale,
         decoder_step_active=decoder_step_active,
     )
