@@ -55,6 +55,8 @@ __all__ = [
     "mdlm_nfe",
     "mdlm_noise_removal",
     "subs_parameterization",
+    "uniform_state_compute_scope",
+    "uniform_state_nfe",
     "pinned_global_rng",
     "ar_nfe",
     "build_control_record",
@@ -361,3 +363,54 @@ def mdlm_nfe(*, steps_executed: int, noise_removal: bool) -> int:
     noise_removal) is 129 calls, not 128 — a compute cell that reports 128
     understates the cost of the official configuration."""
     return int(steps_executed) + (1 if noise_removal else 0)
+
+
+def uniform_state_nfe(*, steps_executed: int | None) -> int:
+    """Denoiser calls for one uniform-state sample.
+
+    Sumi's ancestral sampler runs exactly one forward per denoising step and
+    adds no tail step (audited: `SumiGenerationMixin.generate`, the
+    `for step in range(num_denoising_steps)` loop in generation_sumi.py @
+    0d20f7becf84).  Contrast MDLM, whose official configuration adds a
+    noise-removal forward — see :func:`mdlm_nfe`.
+    """
+    if steps_executed is None:
+        raise ValueError(
+            "uniform-state NFE requires the executed step count; a requested "
+            "step count is not evidence of what ran"
+        )
+    return int(steps_executed)
+
+
+def uniform_state_compute_scope(
+    *,
+    canvas_length: int,
+    content_budget: int,
+    prompt_length: int,
+) -> dict[str, Any]:
+    """What a uniform-state cell actually forwarded, versus what it kept.
+
+    Sumi is trained on a packed fixed-length canvas and denoises the WHOLE
+    canvas every step (default `canvas_length=2048`, ceiling 4864 from
+    `max_position_embeddings`); `max_new_tokens` is only the content budget
+    before the anchored EOS,BOS delimiter, and decoding is cut at the first
+    EOS.  A cell that reports the content budget as its sequence length
+    understates its own compute — so the forwarded canvas is the recorded
+    `sequence_length`, and the #152 context-1024 condition is reported as
+    matched or not rather than assumed.
+    """
+    if content_budget > canvas_length:
+        raise ValueError(
+            f"content_budget {content_budget} exceeds canvas_length "
+            f"{canvas_length}: the canvas bounds what can be generated"
+        )
+    return {
+        "sequence_length": int(canvas_length),
+        "forwarded_tokens": int(canvas_length),
+        "content_budget": int(content_budget),
+        "prompt_length": int(prompt_length),
+        "protocol_context_match": int(canvas_length)
+        == int(FRONTIER_PROTOCOL["context_length"]),
+        "note": "Sumi denoises the full canvas every step; sequence_length "
+        "is the forwarded canvas, not the content budget",
+    }

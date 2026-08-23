@@ -407,6 +407,67 @@ class TestCanonicalQualityColumn:
         assert quality["genppl"] != pytest.approx((3.0 + 8.0) / 2)
 
 
+class TestUniformStateAccounting:
+    """Sumi (`uniform_state`) audited verbatim from its native
+    `generation_sumi.py` @ 0d20f7becf84 (#165):
+
+    - true uniform state: the canvas starts as `randint(0, vocab_size)`,
+      there is no mask token, and the ancestral posterior lives on the
+      one-hot simplex — so the role is genuinely filled, not substituted;
+    - NFE == num_denoising_steps (one forward per step, no extra tail);
+    - it DOES accept `generator=`, unlike `transformers.generate()`;
+    - it denoises a full `canvas_length` (default 2048, ceiling 4864) every
+      step, while `max_new_tokens` is only a content budget.  The #152
+      protocol pins context 1024, so the compute a cell reports must be
+      the CANVAS it actually forwarded, not the content budget.
+    """
+
+    def test_nfe_is_the_step_count_with_no_hidden_tail(self):
+        from unturtle.eval.producers import uniform_state_nfe
+
+        assert uniform_state_nfe(steps_executed=128) == 128
+        with pytest.raises(ValueError, match="executed"):
+            uniform_state_nfe(steps_executed=None)
+
+    def test_canvas_length_is_recorded_not_the_content_budget(self):
+        """Mutation target: recording `max_new_tokens` as the sequence
+        length.  Sumi forwards the whole canvas each step, so a cell that
+        claims 1024 while the model forwarded 2048 understates its compute
+        by 2x and makes the frontier point look cheaper than it is."""
+        from unturtle.eval.producers import uniform_state_compute_scope
+
+        scope = uniform_state_compute_scope(
+            canvas_length=2048, content_budget=1024, prompt_length=1
+        )
+        assert scope["forwarded_tokens"] == 2048
+        assert scope["content_budget"] == 1024
+        assert scope["sequence_length"] == 2048
+        assert "canvas" in scope["note"].lower()
+
+    def test_a_content_budget_larger_than_the_canvas_is_refused(self):
+        from unturtle.eval.producers import uniform_state_compute_scope
+
+        with pytest.raises(ValueError, match="canvas"):
+            uniform_state_compute_scope(
+                canvas_length=1024, content_budget=2048, prompt_length=1
+            )
+
+    def test_protocol_context_mismatch_is_surfaced(self):
+        """#152 pins context 1024.  A 2048 canvas is not that condition, so
+        the producer must label the deviation rather than let the record
+        read as protocol-conformant."""
+        from unturtle.eval.producers import uniform_state_compute_scope
+
+        matched = uniform_state_compute_scope(
+            canvas_length=1024, content_budget=1022, prompt_length=1
+        )
+        assert matched["protocol_context_match"] is True
+        deviating = uniform_state_compute_scope(
+            canvas_length=2048, content_budget=1024, prompt_length=1
+        )
+        assert deviating["protocol_context_match"] is False
+
+
 class TestMdlmNoiseRemoval:
     """Upstream MDLM's `sampling.noise_removal=True` (config default) runs
     ONE extra forward after the loop and overwrites every position with the
