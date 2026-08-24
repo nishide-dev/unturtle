@@ -402,8 +402,12 @@ here, so neither is measured here.
 Every NLL diagnostic above is therefore reported as a curve over
 **`m ∈ {0.75, 0.90, 1.00}`**, with the single-number reduction, where one is
 needed, at `m = 0.90` (§1.6). Records carry `axis = null` for these and name
-`mask_ratio`; the transport diagnostics carry `axis` (`q`) and
-`mask_ratio = null`.
+`mask_ratio`; the `q`-dependent transport diagnostics carry `axis` (`q`) and
+`mask_ratio = null`; and the endpoint-only quantities in the table above
+(`nearest_latent_distance_ratio`, and `latent_norm_*` /
+`covariance_spectrum` in their endpoint form) depend on neither axis, so
+they carry **both fields null**. Only "both non-null" is forbidden — see the
+record schema in §6.
 
 Frozen choices that would otherwise be tunable after the fact: the
 derangement seed (42), the reference bank rows (`[1024, 5120)`), the
@@ -485,7 +489,7 @@ The record schema is deliberately small:
 | `sample_id` | the held-out row id |
 | `diagnostic` | name from this document |
 | `axis` | `object \| null` — `null` for latent-NLL records (§3.1). When present: `{"kind": "corruption_quantile" \| "log_snr" \| "rel_sigma" \| "native", "value": float, "native_variable": str, "native_value": float, "mapping_status": "derived" \| "native_only"}` — a quantile-mapped point carries the native value it came from, so the mapping can be re-checked; a native-only point says so explicitly |
-| `mask_ratio` | the decoder mask ratio `m`, **as its own field** — never folded into `axis.value`. Which field is populated follows §3.1: a **latent-NLL** record carries `axis = null` and `mask_ratio = m`; a **prior-transport** record carries `axis` (`q`) and `mask_ratio = null`; a **§2 direct-state** record carries `axis` (`q` or `rel_sigma`) and `mask_ratio = null`. Exactly one of the two is non-null in every record, so no reader has to infer which axis a value belongs to |
+| `mask_ratio` | the decoder mask ratio `m`, **as its own field** — never folded into `axis.value`. Which field is populated follows §3.1: a **latent-NLL** record carries `axis = null` and `mask_ratio = m`; a **prior-transport** record carries `axis` (`q`) and `mask_ratio = null`; a **§2 direct-state** record carries `axis` (`q` or `rel_sigma`) and `mask_ratio = null`. **At most one** of the two is non-null in every record — only "both non-null" is forbidden, since a value that belongs to two axes at once is unreadable. Three shapes are legal: **latent-NLL** `axis = null, mask_ratio = m`; **transport / direct-state** `axis != null, mask_ratio = null`; **endpoint-only or scalar** `axis = null, mask_ratio = null` (e.g. the endpoint `nearest_latent_distance_ratio`, `latent_norm_*` and `covariance_spectrum`, which §3.1 fixes as endpoint quantities depending on neither axis) |
 | `value`, `unit` | unit is mandatory; `nats`, `fraction`, `ratio`, `l2`, or `bytes` |
 | `provenance` | dataset artifact SHA, tokenizer revision, dtype, device, backend, seeds |
 | `status` | `ok` \| `failed` \| `blocked` \| `exploratory` |
