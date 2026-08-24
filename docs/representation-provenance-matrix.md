@@ -216,7 +216,7 @@ The safe claim is therefore:
 | Sumi-7B | 128 | 56.56 | 0.7478 | 7.189 | 0.4553 | 7.773 | 1.000 | `EXACT` (GenPPL/MAUVE/entropy) · `BOUNDED_APPROXIMATE` (guard trio) | `PROTOCOL_COMPATIBLE` |
 | GPT-2 medium | 1024 | 202.31 | 0.8999 | 8.436 | 0.6933 | 8.432 | 1.000 | `EXACT` | `PROTOCOL_COMPATIBLE` |
 
-**Why the flow rows are not `EXACT_COMPARABLE`.** Two separate reasons, and
+**Why the flow rows are `NOT_COMPARABLE`.** Two separate reasons, and
 either alone is disqualifying:
 
 1. *evaluator identity unresolved* — they were measured with
@@ -233,14 +233,16 @@ either alone is disqualifying:
    comparison the status vocabulary exists to prevent. They are left blank
    rather than shown with a footnote.
 
-Making the flow rows `EXACT_COMPARABLE` requires re-running the #153/#155
+Moving the flow rows to `measurement_status = EXACT` with only
+`PROTOCOL_COMPATIBLE` set requires re-running the #153/#155
 cells against the pinned evaluator with ragged guards. That is a
 measurement, not a matrix edit, and it is **not** part of Part A.
 
 Sumi's guards are `BOUNDED_APPROXIMATE`: measured before the ragged guards,
 with an absolute error bound of 7.83e-05 on `distinct_fraction` (see
 `PADDING_BIAS_BOUND.json`; the true value lies in [0.455191, 0.455347]). Its
-GenPPL/MAUVE/entropy are `EXACT_COMPARABLE` — only the guard trio is bounded.
+GenPPL/MAUVE/entropy are `measurement_status = EXACT` — only the guard trio
+is bounded, which is what per-metric precedence (rule 2) is for.
 
 ### Official (paper's own metric code, run by Unturtle)
 

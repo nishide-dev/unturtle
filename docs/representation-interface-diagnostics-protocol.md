@@ -123,7 +123,53 @@ variable named — and it may be compared *within* that family across
 checkpoints or step counts. It never shares an AUC column with a family
 whose x-axis means something else.
 
-### 1.6 Controlled perturbation grid — ELF / FLM / FMLM only
+### 1.6 Decoder mask ratio `m` — a SEPARATE axis from latent corruption `q`
+
+The learned-latent NLL diagnostics of §3 need a **decoder token mask
+ratio**. That is not the same quantity as §1.5's `q`:
+
+| symbol | what it varies | whose property |
+|---|---|---|
+| `q` | standardized latent corruption / prior diffusion severity | the **latent state** handed to the decoder |
+| `m` | fraction of token positions masked in the decoder input | the **decoder's** input |
+
+Folding them into one variable would make "the NLL gap at 0.90" ambiguous
+between a heavily corrupted latent and a heavily masked context, which are
+different failure modes — and the #130 result is specifically that the
+latent's benefit *grows with mask ratio*, a statement about `m`.
+
+**Frozen `m` grid** (following #130 for continuity, so this study's numbers
+sit beside its frozen readouts):
+
+```
+m ∈ {0.75, 0.90, 1.00}
+```
+
+Frozen conventions:
+
+- masks are drawn **once per (row, m)** with a fixed generator, seeded
+  `9000 + round(100 * m)`, and the **identical mask is reused for all four
+  latent conditions** (`true`, `off`, `wrong`, `prior`) — the comparisons in
+  §3 are paired at the mask level, not merely at the row level;
+- `m = 1.00` means every position is masked (the #130 anchor where no clean
+  context remains);
+- the four latent conditions at a given `m` share the mask **and** the row,
+  so `true_latent_benefit`, `wrong_latent_discrimination` and
+  `prior_decoder_gap` are differences of NLLs computed on identical decoder
+  inputs apart from the latent;
+- `q` is held at its own grid independently: a latent-NLL cell is indexed by
+  the **pair** `(q, m)`. When a diagnostic is reported against one axis, the
+  other is stated, never averaged away silently.
+
+**Frozen reduction.** Every §3 NLL diagnostic is reported as a **curve over
+`m`** at each `q` — three points, all three shown. Where a single number is
+needed for a comparison, the pre-specified reduction is the value **at
+`m = 0.90`**, chosen now because it is #130's middle decision point and not
+because of anything observed. A mean over `m` is *not* used: the three mask
+ratios are qualitatively different regimes, and averaging them would hide
+the mask-ratio dependence that is the mechanism under test.
+
+### 1.7 Controlled perturbation grid — ELF / FLM / FMLM only
 
 Perturbation applies to the three continuous-state families (see the scope
 table under "Perturbation robustness" in §2.1). MDLM has no continuous state
@@ -147,7 +193,7 @@ deviation**, per family, computed over the reference split:
   state shapes allow, and where they do not, the record says the directions
   are family-local.
 
-### 1.7 Stochastic seeds
+### 1.8 Stochastic seeds
 
 - corruption / masking seed: **42**, one generator per (family, axis point),
   advanced per row so two rows never share a draw;
@@ -296,11 +342,17 @@ positions, under the frozen #130 decoder.
 | `prior_true_spectrum_error` | relative L1 between the prior-sample and true-latent spectra, `sum|λp - λt| / sum λt` |
 | `nearest_latent_distance_ratio` | for each row, L2 to its nearest neighbour in the **frozen reference bank**, divided by the mean nearest-neighbour distance *within* the bank — a manifold proxy that is ≈1 when a latent sits as close to the data as real latents do, and >1 when it is off-manifold |
 
+Every NLL diagnostic above is indexed by the pair **`(q, m)`** — latent
+corruption `q` from §1.5, decoder mask ratio `m` from §1.6 — and reported as
+a curve over `m ∈ {0.75, 0.90, 1.00}` at each `q`. The single-number
+reduction, where one is needed, is the value at `m = 0.90` (§1.6).
+
 Frozen choices that would otherwise be tunable after the fact: the
 derangement seed (42), the reference bank rows (`[1024, 5120)`), the
-whitening source (reference split), `k = 1` for nearest-latent distance, and
-the masking used for every NLL (the §1.5 grid, same masks across all four
-latent conditions — paired by construction).
+whitening source (reference split), `k = 1` for nearest-latent distance, the
+`m` grid and its mask seeds (§1.6), and the rule that all four latent
+conditions at a given `(row, m)` share one identical mask — so the
+comparisons are paired at the mask level, not just the row level.
 
 ---
 
@@ -374,7 +426,8 @@ The record schema is deliberately small:
 | `family`, `method`, `checkpoint` | checkpoint includes the pinned revision |
 | `sample_id` | the held-out row id |
 | `diagnostic` | name from this document |
-| `axis` | `{"kind": "corruption_quantile" \| "log_snr" \| "rel_sigma" \| "native", "value": float, "native_variable": str, "native_value": float, "mapping_status": "derived" \| "native_only"}` — a quantile-mapped point carries the native value it came from, so the mapping can be re-checked; a native-only point says so explicitly |
+| `axis` | `{"kind": "corruption_quantile" \| "log_snr" \| "rel_sigma" \| "mask_ratio" \| "native", "value": float, "native_variable": str, "native_value": float, "mapping_status": "derived" \| "native_only"}` — a quantile-mapped point carries the native value it came from, so the mapping can be re-checked; a native-only point says so explicitly |
+| `mask_ratio` | the decoder mask ratio `m` for §3 diagnostics, **as its own field** — never folded into `axis.value`. `null` for diagnostics that do not mask (§2). A latent-NLL record therefore names both `axis` (`q`) and `mask_ratio` (`m`), so the pair is recoverable |
 | `value`, `unit` | unit is mandatory; `nats`, `fraction`, `ratio`, `l2`, or `bytes` |
 | `provenance` | dataset artifact SHA, tokenizer revision, dtype, device, backend, seeds |
 | `status` | `ok` \| `failed` \| `blocked` \| `exploratory` |
@@ -447,6 +500,10 @@ measurement:
       explicit rule that `q = t` is MDLM-specific (mappings for the other
       families are `TO BE DERIVED BEFORE MEASUREMENT`, with native-axis
       fallbacks and exclusion from cross-family AUC)
+- [x] decoder mask ratio `m` defined as a separate axis from latent
+      corruption `q`, with its own frozen grid `{0.75, 0.90, 1.00}`, shared
+      masks across the four latent conditions, a curve-over-`m` reporting
+      rule, and a pre-specified `m = 0.90` reduction
 - [x] perturbation grid, defined relative to clean-state sigma
 - [x] controls (`latent off`, `wrong latent`, `s = 0`, MDLM anchor)
 - [x] primary / secondary split, with no aggregate score
