@@ -376,11 +376,13 @@ warns about.
 > | prefix cache | `maskgit_plus` | quota / top-k | **supported** |
 > | prefix cache | `maskgit_plus` | threshold 0.9 | **supported** |
 >
-> Consequence for the ablation: the commit axis cannot be varied while
-> holding `alg` fixed, because quota commit exists only on `origin` and
-> threshold commit only on a confidence-ordered alg. The baseline therefore
-> runs **four explicit tuples** rather than a product, so that the `alg`
-> change and the commit change stay separable:
+> Consequence for the ablation: the full cache × commit product is not
+> realizable across all cache paths — the no-cache/`origin` × threshold
+> corner is unsupported. Within the prefix-cache path, however,
+> `maskgit_plus` supports both quota/top-k and threshold commit, so the
+> commit policy *can* be varied with cache and `alg` held fixed. The baseline
+> therefore runs **four explicit tuples** rather than a product, so that the
+> `alg` change and the commit change stay separable:
 >
 > 1. `(no_cache, origin, quota)` — the exact reference arm;
 > 2. `(prefix_cache, origin, quota)` — 1→2 isolates the **cache** effect;
