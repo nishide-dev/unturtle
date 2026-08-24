@@ -157,9 +157,11 @@ Frozen conventions:
   so `true_latent_benefit`, `wrong_latent_discrimination` and
   `prior_decoder_gap` are differences of NLLs computed on identical decoder
   inputs apart from the latent;
-- `q` is held at its own grid independently: a latent-NLL cell is indexed by
-  the **pair** `(q, m)`. When a diagnostic is reported against one axis, the
-  other is stated, never averaged away silently.
+- `q` and `m` index **different diagnostics**, not two axes of one grid:
+  §3.1 fixes the NLL conditions as functions of `m` alone (evaluated on
+  endpoint latents) and the prior transport diagnostics as functions of `q`.
+  A record therefore carries one axis and `null` for the other, and neither
+  is ever averaged away silently.
 
 **Frozen reduction.** Every §3 NLL diagnostic is reported as a **curve over
 `m`** at each `q` — three points, all three shown. Where a single number is
@@ -186,19 +188,36 @@ deviation**, per family, computed over the reference split:
 
 - perturbation is isotropic Gaussian in the family's state space;
 - `0` is the unperturbed control and must be present in every curve;
-- one fixed generator per (family, grid point), seeded `42`; the seed rule
-  is `42` for the corruption draw and `9000 + round(1000 * rel_sigma)` for
-  the perturbation draw, so the two are independent and reproducible;
+- one fixed generator per (family, grid point); the corruption draw uses the
+  §1.8 corruption rule and the perturbation draw uses
+  `20000 + round(1000 * rel_sigma)`, so the two are independent and
+  reproducible (see §1.8 for why the prefix is 20000 and not 9000);
 - the same perturbation directions are reused across families where the
   state shapes allow, and where they do not, the record says the directions
   are family-local.
 
 ### 1.8 Stochastic seeds
 
-- corruption / masking seed: **42**, one generator per (family, axis point),
-  advanced per row so two rows never share a draw;
-- perturbation seed: as above;
-- no diagnostic may reseed globally; the seed rule is recorded per record.
+Three independent seed families, kept separate because they index different
+axes:
+
+| draw | seed rule | scope |
+|---|---|---|
+| **state corruption** (§1.5, the `q` axis) | **42**, one generator per (family, `q` point), advanced per row | the noise added to a continuous state or the masking that realizes `q` for MDLM |
+| **decoder mask** (§1.6, the `m` axis) | **`9000 + round(100 * m)`**, one generator per (row, `m`) | which token positions the decoder sees masked; the SAME draw is reused across all four latent conditions |
+| **perturbation** (§1.7, the `s` axis) | **`20000 + round(1000 * rel_sigma)`** | the controlled perturbation direction |
+
+The perturbation prefix is 20000 rather than 9000 to keep the seed values
+disjoint from the decoder-mask family: under a shared 9000 prefix,
+`m = 1.00` and `rel_sigma = 0.10` would both resolve to 9100. The two are
+applied to different draws so a collision would not corrupt a measurement,
+but a seed value that names two different things is not auditable. Resolved
+values: decoder mask 9075 / 9090 / 9100; perturbation 20010 / 20030 / 20100 /
+20300.
+
+- no diagnostic may reseed globally;
+- the seed rule and the resolved seed value are recorded per record, so a
+  reader can reproduce a single cell without re-deriving the scheme.
 
 ---
 
@@ -342,10 +361,47 @@ positions, under the frozen #130 decoder.
 | `prior_true_spectrum_error` | relative L1 between the prior-sample and true-latent spectra, `sum|λp - λt| / sum λt` |
 | `nearest_latent_distance_ratio` | for each row, L2 to its nearest neighbour in the **frozen reference bank**, divided by the mean nearest-neighbour distance *within* the bank — a manifold proxy that is ≈1 when a latent sits as close to the data as real latents do, and >1 when it is off-manifold |
 
-Every NLL diagnostic above is indexed by the pair **`(q, m)`** — latent
-corruption `q` from §1.5, decoder mask ratio `m` from §1.6 — and reported as
-a curve over `m ∈ {0.75, 0.90, 1.00}` at each `q`. The single-number
-reduction, where one is needed, is the value at `m = 0.90` (§1.6).
+### 3.1 Which diagnostics depend on `q`, and which do not
+
+The four NLL conditions are evaluated on **endpoint latents** — the latent a
+generator would actually hand the decoder — so they are functions of **`m`
+only**, not of `q`:
+
+| diagnostic | latent handed to the decoder | depends on |
+|---|---|---|
+| `nll_true` | the encoder's output for that row, **uncorrupted** | `m` |
+| `nll_off` | none — the latent pathway is off | `m` (`q` is undefined here and is recorded as `null`, not 0) |
+| `nll_wrong` | another row's encoder output, **uncorrupted** (fixed derangement, seed 42) | `m` |
+| `nll_prior` | the prior's **final sample** — the end of its own sampling trajectory, not an intermediate state | `m` |
+
+Consequently `true_latent_benefit`, `wrong_latent_discrimination` and
+`prior_decoder_gap` are **functions of `m` alone**. This is deliberate: they
+answer "what does the decoder do with the latent it is actually given",
+which is the #130 question, and the answer must not depend on an
+intermediate corruption level nobody would decode at inference.
+
+`q` indexes the **prior transport diagnostics only** — the quantities that
+are about the latent trajectory rather than the decoder interface:
+
+| diagnostic | depends on |
+|---|---|
+| `paired_whitened_latent_mse` | `q` (the prediction error at that corruption level) |
+| `prior_true_spectrum_error` | `q` |
+| `nearest_latent_distance_ratio` (prior samples) | endpoint only — no `q` |
+| `latent_norm_*`, `covariance_spectrum` | stated per condition; endpoint for `true`/`prior`, and per-`q` where the quantity is about the noisy state |
+
+**No NLL is reported as a curve over `q`.** If a later amendment wants one,
+it must first declare (a) exactly which state is decoded at that `q` — raw
+noisy latent, the model's `x0` prediction from it, or a partial sample — and
+(b) whether the `wrong` condition is corrupted with the *same* noise draw as
+`true` (a coupled comparison) or an independent one. Neither is specified
+here, so neither is measured here.
+
+Every NLL diagnostic above is therefore reported as a curve over
+**`m ∈ {0.75, 0.90, 1.00}`**, with the single-number reduction, where one is
+needed, at `m = 0.90` (§1.6). Records carry `axis = null` for these and name
+`mask_ratio`; the transport diagnostics carry `axis` (`q`) and
+`mask_ratio = null`.
 
 Frozen choices that would otherwise be tunable after the fact: the
 derangement seed (42), the reference bank rows (`[1024, 5120)`), the
@@ -426,7 +482,7 @@ The record schema is deliberately small:
 | `family`, `method`, `checkpoint` | checkpoint includes the pinned revision |
 | `sample_id` | the held-out row id |
 | `diagnostic` | name from this document |
-| `axis` | `{"kind": "corruption_quantile" \| "log_snr" \| "rel_sigma" \| "mask_ratio" \| "native", "value": float, "native_variable": str, "native_value": float, "mapping_status": "derived" \| "native_only"}` — a quantile-mapped point carries the native value it came from, so the mapping can be re-checked; a native-only point says so explicitly |
+| `axis` | `{"kind": "corruption_quantile" \| "log_snr" \| "rel_sigma" \| "native", "value": float, "native_variable": str, "native_value": float, "mapping_status": "derived" \| "native_only"}` — a quantile-mapped point carries the native value it came from, so the mapping can be re-checked; a native-only point says so explicitly |
 | `mask_ratio` | the decoder mask ratio `m` for §3 diagnostics, **as its own field** — never folded into `axis.value`. `null` for diagnostics that do not mask (§2). A latent-NLL record therefore names both `axis` (`q`) and `mask_ratio` (`m`), so the pair is recoverable |
 | `value`, `unit` | unit is mandatory; `nats`, `fraction`, `ratio`, `l2`, or `bytes` |
 | `provenance` | dataset artifact SHA, tokenizer revision, dtype, device, backend, seeds |
@@ -506,6 +562,11 @@ measurement:
       rule, and a pre-specified `m = 0.90` reduction
 - [x] perturbation grid, defined relative to clean-state sigma
 - [x] controls (`latent off`, `wrong latent`, `s = 0`, MDLM anchor)
+- [x] which NLL conditions depend on `q` and which on `m` alone, with the
+      decoded state named per condition (§3.1) and no NLL-vs-`q` curve until
+      an amendment declares the decoded state and the noise coupling
+- [x] three separate seed families (corruption / decoder mask / perturbation)
+      with non-colliding rules
 - [x] primary / secondary split, with no aggregate score
 - [x] CI method, resamples, seed, and the pre-specified summaries
 - [x] failure semantics (nothing excluded, `n_failed` mandatory)
