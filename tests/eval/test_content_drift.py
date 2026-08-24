@@ -93,6 +93,38 @@ class TestDistances:
         assert out["mean_token_edit_distance"] == pytest.approx(1.0)
         assert out["mean_normalized_token_distance"] == pytest.approx(1 / 3)
 
+    def test_an_insertion_is_one_edit_not_a_whole_shifted_suffix(self):
+        """Mutation target: a positionwise mismatch count instead of an edit
+        distance.  A single insertion at the front shifts every later position,
+        so positionwise scoring reports near-total drift where the real
+        difference is one token — which is the entire reason this uses
+        Levenshtein.  My other fixtures are substitutions and a trailing
+        truncation, where the two measures coincide, so they cannot see it.
+        """
+        from unturtle.eval.content_drift import paired_content_drift
+
+        out = paired_content_drift(
+            reference_texts=["b c d"],
+            candidate_texts=["a b c d"],
+            reference_ids=[[1, 2, 3]],
+            candidate_ids=[[9, 1, 2, 3]],
+        )
+        # one insertion: 1 edit, not 4
+        assert out["mean_token_edit_distance"] == pytest.approx(1.0)
+        assert out["mean_normalized_token_distance"] == pytest.approx(1 / 4)
+
+    def test_a_middle_deletion_is_one_edit(self):
+        from unturtle.eval.content_drift import paired_content_drift
+
+        out = paired_content_drift(
+            reference_texts=["a b c"],
+            candidate_texts=["a c"],
+            reference_ids=[[1, 2, 3, 4]],
+            candidate_ids=[[1, 3, 4]],
+        )
+        # deleting the second token is 1 edit; positionwise would say 3
+        assert out["mean_token_edit_distance"] == pytest.approx(1.0)
+
     def test_length_difference_is_drift_not_an_error(self):
         from unturtle.eval.content_drift import paired_content_drift
 
