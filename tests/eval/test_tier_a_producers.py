@@ -32,6 +32,8 @@ the semantics are testable without downloading a checkpoint:
   claimed from theory.
 """
 
+import math
+
 import pytest
 import torch
 
@@ -112,6 +114,191 @@ class TestArProducerSemantics:
             ar_nfe(generated_tokens=None)
 
 
+class TestRoleSpecificPreflight:
+    """#167 review 2, blocker 1: the preflight must enforce the FROZEN
+    conditions per role, not just the shared ones.
+
+    Before this, a decision run could produce a role-bearing record at 512
+    tokens, 64 steps, canvas 2048, temperature 0.7, a different checkpoint,
+    or a different (still immutable) evaluator SHA.  The downstream review
+    script refusing it is too late — the record already exists and already
+    closes `tier_a_gaps()`.
+    """
+
+    def _ar(self, **over):
+        cfg = dict(
+            model="openai-community/gpt2-medium",
+            revision="6dcaa7a952f72f9298047fd5137cd6e4f05f41da",
+            max_new_tokens=1024,
+            temperature=1.0,
+            use_cache=True,
+            top_k=None,
+            top_p=None,
+        )
+        cfg.update(over)
+        return cfg
+
+    def _mdlm(self, **over):
+        cfg = dict(
+            repo="kuleshov-group/mdlm-owt",
+            revision="d0958fa851335ece6c15260ce0025f030673c0fb",
+            steps=128,
+            sequence_length=1024,
+            noise_removal=True,
+            alg="origin",
+        )
+        cfg.update(over)
+        return cfg
+
+    def _sumi(self, **over):
+        cfg = dict(
+            repo="tohoku-nlp/sumi-7b",
+            revision="0d20f7becf84340b8a8d71a8dda577a502a5c8dd",
+            steps=128,
+            canvas_length=1024,
+            sampler="ancestral",
+            schedule="linear",
+            temperature=1.0,
+            min_log_snr=-9.0,
+            max_log_snr=9.0,
+        )
+        cfg.update(over)
+        return cfg
+
+    def test_conforming_configs_pass_for_every_role(self):
+        from unturtle.eval.producers import assert_frozen_role_config
+
+        assert_frozen_role_config("ar_control", self._ar())
+        assert_frozen_role_config("masked_discrete", self._mdlm())
+        assert_frozen_role_config("uniform_state", self._sumi())
+
+    @pytest.mark.parametrize(
+        "override",
+        [
+            {"max_new_tokens": 512},
+            {"temperature": 0.7},
+            {"use_cache": False},
+            {"top_k": 50},
+            {"model": "openai-community/gpt2"},
+            {"revision": "607a30d783dfa663caf39e06633721c8d4cfcd7e"},
+        ],
+    )
+    def test_ar_deviations_are_refused(self, override):
+        from unturtle.eval.producers import assert_frozen_role_config
+
+        with pytest.raises(ValueError, match="frozen"):
+            assert_frozen_role_config("ar_control", self._ar(**override))
+
+    @pytest.mark.parametrize(
+        "override",
+        [
+            {"steps": 64},
+            {"sequence_length": 512},
+            {"noise_removal": False},
+            {"alg": "maskgit_plus"},
+            {"revision": "main"},
+        ],
+    )
+    def test_mdlm_deviations_are_refused(self, override):
+        from unturtle.eval.producers import assert_frozen_role_config
+
+        with pytest.raises(ValueError, match="frozen"):
+            assert_frozen_role_config("masked_discrete", self._mdlm(**override))
+
+    @pytest.mark.parametrize(
+        "override",
+        [
+            {"canvas_length": 2048},
+            {"steps": 64},
+            {"temperature": 0.7},
+            {"sampler": "adaptive"},
+            {"schedule": "cosine"},
+            {"min_log_snr": -6.0},
+            {"max_log_snr": 6.0},
+        ],
+    )
+    def test_sumi_deviations_are_refused(self, override):
+        from unturtle.eval.producers import assert_frozen_role_config
+
+        with pytest.raises(ValueError, match="frozen"):
+            assert_frozen_role_config("uniform_state", self._sumi(**override))
+
+    def test_an_unknown_role_config_is_refused(self):
+        from unturtle.eval.producers import assert_frozen_role_config
+
+        with pytest.raises(ValueError, match="no frozen config|unknown role"):
+            assert_frozen_role_config("embedding_flow", {})
+
+    def test_a_missing_key_is_refused_not_skipped(self):
+        """Mutation target: only checking the keys the caller happens to
+        pass.  An omitted knob must fail, not pass by absence."""
+        from unturtle.eval.producers import assert_frozen_role_config
+
+        cfg = self._mdlm()
+        del cfg["noise_removal"]
+        with pytest.raises(ValueError, match="missing|frozen"):
+            assert_frozen_role_config("masked_discrete", cfg)
+
+    def test_preflight_refuses_a_different_immutable_evaluator_sha(self):
+        """A pinned-but-different evaluator commit is still not the frozen
+        one: GenPPL is not comparable across evaluator identities."""
+        from unturtle.eval.producers import decision_preflight
+
+        with pytest.raises(ValueError, match="frozen|canonical"):
+            decision_preflight(
+                mode="decision",
+                role="ar_control",
+                num_samples=1000,
+                seed=42,
+                mauve_available=True,
+                evaluator_revision="0" * 40,
+                role_config=self._ar(),
+            )
+
+    def test_preflight_threads_the_role_config_through(self):
+        from unturtle.eval.producers import decision_preflight
+
+        assert (
+            decision_preflight(
+                mode="decision",
+                role="uniform_state",
+                num_samples=1000,
+                seed=42,
+                mauve_available=True,
+                evaluator_revision="32b71b12589c2f8d625668d2335a01cac3249519",
+                role_config=self._sumi(),
+            )
+            == "uniform_state"
+        )
+        with pytest.raises(ValueError, match="frozen"):
+            decision_preflight(
+                mode="decision",
+                role="uniform_state",
+                num_samples=1000,
+                seed=42,
+                mauve_available=True,
+                evaluator_revision="32b71b12589c2f8d625668d2335a01cac3249519",
+                role_config=self._sumi(canvas_length=2048),
+            )
+
+    def test_smoke_mode_does_not_require_the_frozen_config(self):
+        """A smoke run may use any settings — it claims no role."""
+        from unturtle.eval.producers import decision_preflight
+
+        assert (
+            decision_preflight(
+                mode="smoke",
+                role="uniform_state",
+                num_samples=2,
+                seed=1,
+                mauve_available=False,
+                evaluator_revision="main",
+                role_config=self._sumi(canvas_length=256, steps=8),
+            )
+            is None
+        )
+
+
 class TestDecisionPreflight:
     """#167 review 1: a tiny smoke must not be able to close a Tier-A gap.
 
@@ -190,7 +377,10 @@ class TestDecisionPreflight:
             )
 
     def test_a_conforming_decision_run_returns_the_role(self):
-        from unturtle.eval.producers import decision_preflight
+        from unturtle.eval.producers import (
+            FROZEN_ROLE_CONFIGS,
+            decision_preflight,
+        )
 
         assert (
             decision_preflight(
@@ -200,9 +390,25 @@ class TestDecisionPreflight:
                 seed=42,
                 mauve_available=True,
                 evaluator_revision="32b71b12589c2f8d625668d2335a01cac3249519",
+                role_config=dict(FROZEN_ROLE_CONFIGS["masked_discrete"]),
             )
             == "masked_discrete"
         )
+
+    def test_decision_mode_without_a_role_config_is_refused(self):
+        """The frozen decoding conditions cannot be checked against a config
+        that was never supplied (#167 review 2)."""
+        from unturtle.eval.producers import decision_preflight
+
+        with pytest.raises(ValueError, match="config"):
+            decision_preflight(
+                mode="decision",
+                role="masked_discrete",
+                num_samples=1000,
+                seed=42,
+                mauve_available=True,
+                evaluator_revision="32b71b12589c2f8d625668d2335a01cac3249519",
+            )
 
     def test_an_unknown_mode_is_refused(self):
         from unturtle.eval.producers import decision_preflight
@@ -248,7 +454,11 @@ class TestSmokeCannotCloseAGap:
         assert "ar_control" in tier_a_gaps([record])
 
     def test_a_decision_record_closes_it(self):
-        from unturtle.eval.producers import build_control_record, decision_preflight
+        from unturtle.eval.producers import (
+            FROZEN_ROLE_CONFIGS,
+            build_control_record,
+            decision_preflight,
+        )
 
         role = decision_preflight(
             mode="decision",
@@ -257,6 +467,7 @@ class TestSmokeCannotCloseAGap:
             seed=42,
             mauve_available=True,
             evaluator_revision="32b71b12589c2f8d625668d2335a01cac3249519",
+            role_config=dict(FROZEN_ROLE_CONFIGS["ar_control"]),
         )
         record = build_control_record(
             role=role,
@@ -673,7 +884,7 @@ class TestCanonicalQualityColumn:
             evaluator=_fake_evaluator,
             evaluator_identity={"model": "fake", "revision": "r1"},
             tokenize=lambda text: [ord(c) for c in text if c != " "],
-            sample_ids=torch.tensor([[1, 2, 1], [2, 2, 3]]),
+            sample_ids=[[1, 2, 1], [2, 2, 3]],
         )
         assert quality["genppl"] == pytest.approx(3.0)
         assert quality["genppl_evaluator"] == {"model": "fake", "revision": "r1"}
@@ -708,6 +919,37 @@ class TestCanonicalQualityColumn:
         with pytest.raises(ValueError, match="no rows|empty"):
             stack_sample_ids([], pad_id=0)
 
+    def test_the_column_takes_ragged_rows_and_reports_no_padding(self):
+        """#167 review 2: the canonical column must score content rows
+        directly, so no padding can reach the guards."""
+        from unturtle.eval.producers import canonical_quality_column
+
+        quality = canonical_quality_column(
+            ["a b a", "b b"],
+            evaluator=_fake_evaluator,
+            evaluator_identity={"model": "fake", "revision": "r1"},
+            tokenize=lambda text: [ord(c) for c in text if c != " "],
+            sample_ids=[[1, 2, 1], [2, 2]],
+        )
+        # row 0: 2/3 distinct, row 1: 1/2 -> mean 0.5833...
+        assert quality["distinct_fraction"] == pytest.approx((2 / 3 + 0.5) / 2)
+        assert quality["row_count"] == 2
+        assert quality["empty_rows"] == 0
+
+    def test_a_padded_tensor_is_refused(self):
+        """Mutation target: accepting a rectangle again.  Padding is what
+        made the guards padding-dependent in the first place."""
+        from unturtle.eval.producers import canonical_quality_column
+
+        with pytest.raises(TypeError, match="ragged content rows"):
+            canonical_quality_column(
+                ["a b"],
+                evaluator=_fake_evaluator,
+                evaluator_identity={"model": "fake", "revision": "r1"},
+                tokenize=lambda text: [1, 2],
+                sample_ids=torch.tensor([[1, 2]]),
+            )
+
     def test_diversity_guards_are_part_of_the_canonical_column(self):
         """#153/#155 both splat `diversity_guards(...)` into the canonical
         column, and `_KNOWN_QUALITY_KEYS` reserves the three slots.  A
@@ -720,7 +962,7 @@ class TestCanonicalQualityColumn:
             evaluator=_fake_evaluator,
             evaluator_identity={"model": "fake", "revision": "r1"},
             tokenize=lambda text: [ord(c) for c in text if c != " "],
-            sample_ids=torch.tensor([[1, 2, 1], [2, 2, 3]]),
+            sample_ids=[[1, 2, 1], [2, 2, 3]],
         )
         for key in (
             "distinct_fraction",
@@ -764,7 +1006,7 @@ class TestCanonicalQualityColumn:
                 evaluator=_fake_evaluator,
                 evaluator_identity={},
                 tokenize=lambda text: [1, 2],
-                sample_ids=torch.tensor([[1, 2]]),
+                sample_ids=[[1, 2]],
             )
 
     def test_empty_texts_are_refused_rather_than_scored(self):
@@ -778,7 +1020,7 @@ class TestCanonicalQualityColumn:
                 evaluator=_fake_evaluator,
                 evaluator_identity={"model": "fake", "revision": "r1"},
                 tokenize=lambda text: [1],
-                sample_ids=torch.tensor([[1]]),
+                sample_ids=[[1]],
             )
 
     def test_genppl_is_corpus_pooled_not_a_per_text_mean(self):
@@ -801,7 +1043,7 @@ class TestCanonicalQualityColumn:
             evaluator=evaluator,
             evaluator_identity={"model": "fake", "revision": "r1"},
             tokenize=lambda text: [ord(c) for c in text],
-            sample_ids=torch.tensor([[1, 2], [3, 4]]),
+            sample_ids=[[1, 2], [3, 4]],
         )
         pooled = math.exp((math.log(3.0) * 100 + math.log(8.0) * 2) / 102)
         assert quality["genppl"] == pytest.approx(pooled)
@@ -868,6 +1110,110 @@ class TestUniformStateAccounting:
             canvas_length=2048, content_budget=1024, prompt_length=1
         )
         assert deviating["protocol_context_match"] is False
+
+
+class TestRaggedGuards:
+    """#167 review 2, blocker 2: the guards must see only real content.
+
+    Padding to a rectangle and calling the fixed-length guards leaves the
+    values padding-dependent — filler enters the pooled entropy, the
+    distinct denominator becomes the widest row, and exact-row identity
+    compares padded tuples.  Recording `padded_rows` documented the problem
+    without fixing it, and the MDLM EOS incident showed the guard scope is
+    load-bearing, not a footnote.
+    """
+
+    def test_distinct_is_the_mean_of_per_row_ratios(self):
+        from unturtle.eval.producers import ragged_diversity_guards
+
+        # row 0: 3 distinct / 3 tokens = 1.0 ; row 1: 1 distinct / 2 = 0.5
+        guards = ragged_diversity_guards([[1, 2, 3], [7, 7]])
+        assert guards["distinct_fraction"] == pytest.approx((1.0 + 0.5) / 2)
+
+    def test_padding_cannot_change_the_values(self):
+        """The point of the primitive: a row that is shorter must not be
+        scored against the widest row's length, and the filler token must
+        not enter the pooled distribution."""
+        import torch
+
+        from unturtle.eval.generation_metrics import diversity_guards
+        from unturtle.eval.producers import ragged_diversity_guards
+
+        rows = [[1, 2, 3, 4], [5, 6]]
+        ragged = ragged_diversity_guards(rows)
+        padded = diversity_guards(torch.tensor([[1, 2, 3, 4], [5, 6, 0, 0]]))
+        assert ragged["distinct_fraction"] != pytest.approx(padded["distinct_fraction"])
+        assert ragged["pooled_unigram_entropy"] != pytest.approx(
+            padded["pooled_unigram_entropy"]
+        )
+        # Six real tokens, all distinct -> ln(6)
+        assert ragged["pooled_unigram_entropy"] == pytest.approx(math.log(6))
+
+    def test_pooled_entropy_uses_only_content_tokens(self):
+        from unturtle.eval.producers import ragged_diversity_guards
+
+        # Pooled content = [1,1,2] -> H = -(2/3 ln 2/3 + 1/3 ln 1/3)
+        guards = ragged_diversity_guards([[1, 1], [2]])
+        expected = -((2 / 3) * math.log(2 / 3) + (1 / 3) * math.log(1 / 3))
+        assert guards["pooled_unigram_entropy"] == pytest.approx(expected)
+
+    def test_unique_rows_compares_unpadded_tuples(self):
+        """Mutation target: two rows that differ only in padding are NOT
+        distinct samples, and two identical rows of different length are."""
+        from unturtle.eval.producers import ragged_diversity_guards
+
+        assert ragged_diversity_guards([[1, 2], [1, 2]])[
+            "unique_rows_fraction"
+        ] == pytest.approx(0.5)
+        assert ragged_diversity_guards([[1, 2], [1, 2, 3]])[
+            "unique_rows_fraction"
+        ] == pytest.approx(1.0)
+
+    def test_empty_rows_are_counted_and_reported(self):
+        """A row with no content contributes nothing to distinct/entropy but
+        must not silently vanish from the denominators."""
+        from unturtle.eval.producers import ragged_diversity_guards
+
+        guards = ragged_diversity_guards([[1, 2], []])
+        assert guards["empty_rows"] == 1
+        assert guards["row_count"] == 2
+        # The empty row scores 0 distinct-fraction, so the mean halves.
+        assert guards["distinct_fraction"] == pytest.approx(0.5)
+        # ...and it contributes no tokens to the pooled distribution.
+        assert guards["pooled_unigram_entropy"] == pytest.approx(math.log(2))
+        # Two rows, one empty: still two distinct rows.
+        assert guards["unique_rows_fraction"] == pytest.approx(1.0)
+
+    def test_all_empty_is_refused_rather_than_scored(self):
+        from unturtle.eval.producers import ragged_diversity_guards
+
+        with pytest.raises(ValueError, match="no content|empty"):
+            ragged_diversity_guards([[], []])
+
+    def test_no_rows_at_all_is_refused(self):
+        from unturtle.eval.producers import ragged_diversity_guards
+
+        with pytest.raises(ValueError, match="no rows"):
+            ragged_diversity_guards([])
+
+    def test_it_agrees_with_the_fixed_length_guards_on_equal_widths(self):
+        """When every row is the same length there is no padding, so the
+        ragged primitive must reproduce the frozen fixed-length semantics
+        exactly — otherwise it silently redefines the metric."""
+        import torch
+
+        from unturtle.eval.generation_metrics import diversity_guards
+        from unturtle.eval.producers import ragged_diversity_guards
+
+        rows = [[1, 2, 2, 4], [5, 5, 5, 5], [1, 2, 3, 4]]
+        ragged = ragged_diversity_guards(rows)
+        fixed = diversity_guards(torch.tensor(rows))
+        for key in (
+            "distinct_fraction",
+            "pooled_unigram_entropy",
+            "unique_rows_fraction",
+        ):
+            assert ragged[key] == pytest.approx(fixed[key]), key
 
 
 class TestGuardScopePerFamily:

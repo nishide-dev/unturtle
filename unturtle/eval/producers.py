@@ -38,6 +38,7 @@ model loading.  Producers stay thin scripts under `benchmarks/`.
 from __future__ import annotations
 
 import contextlib
+from types import MappingProxyType
 from typing import Any, Callable
 
 from unturtle.eval.frontier import (
@@ -55,6 +56,8 @@ __all__ = [
     "guard_rows",
     "guard_scope_note",
     "revision_diagnostics",
+    "FROZEN_ROLE_CONFIGS",
+    "assert_frozen_role_config",
     "canonical_evaluator_identity",
     "decision_preflight",
     "stack_sample_ids",
@@ -73,6 +76,7 @@ __all__ = [
     "build_control_record",
     "measure_control_throughput",
     "net_revision_stats",
+    "ragged_diversity_guards",
 ]
 
 
@@ -297,21 +301,28 @@ def canonical_quality_column(
     tokenizer, and tests supply fakes.  Corpus-pooled entropy under the
     common tokenizer (NOT the ELF or FLM official entropy semantics).
 
-    `sample_ids` (a `[N, L]` token tensor in the model's OWN vocabulary) is
-    MANDATORY: `diversity_guards` rides in the canonical column of every
-    existing frontier record, and `_KNOWN_QUALITY_KEYS` reserves its three
-    slots.  Since GenPPL is entropy-sensitive, an arm without the guards is
-    the arm where a collapsed but low-GenPPL sample set goes unflagged
-    (#165 review F2).
+    `sample_ids` is MANDATORY and must be a LIST OF ROWS of token ids in
+    the model's OWN vocabulary — variable length is expected, and a padded
+    rectangle is refused: padding leaks filler into the pooled entropy,
+    inflates the distinct denominator to the widest row, and makes
+    exact-row identity compare padded tuples (#167 review 2).  The guards
+    ride in the canonical column of every existing frontier record and
+    `_KNOWN_QUALITY_KEYS` reserves their slots; since GenPPL is
+    entropy-sensitive, an arm without them is the arm where a collapsed but
+    low-GenPPL sample set goes unflagged (#165 review F2).
     """
-    from unturtle.eval.generation_metrics import diversity_guards
-
     if sample_ids is None:
         raise ValueError(
-            "sample_ids is required: the canonical column carries "
-            "diversity_guards (distinct_fraction / pooled_unigram_entropy / "
+            "sample_ids is required: the canonical column carries the "
+            "diversity guards (distinct_fraction / pooled_unigram_entropy / "
             "unique_rows_fraction) in every frontier record, and dropping "
             "them silently is the drift this helper exists to prevent"
+        )
+    if not isinstance(sample_ids, list):
+        raise TypeError(
+            "sample_ids must be a list of ragged content rows, not a padded "
+            f"tensor ({type(sample_ids).__name__}): padding changes every "
+            "guard value (#167 review 2)"
         )
     # No empty-input guard here: `generative_perplexity` already refuses a
     # zero-text run, and the #165 battery could not kill a duplicate
@@ -325,7 +336,7 @@ def canonical_quality_column(
         "unigram_entropy": text_unigram_entropy(texts, tokenize=tokenize),
         "sample_count": len(texts),
         "collapse_flags": [],
-        **diversity_guards(sample_ids),
+        **ragged_diversity_guards(sample_ids),
     }
     quality.update(extra or {})
     return quality
@@ -631,6 +642,7 @@ def decision_preflight(
     seed: int,
     mauve_available: bool,
     evaluator_revision: str | None,
+    role_config: dict[str, Any] | None = None,
 ) -> str | None:
     """Whether this run may claim its Tier-A role.
 
@@ -668,6 +680,19 @@ def decision_preflight(
         revision=evaluator_revision,
         tokenizer_revision=evaluator_revision,
     )
+    # A pinned-but-different commit is still not the frozen evaluator:
+    # GenPPL is not comparable across evaluator identities (#167 review 2).
+    if evaluator_revision != CANONICAL_EVALUATOR_REVISION:
+        raise ValueError(
+            f"evaluator revision {evaluator_revision!r} is not the frozen "
+            f"canonical evaluator {CANONICAL_EVALUATOR_REVISION!r}"
+        )
+    if role_config is None:
+        raise ValueError(
+            f"decision mode for {role!r} requires the run's decoding config "
+            "so the frozen conditions can be checked exactly"
+        )
+    assert_frozen_role_config(role, role_config)
     return role
 
 
@@ -773,3 +798,138 @@ def guard_scope_note(*, eos_means: str) -> str:
     if eos_means not in _EOS_SEMANTICS:
         raise ValueError(f"unknown eos_means {eos_means!r}")
     return f"{eos_means}: {_EOS_SEMANTICS[eos_means]}"
+
+
+#: The frozen decoding configuration for each Tier-A control role (#165
+#: Stage-0 freeze, amended by the #167 reviews).  Enforced with EXACT
+#: equality: a decision run at 512 tokens, 64 steps, canvas 2048 or a
+#: different checkpoint would otherwise produce a role-bearing record that
+#: closes `tier_a_gaps()` before any downstream check sees it (#167 review 2).
+FROZEN_ROLE_CONFIGS = MappingProxyType(
+    {
+        "ar_control": MappingProxyType(
+            {
+                "model": "openai-community/gpt2-medium",
+                "revision": "6dcaa7a952f72f9298047fd5137cd6e4f05f41da",
+                "max_new_tokens": 1024,
+                "temperature": 1.0,
+                "use_cache": True,
+                "top_k": None,
+                "top_p": None,
+            }
+        ),
+        "masked_discrete": MappingProxyType(
+            {
+                "repo": "kuleshov-group/mdlm-owt",
+                "revision": "d0958fa851335ece6c15260ce0025f030673c0fb",
+                "steps": 128,
+                "sequence_length": 1024,
+                "noise_removal": True,
+                "alg": "origin",
+            }
+        ),
+        "uniform_state": MappingProxyType(
+            {
+                "repo": "tohoku-nlp/sumi-7b",
+                "revision": "0d20f7becf84340b8a8d71a8dda577a502a5c8dd",
+                "steps": 128,
+                "canvas_length": 1024,
+                "sampler": "ancestral",
+                "schedule": "linear",
+                "temperature": 1.0,
+                "min_log_snr": -9.0,
+                "max_log_snr": 9.0,
+            }
+        ),
+    }
+)
+
+
+def assert_frozen_role_config(role: str, config: dict[str, Any]) -> None:
+    """Refuse anything but the frozen configuration for `role`.
+
+    EXACT equality on every frozen key, and a MISSING key is a failure too
+    (a knob absent from the caller's config is a knob nobody checked).
+    Extra keys are allowed — producers carry bookkeeping the freeze does not
+    name.
+    """
+    frozen = FROZEN_ROLE_CONFIGS.get(role)
+    if frozen is None:
+        raise ValueError(
+            f"no frozen config for role {role!r}; the Tier-A control roles "
+            f"are {sorted(FROZEN_ROLE_CONFIGS)} (flow-family roles are frozen "
+            "in their own packs)"
+        )
+    missing = [key for key in frozen if key not in config]
+    if missing:
+        raise ValueError(
+            f"{role}: frozen keys {missing} are missing from the run config — "
+            "a knob nobody passed is a knob nobody checked"
+        )
+    wrong = {
+        key: (config[key], frozen[key]) for key in frozen if config[key] != frozen[key]
+    }
+    if wrong:
+        detail = ", ".join(
+            f"{key}={got!r} (frozen: {want!r})" for key, (got, want) in wrong.items()
+        )
+        raise ValueError(
+            f"{role}: run config deviates from the frozen decision "
+            f"conditions — {detail}"
+        )
+
+
+def ragged_diversity_guards(rows: list[list[int]]) -> dict[str, Any]:
+    """The three collapse guards over VARIABLE-length content rows.
+
+    The fixed-length `diversity_guards` needs a rectangle, so a producer
+    with rows of differing length had to pad first — which leaves the values
+    padding-dependent: filler enters the pooled distribution, the distinct
+    denominator becomes the widest row, and exact-row identity compares
+    padded tuples.  Recording how much padding happened documented that
+    without fixing it (#167 review 2).
+
+    Semantics match `diversity_guards` exactly when every row has the same
+    length (pinned by a differential test), so this is the same metric on a
+    ragged input — not a redefinition:
+
+    - ``distinct_fraction``: mean over rows of ``unique(row) / len(row)``;
+      an empty row contributes 0 (it has no distinct share) but still counts
+      in the denominator, so rows cannot vanish from the mean;
+    - ``pooled_unigram_entropy``: entropy of the pooled CONTENT tokens only,
+      in nats;
+    - ``unique_rows_fraction``: distinct unpadded row tuples / row count, so
+      two rows that differ only in padding are not counted as different
+      samples and two equal prefixes of different length are.
+
+    Also reports ``row_count`` and ``empty_rows`` so a reader can see how
+    much of the input carried no content.
+    """
+    import math
+
+    if not rows:
+        raise ValueError("no rows to score — the cell produced nothing")
+    empty_rows = sum(1 for row in rows if len(row) == 0)
+    if empty_rows == len(rows):
+        raise ValueError(
+            "every row is empty — there is no content to score; record the "
+            "failed cell instead of a zero"
+        )
+
+    per_row = [(len(set(row)) / len(row)) if row else 0.0 for row in rows]
+    pooled: dict[int, int] = {}
+    total = 0
+    for row in rows:
+        for token in row:
+            pooled[token] = pooled.get(token, 0) + 1
+            total += 1
+    entropy = -sum(
+        (count / total) * math.log(count / total) for count in pooled.values()
+    )
+    return {
+        "distinct_fraction": sum(per_row) / len(per_row),
+        "pooled_unigram_entropy": entropy,
+        "unique_rows_fraction": len({tuple(row) for row in rows}) / len(rows),
+        "row_count": len(rows),
+        "empty_rows": empty_rows,
+    }
