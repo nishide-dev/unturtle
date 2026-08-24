@@ -51,6 +51,12 @@ huggingface = [
 ]
 eval = [
     "lm-eval>=0.4.5",
+    # MAUVE is a first-class quality metric here: every frozen frontier
+    # record carries it, and `unturtle.eval.mauve_score` tells users to
+    # install `mauve-text`.  Declared so `./install.sh --eval` produces an
+    # environment that can reproduce those records (it is still imported
+    # lazily, so `import unturtle.eval` does not require it).
+    "mauve-text>=0.4.0",
 ]
 dev = [
     "ruff>=0.9.0",

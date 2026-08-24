@@ -194,17 +194,23 @@ def build_native_model(
 def load_mdlm_owt(
     repo_id: str = "kuleshov-group/mdlm-owt",
     dtype: torch.dtype = torch.float32,
+    revision: str | None = None,
 ) -> MDLMDiTForMaskedDiffusionLM:
     """Load the published mdlm-owt checkpoint as a native MDLM-DiT model.
 
     Reads ``config.json`` + ``model.safetensors`` directly — the upstream
     remote code (flash-attn hard dependency) never executes.
+
+    ``revision`` pins the checkpoint commit.  It reaches BOTH downloads, so
+    config and weights can never come from different revisions; a frontier
+    record that names a revision (#152/#165) would otherwise be describing
+    whatever ``main`` happened to be at download time.
     """
     from huggingface_hub import hf_hub_download
     from safetensors.torch import load_file
 
-    config_path = hf_hub_download(repo_id, "config.json")
-    weights_path = hf_hub_download(repo_id, "model.safetensors")
+    config_path = hf_hub_download(repo_id, "config.json", revision=revision)
+    weights_path = hf_hub_download(repo_id, "model.safetensors", revision=revision)
     with open(config_path) as f:
         config = config_from_mdlm_owt(json.load(f))
     return build_native_model(config, load_file(weights_path), dtype=dtype)

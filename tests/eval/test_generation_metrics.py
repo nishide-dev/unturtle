@@ -19,6 +19,7 @@ here — those are each experiment's pre-registered hypotheses (#123 scope).
 
 import json
 import math
+import pathlib
 import subprocess
 import sys
 
@@ -187,6 +188,29 @@ class TestMauveIsLazy:
 
         with pytest.raises(ImportError, match="mauve-text"):
             mauve_score(["reference"], ["generated"])
+
+    def test_the_eval_extra_actually_installs_mauve(self):
+        """The error message above tells the user to install `mauve-text`,
+        and MAUVE is a first-class metric here (every frozen frontier record
+        carries it).  So it must be a DECLARED extra, not a package that
+        happens to be in one developer's venv — otherwise `./install.sh
+        --eval` produces an environment where the canonical records cannot
+        be reproduced.
+        """
+        import re
+        import tomllib
+
+        pyproject = pathlib.Path(__file__).resolve().parents[2] / "pyproject.toml"
+        config = tomllib.loads(pyproject.read_text())
+        extra = config["project"]["optional-dependencies"]["eval"]
+        # Parse the TOML rather than grep the text: a comment mentioning
+        # `mauve-text` would satisfy a substring search even after the real
+        # requirement was deleted (the first version of this test did).
+        names = {re.split(r"[<>=!~\[; ]", req.strip())[0] for req in extra}
+        assert "mauve-text" in names, (
+            f"the `eval` extra declares {sorted(names)} — no mauve-text, but "
+            "unturtle.eval.mauve_score tells users to install it"
+        )
 
 
 @pytest.mark.slow

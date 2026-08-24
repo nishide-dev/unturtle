@@ -123,6 +123,12 @@ _KNOWN_QUALITY_KEYS = (
     "unique_rows_fraction",
     "sample_count",
     "collapse_flags",
+    # Ragged-guard bookkeeping (#167 review 2): how many content rows the
+    # guards actually saw, and how many of them were empty.  Without these a
+    # reader cannot tell a low distinct_fraction caused by collapse from one
+    # caused by empty rows.
+    "row_count",
+    "empty_rows",
 )
 
 

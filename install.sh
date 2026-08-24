@@ -3,7 +3,8 @@
 #
 # Usage:
 #   ./install.sh           # core + huggingface extras
-#   ./install.sh --eval    # additionally install the lm-eval-harness extra
+#   ./install.sh --eval    # additionally install the eval extra
+#                          # (lm-eval-harness + mauve-text)
 #
 # Overrides:
 #   TORCH_INDEX=...        # torch wheel index (see Requirements below)
@@ -59,7 +60,7 @@ echo "==> installing unturtle (editable) + huggingface extras"
 uv pip install -e ".[huggingface]"
 
 if [[ "${1:-}" == "--eval" ]]; then
-    echo "==> installing eval extra (lm-eval-harness)"
+    echo "==> installing eval extra (lm-eval-harness + mauve-text)"
     uv pip install -e ".[eval]"
 fi
 
