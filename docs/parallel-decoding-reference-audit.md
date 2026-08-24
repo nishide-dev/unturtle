@@ -278,10 +278,17 @@ initialization — those need a second model and are not claimed here.
 
 ## 4. Training-free cache — resolves to Fast-dLLM v1 — REFERENCE_READY
 
-The枠 was written as "Fast-dLLM / dLLM-Cache / dKV-Cache style". At audit
-time **only Fast-dLLM v1 has a locatable artifact**; HF searches for
-`dLLM-Cache` and `dKV-Cache` return nothing under those names. Those two are
-recorded as **BLOCKED** with the same unblock condition as Set Diffusion.
+The slot was written as "Fast-dLLM / dLLM-Cache / dKV-Cache style". Of the
+three, **Fast-dLLM v1 is the only one that is `REFERENCE_READY`**, but for
+different reasons per candidate (see the Summary):
+
+- **Fast-dLLM v1** — Apache-2.0 code at a pinned upstream commit: ready;
+- **dKV-Cache** — the artifact exists (`horseee/dKV-Cache@49a76fcc…`) but
+  declares no license, so it is `BLOCKED — LICENSE UNRESOLVED`. Its unblock
+  condition is a **license declaration**, not a release — unlike Set
+  Diffusion, which needs an artifact to exist at all;
+- **dLLM-Cache** — no locatable artifact under that name; same unblock
+  condition as Set Diffusion.
 
 **Code.** `NVlabs/Fast-dLLM@a9b81e4`, path `v1/`, Apache-2.0, with `llada/`
 and `dream/` host integrations (read from an untracked local clone).
@@ -299,10 +306,37 @@ block-decoding masked-diffusion model.
 **Training / conversion required.** **No** — this is the枠's defining
 property and the reason it is the cheapest candidate to evaluate.
 
-**Cache semantics.** Block-wise **approximate** KV reuse: entries computed
-under one masked context are reused under a later one, which is an
-approximation, not an identity. Combined with confidence-aware parallel
-decoding.
+**Cache semantics — three distinct paths, not one.** Read from
+`v1/llada/generate.py` at the pinned commit. The repo's own flags expose
+them independently (`--use_cache`, `--if_cache_position`, `--threshold`),
+which is what makes the cache axis and the commit axis separable:
+
+| path | what the cache holds | when it is rebuilt | trim / overwrite rule |
+|---|---|---|---|
+| `generate` (no cache) | nothing | n/a — a full forward every step | n/a |
+| `generate_with_prefix_cache` | prefix KV for positions **before** the current block | one **full** forward per block, at the block boundary | after the block's first commit, every layer/tensor is sliced to `[:, :, :current_block_start]`; the trimmed prefix is then **held constant for the rest of the block** |
+| `generate_with_dual_cache` | prefix KV **and** the current block's own KV | one full forward per block (`out_full`), then narrow forwards over `x[:, s:e]` | a boolean `replace_position` marks `[s:e]`; subsequent steps pass only the block slice with that mask, so current-block entries are **overwritten in place at the marked positions** while the prefix stays |
+
+All three are **approximate** in the same sense: entries computed under one
+masked context are reused under a later one, which is not an identity. The
+approximation is *larger* for dual cache, since it also reuses within the
+block being actively unmasked.
+
+**Separating the cache effect from the parallel-commit effect.** The two axes
+are independent in the reference and must be measured that way, so the
+frozen ablation shape is a **2-D grid**, not a single "with/without cache"
+comparison:
+
+| | one-token-per-step commit | threshold parallel commit |
+|---|---|---|
+| no cache | baseline cell | commit effect alone |
+| prefix cache | cache effect alone | both |
+| dual cache | stronger cache effect alone | both |
+
+The commit axis is `threshold=None` (schedule-driven, `num_transfer_tokens`)
+versus a fixed threshold; the cache axis is the three paths above. Reporting
+only the diagonal would confound the two, which is precisely the trap the v1
+paper's own dependency-violation finding warns about.
 
 **Commit / unmask policy.** Confidence-threshold parallel commit — **already
 present in Unturtle** as `parallel_decode` + `confidence_threshold`, with the
@@ -327,7 +361,10 @@ arXiv:2510.04767).
 half already does.
 
 **Falsifiable claim it can test.** *Training-free approximate KV reuse
-preserves dependency correctness at the thresholds where it is fast.*
+preserves dependency correctness at the thresholds where it is fast — and the
+speedup survives once the parallel-commit effect is held fixed.* The second
+clause is what the 2-D grid above tests: a gain that appears only on the
+diagonal is a commit gain wearing a cache label.
 Refutable by a dependency-sensitive cell (`unturtle/eval/dependency_slice.py`
 already provides copy / reverse / kv_recall with `exact_match` and
 `coupled_token_accuracy`): if `coupled_token_accuracy` drops as the threshold
@@ -397,7 +434,9 @@ justified only if a second consumer needs the same reduction — the same rule
 - no candidate implementation or porting;
 - no cache-threshold tuning;
 - no performance measurement;
-- no winner selection — two `REFERENCE_READY` candidates is not a ranking;
+- no winner selection — three `REFERENCE_READY` slots (Unturtle's own
+  baseline plus **two external implementation candidates**, Fast-dLLM v1 and
+  v2) is not a ranking;
 - no universal cache or trace abstraction;
 - no relaxation of the PreDiff hybrid's capability guard. #125/#127 rejected
   `block_decode` for hybrid PreDiff because train/decode topology mismatch
