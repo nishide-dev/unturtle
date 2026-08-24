@@ -59,6 +59,8 @@ __all__ = [
     "FROZEN_ROLE_CONFIGS",
     "assert_frozen_role_config",
     "canonical_evaluator_identity",
+    "control_provider",
+    "generation_tokenizer_identity",
     "decision_preflight",
     "stack_sample_ids",
     "ar_generation_config",
@@ -933,3 +935,69 @@ def ragged_diversity_guards(rows: list[list[int]]) -> dict[str, Any]:
         "row_count": len(rows),
         "empty_rows": empty_rows,
     }
+
+
+#: How each Tier-A control actually runs — the execution path a reader needs
+#: to interpret the numbers (#167 review 2, blocker 3).
+_CONTROL_ENGINES = {
+    "ar_control": {
+        "engine": "transformers.GenerationMixin.generate",
+        "path": "GPT2LMHeadModel, KV cache, SDPA attention, bf16",
+        "loop_owner": "transformers",
+    },
+    "masked_discrete": {
+        "engine": "unturtle mdlm loop (alg='origin')",
+        "path": "native conversion via convert_mdlm_owt.load_mdlm_owt "
+        "(upstream remote code never executes) + producer-local "
+        "noise-removal forward (mdlm_noise_removal)",
+        "loop_owner": "unturtle",
+    },
+    "uniform_state": {
+        "engine": "sumi native ancestral sampler",
+        "path": "pinned remote-code class SumiForMaskGeneration via "
+        "AutoModelForMaskGeneration (trust_remote_code=True); the sampler "
+        "in generation_sumi.py owns the loop",
+        "loop_owner": "remote code (pinned revision)",
+    },
+}
+
+
+def control_provider(role: str, *, details: dict[str, Any]) -> dict[str, Any]:
+    """Execution provenance for one Tier-A control record.
+
+    Names the engine, the code path, and the library versions that actually
+    ran — read at call time, never hardcoded, because a scoring or sampling
+    change inside a library is invisible in a checkpoint SHA.
+    """
+    engine = _CONTROL_ENGINES.get(role)
+    if engine is None:
+        raise ValueError(
+            f"no execution provenance defined for role {role!r}; the Tier-A "
+            f"control roles are {sorted(_CONTROL_ENGINES)}"
+        )
+    import transformers
+
+    import unturtle
+
+    return {
+        **engine,
+        "details": dict(details),
+        "transformers_version": transformers.__version__,
+        "unturtle_version": getattr(unturtle, "__version__", "unknown"),
+    }
+
+
+def generation_tokenizer_identity(*, name: str, revision: str | None) -> dict[str, str]:
+    """The pinned identity of the tokenizer that produced the DECODED text.
+
+    Decoded text is the quality surface — GenPPL, entropy and MAUVE all read
+    it — so the tokenizer that produced it needs an immutable revision in
+    the record, exactly like the evaluator (#167 review 2).
+    """
+    if revision is None or str(revision).strip() in _FLOATING_REVISIONS:
+        raise ValueError(
+            f"generation tokenizer revision {revision!r} is not an identity — "
+            "pin an immutable commit SHA; the decoded text it produces is "
+            "what every quality metric reads"
+        )
+    return {"name": name, "revision": str(revision)}

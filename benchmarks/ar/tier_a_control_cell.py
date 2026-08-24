@@ -209,7 +209,6 @@ def canonical_column(texts, token_ids, eos_id, args, device):
         canonical_quality_column,
         guard_rows,
         guard_scope_note,
-        stack_sample_ids,
     )
 
     # Pinned to an immutable commit: `main` moves, and GenPPL is not
@@ -237,18 +236,16 @@ def canonical_column(texts, token_ids, eos_id, args, device):
     # which is also exactly what the evaluator scored.
     eos_means = "end_of_generation"
     content = guard_rows(token_ids, eos_id=eos_id, eos_means=eos_means)
-    sample_ids, pad_meta = stack_sample_ids(content, pad_id=eos_id)
+    # Ragged rows straight to the guards: padding would change every value
+    # (#167 review 2, blocker 2).
     quality = canonical_quality_column(
         texts,
         evaluator=evaluator,
         evaluator_identity=identity,
         tokenize=gpt2_tokenizer.encode,
-        sample_ids=sample_ids,
+        sample_ids=content,
     )
-    quality_scope = {
-        "guard_input": guard_scope_note(eos_means=eos_means),
-        **pad_meta,
-    }
+    quality_scope = {"guard_input": guard_scope_note(eos_means=eos_means)}
     mauve_note = None
     heldout = pathlib.Path(args.owt_heldout)
     heldout_meta = heldout.parent / f"{heldout.name}.json"
@@ -341,7 +338,9 @@ def main():
         ar_nfe_from_batches,
         build_control_record,
         canvas_diagnostics,
+        control_provider,
         decision_preflight,
+        generation_tokenizer_identity,
         stack_sample_ids,
     )
 
@@ -362,6 +361,17 @@ def main():
         mauve_available=heldout.is_file()
         and (heldout.parent / f"{heldout.name}.json").exists(),
         evaluator_revision=args.evaluator_revision,
+        # EXACT frozen decoding conditions, checked before the run so a
+        # deviating request can never mint a role-bearing record (#167).
+        role_config={
+            "model": args.model,
+            "revision": args.revision,
+            "max_new_tokens": args.max_new_tokens,
+            "temperature": 1.0,
+            "use_cache": True,
+            "top_k": None,
+            "top_p": None,
+        },
     )
 
     model, tokenizer, config = load_model(args)
@@ -379,6 +389,11 @@ def main():
     )
     generation_seconds = time.perf_counter() - started
     (out / "samples.json").write_text(json.dumps(texts, ensure_ascii=False))
+    # Persist the NATIVE ids too: decoded text cannot recover them
+    # (skip_special_tokens drops every EOS/BOS the model emitted), so a
+    # measurement-only bug would otherwise force a full re-generation
+    # (#167 review 2).
+    (out / "native_ids.json").write_text(json.dumps(token_ids))
 
     throughput = throughput_cells(model, tokenizer, config, args)
     peak = torch.cuda.max_memory_allocated() if torch.cuda.is_available() else None
@@ -401,6 +416,17 @@ def main():
     executed_tokens = sum(lengths) / len(lengths)
     record = build_control_record(
         role=claimed_role,
+        provider=control_provider(
+            "ar_control",
+            details={
+                "attn_implementation": config["attn_implementation"],
+                "use_cache": True,
+                "dtype": "bfloat16",
+                "generation_tokenizer": generation_tokenizer_identity(
+                    name=args.model, revision=args.revision
+                ),
+            },
+        ),
         family="ar",
         method="gpt2-lmhead",
         checkpoint=f"{args.model}@{args.revision}",

@@ -58,6 +58,10 @@ import time
 
 from unturtle.eval.producers import CANONICAL_EVALUATOR_REVISION
 
+#: The tokenizer that decodes MDLM samples into the quality surface.
+GENERATION_TOKENIZER = "openai-community/gpt2"
+GENERATION_TOKENIZER_REVISION = "607a30d783dfa663caf39e06633721c8d4cfcd7e"
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -84,6 +88,11 @@ def parse_args():
         "the frozen conditions and claims the role",
     )
     parser.add_argument("--evaluator-revision", default=CANONICAL_EVALUATOR_REVISION)
+    parser.add_argument(
+        "--generation-tokenizer-revision",
+        default=GENERATION_TOKENIZER_REVISION,
+        help="immutable commit of the gpt2 tokenizer used to DECODE samples",
+    )
     parser.add_argument("--out", required=True)
     parser.add_argument("--owt-heldout", default="data/owt/heldout.bin")
     parser.add_argument("--eval-device", default=None)
@@ -220,9 +229,9 @@ def canonical_column(texts, token_ids, eos_id, args, device):
     from unturtle.eval.producers import (
         canonical_evaluator_identity,
         canonical_quality_column,
+        generation_tokenizer_identity,
         guard_rows,
         guard_scope_note,
-        stack_sample_ids,
     )
 
     evaluator, _raw_identity = hf_causal_evaluator(
@@ -246,18 +255,14 @@ def canonical_column(texts, token_ids, eos_id, args, device):
     # tokens per row against a ~1024-token scored text (#165 run 2).
     eos_means = "document_delimiter"
     content = guard_rows(token_ids, eos_id=eos_id, eos_means=eos_means)
-    sample_ids, pad_meta = stack_sample_ids(content, pad_id=eos_id)
     quality = canonical_quality_column(
         texts,
         evaluator=evaluator,
         evaluator_identity=identity,
         tokenize=gpt2_tokenizer.encode,
-        sample_ids=sample_ids,
+        sample_ids=content,
     )
-    quality_scope = {
-        "guard_input": guard_scope_note(eos_means=eos_means),
-        **pad_meta,
-    }
+    quality_scope = {"guard_input": guard_scope_note(eos_means=eos_means)}
     mauve_note = None
     heldout = pathlib.Path(args.owt_heldout)
     heldout_meta = heldout.parent / f"{heldout.name}.json"
@@ -329,7 +334,9 @@ def main():
     from unturtle.eval.producers import (
         build_control_record,
         canvas_diagnostics,
+        control_provider,
         decision_preflight,
+        generation_tokenizer_identity,
         mdlm_nfe,
         revision_diagnostics,
         stack_sample_ids,
@@ -350,10 +357,22 @@ def main():
         mauve_available=heldout.is_file()
         and (heldout.parent / f"{heldout.name}.json").exists(),
         evaluator_revision=args.evaluator_revision,
+        role_config={
+            "repo": args.repo,
+            "revision": args.revision,
+            "steps": args.steps,
+            "sequence_length": args.sequence_length,
+            "noise_removal": noise_removal,
+            "alg": "origin",
+        },
     )
 
     model, mask_id = load_model(args)
-    tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    # The DECODED text is the quality surface, so the tokenizer that
+    # produces it is pinned like the evaluator (#167 review 2, blocker 3).
+    tokenizer = AutoTokenizer.from_pretrained(
+        GENERATION_TOKENIZER, revision=args.generation_tokenizer_revision
+    )
 
     # Warm the kernels outside every timed region (the AR producer's #165
     # smoke showed a fresh process pays ~160 s of compile on its first call).
@@ -371,6 +390,7 @@ def main():
     )
     generation_seconds = time.perf_counter() - started
     (out / "samples.json").write_text(json.dumps(texts, ensure_ascii=False))
+    (out / "native_ids.json").write_text(json.dumps(ids_all))
 
     residual_masks = sum(row.count(mask_id) for row in ids_all)
 
@@ -393,6 +413,18 @@ def main():
 
     record = build_control_record(
         role=claimed_role,
+        provider=control_provider(
+            "masked_discrete",
+            details={
+                "alg": "origin",
+                "noise_removal": noise_removal,
+                "dtype": "float32",
+                "generation_tokenizer": generation_tokenizer_identity(
+                    name=GENERATION_TOKENIZER,
+                    revision=args.generation_tokenizer_revision,
+                ),
+            },
+        ),
         family="mdlm",
         method="mdlm-owt",
         checkpoint=f"{args.repo}@{args.revision}",

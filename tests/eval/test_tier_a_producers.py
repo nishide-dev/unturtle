@@ -32,6 +32,7 @@ the semantics are testable without downloading a checkpoint:
   claimed from theory.
 """
 
+import json
 import math
 
 import pytest
@@ -112,6 +113,79 @@ class TestArProducerSemantics:
         assert ar_nfe(generated_tokens=1024) == 1024
         with pytest.raises(ValueError, match="executed"):
             ar_nfe(generated_tokens=None)
+
+
+class TestProviderProvenance:
+    """#167 review 2, blocker 3: each record must name HOW it ran.
+
+    Without it a reader cannot tell a `transformers.generate` KV-cache path
+    from a native loop, or know which library versions produced the number.
+    """
+
+    def test_ar_provenance_names_the_execution_path(self):
+        from unturtle.eval.producers import control_provider
+
+        prov = control_provider(
+            "ar_control",
+            details={"attn_implementation": "sdpa", "use_cache": True},
+        )
+        assert "transformers" in prov["engine"].lower()
+        assert prov["details"]["use_cache"] is True
+        assert prov["transformers_version"]
+        assert prov["unturtle_version"]
+
+    def test_mdlm_provenance_names_the_conversion_and_the_local_step(self):
+        from unturtle.eval.producers import control_provider
+
+        prov = control_provider("masked_discrete", details={})
+        blob = json.dumps(prov).lower()
+        assert "convert_mdlm_owt" in blob or "native conversion" in blob
+        assert "noise" in blob  # the producer-local noise-removal step
+
+    def test_sumi_provenance_names_the_remote_code_class(self):
+        from unturtle.eval.producers import control_provider
+
+        prov = control_provider("uniform_state", details={})
+        blob = json.dumps(prov).lower()
+        assert "remote" in blob and "sumi" in blob
+
+    def test_an_unknown_role_has_no_invented_provenance(self):
+        from unturtle.eval.producers import control_provider
+
+        with pytest.raises(ValueError, match="provenance|role"):
+            control_provider("embedding_flow", details={})
+
+    def test_versions_are_read_not_hardcoded(self):
+        """Mutation target: a literal version string.  The record must name
+        the libraries that actually ran."""
+        import transformers
+
+        from unturtle.eval.producers import control_provider
+
+        prov = control_provider("ar_control", details={})
+        assert prov["transformers_version"] == transformers.__version__
+
+
+class TestGenerationTokenizerPin:
+    """#167 review 2, blocker 3: MDLM decodes with the gpt2 tokenizer, and
+    decoded text IS the quality surface — so that tokenizer needs a pinned
+    revision in the record, not an unpinned `from_pretrained("gpt2")`."""
+
+    def test_the_generation_tokenizer_identity_is_pinned(self):
+        from unturtle.eval.producers import generation_tokenizer_identity
+
+        identity = generation_tokenizer_identity(
+            name="openai-community/gpt2",
+            revision="607a30d783dfa663caf39e06633721c8d4cfcd7e",
+        )
+        assert identity["name"] == "openai-community/gpt2"
+        assert identity["revision"] == "607a30d783dfa663caf39e06633721c8d4cfcd7e"
+
+    def test_a_floating_generation_tokenizer_is_refused(self):
+        from unturtle.eval.producers import generation_tokenizer_identity
+
+        with pytest.raises(ValueError, match="main|commit|revision"):
+            generation_tokenizer_identity(name="openai-community/gpt2", revision="main")
 
 
 class TestRoleSpecificPreflight:

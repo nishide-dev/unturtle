@@ -254,7 +254,6 @@ def canonical_column(texts, content_ids, args, device):
     from unturtle.eval.producers import (
         canonical_evaluator_identity,
         canonical_quality_column,
-        stack_sample_ids,
     )
 
     evaluator, _raw_identity = hf_causal_evaluator(
@@ -275,13 +274,12 @@ def canonical_column(texts, content_ids, args, device):
     # Guards on CONTENT tokens: the canvas tail is denoised context nobody
     # reads, and its diversity would mask a collapsed decoded region (#167
     # review 3).
-    sample_ids, pad_meta = stack_sample_ids(content_ids, pad_id=0)
     quality = canonical_quality_column(
         texts,
         evaluator=evaluator,
         evaluator_identity=identity,
         tokenize=gpt2_tokenizer.encode,
-        sample_ids=sample_ids,
+        sample_ids=content_ids,
     )
     quality_scope = {
         # The native sampler already trims at the first EOS before decoding
@@ -290,9 +288,9 @@ def canonical_column(texts, content_ids, args, device):
         # `canvas_diagnostics` (#165 run 2: the guard scope must match the
         # scored text, and it differs per family).
         "guard_input": "trimmed completion as decoded by the native "
-        "sampler (_trim_at_eos), pad filler stripped",
+        "sampler (_trim_at_eos), pad filler stripped; scored as ragged "
+        "content rows so no padding reaches the guards",
         "canvas_scope": "full canvas reported separately in extra.canvas_diagnostics",
-        **pad_meta,
     }
     mauve_note = None
     heldout = pathlib.Path(args.owt_heldout)
@@ -361,6 +359,7 @@ def main():
     from unturtle.eval.producers import (
         build_control_record,
         canvas_diagnostics,
+        control_provider,
         decision_preflight,
         revision_diagnostics,
         stack_sample_ids,
@@ -382,6 +381,17 @@ def main():
         mauve_available=heldout.is_file()
         and (heldout.parent / f"{heldout.name}.json").exists(),
         evaluator_revision=args.evaluator_revision,
+        role_config={
+            "repo": args.repo,
+            "revision": args.revision,
+            "steps": args.steps,
+            "canvas_length": args.canvas_length,
+            "sampler": args.sampler,
+            "schedule": "linear",
+            "temperature": args.temperature,
+            "min_log_snr": -9.0,
+            "max_log_snr": 9.0,
+        },
     )
 
     model, tokenizer = load_model(args)
@@ -403,6 +413,9 @@ def main():
     )
     generation_seconds = time.perf_counter() - started
     (out / "samples.json").write_text(json.dumps(texts, ensure_ascii=False))
+    (out / "native_ids.json").write_text(
+        json.dumps({"content": content_ids, "canvas": canvas_ids})
+    )
 
     throughput = throughput_cells(model, args)
     peak = torch.cuda.max_memory_allocated() if torch.cuda.is_available() else None
@@ -422,6 +435,22 @@ def main():
     )
     record = build_control_record(
         role=claimed_role,
+        provider=control_provider(
+            "uniform_state",
+            details={
+                "sampler": args.sampler,
+                "schedule": "linear",
+                "dtype": "bfloat16",
+                "trust_remote_code": True,
+                "remote_code_revision": args.revision,
+                "generation_tokenizer": {
+                    "name": args.repo,
+                    "revision": args.revision,
+                    "note": "the model's own tokenizer, pinned to the "
+                    "checkpoint revision",
+                },
+            },
+        ),
         family="uniform_diffusion",
         method="sumi",
         checkpoint=f"{args.repo}@{args.revision}",
