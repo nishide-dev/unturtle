@@ -78,6 +78,7 @@ __all__ = [
     "build_control_record",
     "measure_control_throughput",
     "net_revision_stats",
+    "padding_bias_bound",
     "ragged_diversity_guards",
 ]
 
@@ -1001,3 +1002,53 @@ def generation_tokenizer_identity(*, name: str, revision: str | None) -> dict[st
             "what every quality metric reads"
         )
     return {"name": name, "revision": str(revision)}
+
+
+def padding_bias_bound(
+    *,
+    row_lengths: list[int],
+    observed_distinct_fraction: float,
+    observed_unique_rows_fraction: float | None = None,
+) -> dict[str, Any]:
+    """The maximum error padding could have introduced into the guards.
+
+    For records produced BEFORE `ragged_diversity_guards` existed: the rows
+    were padded to the widest one, so the guards carry a bounded bias.  This
+    computes that bound from the row lengths instead of asserting it is
+    small, so a reader can check the arithmetic:
+
+    - ``filler_share_of_pooled``: filler tokens / all tokens the pooled
+      entropy saw — the entropy contribution of the padding;
+    - ``distinct_fraction_max_bias``: each padded row's ratio was divided by
+      the width instead of its own length, understating it by a factor
+      ``len/width``; scaled by the padded share of rows and the observed
+      value, this is the largest downward shift of the mean;
+    - ``unique_rows_unaffected``: padding can only MERGE rows, so an
+      observed 1.0 cannot have been inflated by it.
+    """
+    if not row_lengths:
+        raise ValueError("no rows — there is nothing to bound")
+    width = max(row_lengths)
+    padded_rows = sum(1 for length in row_lengths if length < width)
+    filler = sum(width - length for length in row_lengths)
+    content = sum(row_lengths)
+    shortest = min(row_lengths)
+    return {
+        "padded_rows": padded_rows,
+        "row_count": len(row_lengths),
+        "width": width,
+        "filler_tokens": filler,
+        "filler_share_of_pooled": filler / (content + filler) if filler else 0.0,
+        "distinct_fraction_max_bias": (
+            (padded_rows / len(row_lengths))
+            * (1 - shortest / width)
+            * observed_distinct_fraction
+        )
+        if padded_rows
+        else 0.0,
+        "unique_rows_unaffected": observed_unique_rows_fraction == 1.0
+        if observed_unique_rows_fraction is not None
+        else None,
+        "note": "bound for a record measured with padded guards; padding "
+        "can only lower distinct_fraction and merge rows, never raise them",
+    }

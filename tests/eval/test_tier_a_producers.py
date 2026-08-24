@@ -1193,6 +1193,67 @@ class TestUniformStateAccounting:
         assert deviating["protocol_context_match"] is False
 
 
+class TestPaddingBiasBound:
+    """#167 review 2 / blocker 4: a record produced BEFORE the ragged guards
+    must state the maximum error its padding could have caused.
+
+    Kept as a first-class helper rather than prose: the bound is arithmetic
+    from the row lengths, and a reader has to be able to check it.
+    """
+
+    def test_no_padding_means_a_zero_bound(self):
+        from unturtle.eval.producers import padding_bias_bound
+
+        bound = padding_bias_bound(
+            row_lengths=[1024] * 5, observed_distinct_fraction=0.5
+        )
+        assert bound["padded_rows"] == 0
+        assert bound["filler_tokens"] == 0
+        assert bound["distinct_fraction_max_bias"] == 0.0
+        assert bound["filler_share_of_pooled"] == 0.0
+
+    def test_the_bound_counts_filler_and_scales_by_padded_share(self):
+        from unturtle.eval.producers import padding_bias_bound
+
+        # 2 rows of 3, 2 rows of 4 -> width 4, so 2 filler tokens.
+        bound = padding_bias_bound(
+            row_lengths=[3, 3, 4, 4], observed_distinct_fraction=0.5
+        )
+        assert bound["padded_rows"] == 2
+        assert bound["filler_tokens"] == 2
+        # 14 content tokens + 2 filler = 16 tokens the padded pooled
+        # distribution saw; the filler share is of THAT total.
+        assert bound["filler_share_of_pooled"] == pytest.approx(2 / 16)
+        # Each padded row's ratio was divided by 4 instead of 3.
+        expected = (2 / 4) * (1 - 3 / 4) * 0.5
+        assert bound["distinct_fraction_max_bias"] == pytest.approx(expected)
+
+    def test_it_reports_the_unique_rows_argument(self):
+        """Padding can only MERGE rows, so an observed 1.0 cannot have been
+        inflated by it — that argument belongs in the record, not in a
+        reviewer's head."""
+        from unturtle.eval.producers import padding_bias_bound
+
+        merged = padding_bias_bound(
+            row_lengths=[3, 4],
+            observed_distinct_fraction=0.5,
+            observed_unique_rows_fraction=1.0,
+        )
+        assert merged["unique_rows_unaffected"] is True
+        maybe = padding_bias_bound(
+            row_lengths=[3, 4],
+            observed_distinct_fraction=0.5,
+            observed_unique_rows_fraction=0.9,
+        )
+        assert maybe["unique_rows_unaffected"] is False
+
+    def test_empty_row_lengths_are_refused(self):
+        from unturtle.eval.producers import padding_bias_bound
+
+        with pytest.raises(ValueError, match="no rows"):
+            padding_bias_bound(row_lengths=[], observed_distinct_fraction=0.5)
+
+
 class TestRaggedGuards:
     """#167 review 2, blocker 2: the guards must see only real content.
 
