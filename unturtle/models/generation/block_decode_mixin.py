@@ -190,7 +190,11 @@ class BlockDecodeMixin:
         # global and monotonic across blocks. It counts only iterations that
         # committed token state: cache-construction forwards, trims and
         # refreshes commit nothing and are excluded.
-        stream_callback = generation_config.stream_callback
+        # Tolerant read: this shared loop is also reached by
+        # DreamGenerationConfig, which defines its own fields and has no
+        # `stream_callback`. A bare attribute access broke generation for a
+        # backbone that never asked for tracing (10 existing tests).
+        stream_callback = getattr(generation_config, "stream_callback", None)
         global_commit_step = 0
 
         for block_idx in range(num_blocks):

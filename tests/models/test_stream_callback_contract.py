@@ -305,6 +305,37 @@ def _generate(model, mask_id, *, algorithm, steps, gen_length, block_length=None
         return model.generate(prompt, **call)
 
 
+class TestConfigsWithoutTheAttribute:
+    """The shared block loop is reached by config classes that predate the
+    contract.  `DreamGenerationConfig` defines its own fields and has no
+    `stream_callback`, so an unguarded read raises AttributeError and breaks
+    generation for a backbone that never asked for tracing — this regression
+    took out 10 existing tests before it was caught.
+    """
+
+    def test_a_config_without_the_attribute_still_generates(self):
+        import inspect
+
+        from unturtle.models.generation.block_decode_mixin import BlockDecodeMixin
+
+        source = inspect.getsource(BlockDecodeMixin._block_decode_loop)
+        # the read must be tolerant, not a bare attribute access
+        assert 'getattr(generation_config, "stream_callback", None)' in source, (
+            "the shared block loop must read stream_callback tolerantly: it is "
+            "reached by configs that do not define it (DreamGenerationConfig)"
+        )
+
+    def test_dream_config_really_lacks_the_attribute(self):
+        """Pin the premise, so this guard is not kept for a reason that has
+        silently gone away."""
+        from unturtle.models.backbones.dream.generation_utils import (
+            DreamGenerationConfig,
+        )
+
+        config = DreamGenerationConfig()
+        assert not hasattr(config, "stream_callback")
+
+
 class TestGlobalStepNumbering:
     """The block loop's `step_idx` resets per block, so the reported number
     must be a separate global counter."""
