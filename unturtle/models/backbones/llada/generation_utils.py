@@ -26,6 +26,7 @@ Key difference from the shared mixin:
 Phase M.1: Block-decode support via BlockDecodeMixin.
 """
 
+import logging
 from typing import Any, Optional, Union
 
 import torch
@@ -38,6 +39,8 @@ from unturtle.models.generation.diffusion_generation_utils import (
     MaskedDiffusionModelOutput,
     sample_tokens,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class LLaDAGenerationConfig(MaskedDiffusionGenerationConfig):
@@ -82,6 +85,7 @@ class LLaDAGenerationMixin(BlockDecodeMixin, MaskedDiffusionGenerationMixin):
         steps = generation_config.steps
         eps = generation_config.eps
         alg = generation_config.alg
+        stream_callback = generation_config.stream_callback
         alg_temp = generation_config.alg_temp
         temperature = generation_config.temperature
         top_p = generation_config.top_p
@@ -189,6 +193,20 @@ class LLaDAGenerationMixin(BlockDecodeMixin, MaskedDiffusionGenerationMixin):
                         .expand_as(transfer_index)
                     )
                     x[row_idx, transfer_index] = x_[row_idx, transfer_index]
+
+            # #157 (b'): honour the existing stream_callback contract that the
+            # generic masked-diffusion loop already implements. One invocation
+            # per denoising iteration that updated token state, after BOTH alg
+            # branches have committed. No new API: this reads only
+            # `generation_config.stream_callback`.
+            if stream_callback is not None:
+                try:
+                    stream_callback(i + 1, steps, x.detach().clone())
+                except Exception as _cb_exc:  # noqa: BLE001 - a callback must
+                    # never break generation; the generic loop warns the same way
+                    logger.warning(
+                        "stream_callback raised at step %d: %s", i + 1, _cb_exc
+                    )
 
             if histories is not None:
                 histories.append(x.clone())

@@ -96,6 +96,142 @@ class TestGenericLoopUnchanged:
         assert [step for step, _ in seen] == [1, 2, 3, 4]
 
 
+class TestLladaHonoursTheContract:
+    """The two loops that ignored `stream_callback`: LLaDA's own plain
+    `_sample` and the shared `_block_decode_loop`.  Measured before the fix:
+    zero invocations on either, on a checkpoint where both `mdlm` and
+    `block_decode` are capability-valid — so no commit trajectory was
+    obtainable exactly where the paired comparison lives.
+    """
+
+    @pytest.mark.slow
+    @pytest.mark.gpu
+    def test_llada_plain_loop_fires_per_step(self):
+        model, mask_id = _load_llada()
+        seen = []
+        _generate(
+            model,
+            mask_id,
+            algorithm="mdlm",
+            steps=4,
+            gen_length=8,
+            stream_callback=lambda step, total, x: seen.append(step),
+        )
+        assert seen == [1, 2, 3, 4]
+
+    @pytest.mark.slow
+    @pytest.mark.gpu
+    def test_block_decode_loop_fires_with_global_steps(self):
+        """Two blocks must produce globally increasing numbers, not two
+        restarts of a per-block counter."""
+        from unturtle.eval.decoding_baseline import assert_monotonic_steps
+
+        model, mask_id = _load_llada()
+        seen = []
+        _generate(
+            model,
+            mask_id,
+            algorithm="block_decode",
+            steps=4,
+            gen_length=16,
+            block_length=8,
+            stream_callback=lambda step, total, x: seen.append(step),
+        )
+        assert len(seen) >= 2
+        assert_monotonic_steps(seen)  # would raise on [1,2,1,2]
+
+    @pytest.mark.slow
+    @pytest.mark.gpu
+    def test_callback_does_not_change_the_output(self):
+        """Condition: with no callback, behaviour is unchanged."""
+        model, mask_id = _load_llada()
+        without = _generate(
+            model,
+            mask_id,
+            algorithm="block_decode",
+            steps=4,
+            gen_length=16,
+            block_length=8,
+        )
+        seen = []
+        with_cb = _generate(
+            model,
+            mask_id,
+            algorithm="block_decode",
+            steps=4,
+            gen_length=16,
+            block_length=8,
+            stream_callback=lambda step, total, x: seen.append(x.clone()),
+        )
+        assert torch.equal(without, with_cb)
+        # and the final callback state IS the returned sequence
+        assert torch.equal(seen[-1], with_cb)
+
+    @pytest.mark.slow
+    @pytest.mark.gpu
+    def test_cache_construction_forwards_are_not_commit_steps(self):
+        """A block-boundary full forward, a trim and a cache refresh commit no
+        token, so they must not appear as commit steps.  With `steps=4` over
+        two blocks the loop runs at most 8 commit iterations — a count that
+        also included cache forwards would exceed that."""
+        model, mask_id = _load_llada()
+        seen = []
+        _generate(
+            model,
+            mask_id,
+            algorithm="block_decode",
+            steps=4,
+            gen_length=16,
+            block_length=8,
+            stream_callback=lambda step, total, x: seen.append(step),
+        )
+        # Lower bound too: this assertion passed while the callback fired ZERO
+        # times, which is exactly the vacuous-test failure mode. The count must
+        # be positive AND bounded, and it must not include the two
+        # block-boundary cache forwards.
+        assert len(seen) >= 2, "callback never fired — the contract is not honoured"
+        assert len(seen) <= 8, f"{len(seen)} callbacks for at most 8 commit steps"
+        # exactly one callback per committing iteration, none for cache work
+        assert len(seen) == len(set(seen)), "duplicate step numbers"
+
+
+def _load_llada():
+    import torch
+
+    from unturtle import FastDiffusionModel
+
+    model, _ = FastDiffusionModel.from_pretrained(
+        "GSAI-ML/LLaDA-8B-Instruct",
+        revision="08b83a6feb34df1a6011b80c3c00c7563e963b07",
+        load_in_4bit=False,
+        dtype=torch.bfloat16,
+        device_map=None,
+    )
+    model.to("cuda:0").eval()
+    return model, int(model.config.mask_token_id)
+
+
+def _generate(model, mask_id, *, algorithm, steps, gen_length, block_length=None, **kw):
+    import torch
+
+    prompt = torch.full((1, 1), mask_id, dtype=torch.long, device="cuda:0")
+    call = dict(
+        algorithm=algorithm,
+        steps=steps,
+        max_length=gen_length + 1,
+        mask_token_id=mask_id,
+        alg="origin",
+        temperature=0.0,
+        return_dict=False,
+        **kw,
+    )
+    if block_length is not None:
+        call["block_length"] = block_length
+    torch.manual_seed(42)
+    with torch.no_grad():
+        return model.generate(prompt, **call)
+
+
 class TestGlobalStepNumbering:
     """The block loop's `step_idx` resets per block, so the reported number
     must be a separate global counter."""
