@@ -130,7 +130,7 @@ ratio**. That is not the same quantity as §1.5's `q`:
 
 | symbol | what it varies | whose property |
 |---|---|---|
-| `q` | standardized latent corruption / prior diffusion severity | the **latent state** handed to the decoder |
+| `q` | standardized latent corruption / prior diffusion severity | the **prior transport state along the latent trajectory** (§3.1: no NLL condition is evaluated at a non-endpoint `q`) |
 | `m` | fraction of token positions masked in the decoder input | the **decoder's** input |
 
 Folding them into one variable would make "the NLL gap at 0.90" ambiguous
@@ -164,12 +164,14 @@ Frozen conventions:
   is ever averaged away silently.
 
 **Frozen reduction.** Every §3 NLL diagnostic is reported as a **curve over
-`m`** at each `q` — three points, all three shown. Where a single number is
-needed for a comparison, the pre-specified reduction is the value **at
-`m = 0.90`**, chosen now because it is #130's middle decision point and not
-because of anything observed. A mean over `m` is *not* used: the three mask
-ratios are qualitatively different regimes, and averaging them would hide
-the mask-ratio dependence that is the mechanism under test.
+`m` — exactly three points, all three shown — and carries `axis = null`**,
+because §3.1 fixes the NLL conditions as functions of `m` alone, evaluated on
+endpoint latents. Where a single number is needed for a comparison, the
+pre-specified reduction is the value **at `m = 0.90`**, chosen now because it
+is #130's middle decision point and not because of anything observed. A mean
+over `m` is *not* used: the three mask ratios are qualitatively different
+regimes, and averaging them would hide the mask-ratio dependence that is the
+mechanism under test.
 
 ### 1.7 Controlled perturbation grid — ELF / FLM / FMLM only
 
@@ -482,8 +484,8 @@ The record schema is deliberately small:
 | `family`, `method`, `checkpoint` | checkpoint includes the pinned revision |
 | `sample_id` | the held-out row id |
 | `diagnostic` | name from this document |
-| `axis` | `{"kind": "corruption_quantile" \| "log_snr" \| "rel_sigma" \| "native", "value": float, "native_variable": str, "native_value": float, "mapping_status": "derived" \| "native_only"}` — a quantile-mapped point carries the native value it came from, so the mapping can be re-checked; a native-only point says so explicitly |
-| `mask_ratio` | the decoder mask ratio `m` for §3 diagnostics, **as its own field** — never folded into `axis.value`. `null` for diagnostics that do not mask (§2). A latent-NLL record therefore names both `axis` (`q`) and `mask_ratio` (`m`), so the pair is recoverable |
+| `axis` | `object \| null` — `null` for latent-NLL records (§3.1). When present: `{"kind": "corruption_quantile" \| "log_snr" \| "rel_sigma" \| "native", "value": float, "native_variable": str, "native_value": float, "mapping_status": "derived" \| "native_only"}` — a quantile-mapped point carries the native value it came from, so the mapping can be re-checked; a native-only point says so explicitly |
+| `mask_ratio` | the decoder mask ratio `m`, **as its own field** — never folded into `axis.value`. Which field is populated follows §3.1: a **latent-NLL** record carries `axis = null` and `mask_ratio = m`; a **prior-transport** record carries `axis` (`q`) and `mask_ratio = null`; a **§2 direct-state** record carries `axis` (`q` or `rel_sigma`) and `mask_ratio = null`. Exactly one of the two is non-null in every record, so no reader has to infer which axis a value belongs to |
 | `value`, `unit` | unit is mandatory; `nats`, `fraction`, `ratio`, `l2`, or `bytes` |
 | `provenance` | dataset artifact SHA, tokenizer revision, dtype, device, backend, seeds |
 | `status` | `ok` \| `failed` \| `blocked` \| `exploratory` |
