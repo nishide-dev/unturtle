@@ -350,6 +350,49 @@ is the three paths above. Reporting only the diagonal would confound the two,
 which is precisely the trap the v1 paper's own dependency-violation finding
 warns about.
 
+> ### ERRATUM — 2026-08-25: the grid above is not fully realizable
+>
+> The preregistered text above (kept verbatim, not rewritten) asserted that
+> the cache and commit axes are independent and therefore measurable as a
+> complete 2-D grid. **That is false for the current Unturtle
+> implementation**, discovered when the baseline producer's wiring smoke hit
+> `ValueError: parallel_decode=True does not support alg='origin'`.
+>
+> Cache reuse and commit policy are conceptually separable effects, but the
+> current Unturtle implementation does not expose a complete Cartesian
+> product. Supported arms must be represented as explicit
+> `(cache_path, alg, commit_policy)` tuples. Unsupported combinations are
+> typed data. In particular, the no-cache × threshold corner is unavailable
+> because threshold parallel decoding requires the cached block path and a
+> compatible confidence-ordering algorithm.
+>
+> Measured against the config validator:
+>
+> | cache | alg | commit | state |
+> |---|---|---|---|
+> | no cache | `origin` | quota | **supported** |
+> | no cache | `origin` | threshold | **unsupported** — `parallel_decode` requires `use_cache=True` |
+> | prefix cache | `origin` | quota | **supported** |
+> | prefix cache | `maskgit_plus` | quota / top-k | **supported** |
+> | prefix cache | `maskgit_plus` | threshold 0.9 | **supported** |
+>
+> Consequence for the ablation: the full cache × commit product is not
+> realizable across all cache paths — the no-cache/`origin` × threshold
+> corner is unsupported. Within the prefix-cache path, however,
+> `maskgit_plus` supports both quota/top-k and threshold commit, so the
+> commit policy *can* be varied with cache and `alg` held fixed. The baseline
+> therefore runs **four explicit tuples** rather than a product, so that the
+> `alg` change and the commit change stay separable:
+>
+> 1. `(no_cache, origin, quota)` — the exact reference arm;
+> 2. `(prefix_cache, origin, quota)` — 1→2 isolates the **cache** effect;
+> 3. `(prefix_cache, maskgit_plus, quota)` — 2→3 isolates the **alg** effect;
+> 4. `(prefix_cache, maskgit_plus, threshold 0.9)` — 3→4 isolates the
+>    **commit-policy** effect.
+>
+> Without arm 3 a 1→4 comparison would compound two changes. The
+> `(no_cache, threshold)` corner is emitted as a typed `unsupported` cell.
+
 **`threshold=None` is a quota policy, not one token per step.**
 `get_num_transfer_tokens` allocates `floor(masked_in_block / steps)` per step
 and distributes the remainder as `+1` over the first `masked mod steps`
