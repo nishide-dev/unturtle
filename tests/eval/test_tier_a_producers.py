@@ -437,10 +437,17 @@ class TestDecisionPreflight:
             )
 
     def test_decision_mode_refuses_a_floating_evaluator_revision(self):
-        """#167 review 4: `main` is not an identity — it moves."""
+        """#167 review 4: `main` is not an identity — it moves.
+
+        Matched on the identity helper's own wording, so removing the
+        `canonical_evaluator_identity()` call is caught even though the
+        exact-SHA check downstream would also reject `main` (the two guards
+        say different things: one rejects floating refs, the other rejects a
+        pinned-but-wrong commit).
+        """
         from unturtle.eval.producers import decision_preflight
 
-        with pytest.raises(ValueError, match="main|commit|revision"):
+        with pytest.raises(ValueError, match="is not an identity"):
             decision_preflight(
                 mode="decision",
                 role="ar_control",
@@ -1232,14 +1239,24 @@ class TestRaggedGuards:
         assert guards["pooled_unigram_entropy"] == pytest.approx(expected)
 
     def test_unique_rows_compares_unpadded_tuples(self):
-        """Mutation target: two rows that differ only in padding are NOT
-        distinct samples, and two identical rows of different length are."""
+        """Mutation target: comparing PADDED tuples.
+
+        The pad filler is a real token id (the producers pad with the EOS
+        id, which content also contains), so padding can make two genuinely
+        different rows collide.  `[[1, 2, 0], [1, 2]]` is two distinct
+        samples; padding the short one to width 3 with 0 makes both
+        `(1, 2, 0)` and reports half the diversity.
+        """
         from unturtle.eval.producers import ragged_diversity_guards
 
         assert ragged_diversity_guards([[1, 2], [1, 2]])[
             "unique_rows_fraction"
         ] == pytest.approx(0.5)
         assert ragged_diversity_guards([[1, 2], [1, 2, 3]])[
+            "unique_rows_fraction"
+        ] == pytest.approx(1.0)
+        # The discriminating case: padding would collapse these two.
+        assert ragged_diversity_guards([[1, 2, 0], [1, 2]])[
             "unique_rows_fraction"
         ] == pytest.approx(1.0)
 
