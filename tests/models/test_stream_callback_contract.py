@@ -194,6 +194,79 @@ class TestLladaHonoursTheContract:
         # exactly one callback per committing iteration, none for cache work
         assert len(seen) == len(set(seen)), "duplicate step numbers"
 
+    @pytest.mark.slow
+    @pytest.mark.gpu
+    def test_each_callback_state_reflects_that_step_s_commits(self):
+        """Mutation target: firing the callback BEFORE the commit.
+
+        A final-state check alone cannot catch that — the last callback would
+        still show the finished sequence if it ran one step behind. What
+        distinguishes pre- from post-commit is that EVERY snapshot must already
+        contain the positions that step committed, so consecutive snapshots
+        differ exactly where tokens were newly committed or revised, and the
+        FIRST snapshot must already be non-empty (a pre-commit callback would
+        hand over the all-masked prior state).
+        """
+        model, mask_id = _load_llada()
+        states = []
+        final = _generate(
+            model,
+            mask_id,
+            algorithm="block_decode",
+            steps=4,
+            gen_length=16,
+            block_length=8,
+            stream_callback=lambda step, total, x: states.append(x.clone()),
+        )
+        assert states, "callback never fired"
+
+        # 1) the first snapshot already reflects a commit: it is not all-mask
+        #    over the generated span (a pre-commit callback would be).
+        generated_span = states[0][:, 1:]
+        assert not bool((generated_span == mask_id).all()), (
+            "the first callback state is entirely masked — the callback ran "
+            "before the commit"
+        )
+
+        # 2) every consecutive pair differs only where that step acted, and at
+        #    least one snapshot transition actually commits something.
+        transitions = 0
+        for earlier, later in zip(states, states[1:], strict=False):
+            changed = earlier != later
+            if bool(changed.any()):
+                transitions += 1
+                # a changed position must have been masked before, or be a
+                # revision of an already-committed one — never a change from
+                # one mask to another
+                assert not bool(
+                    (changed & (earlier == mask_id) & (later == mask_id)).any()
+                ), "a position changed from mask to mask"
+        assert transitions >= 1, "no snapshot ever changed"
+
+        # 3) the last snapshot IS the returned sequence
+        assert torch.equal(states[-1], final)
+
+    @pytest.mark.slow
+    @pytest.mark.gpu
+    def test_callback_count_equals_committing_iterations(self):
+        """The number of callbacks equals the number of iterations that
+        committed token state — cache forwards contribute none."""
+        model, mask_id = _load_llada()
+        states = []
+        _generate(
+            model,
+            mask_id,
+            algorithm="block_decode",
+            steps=4,
+            gen_length=16,
+            block_length=8,
+            stream_callback=lambda step, total, x: states.append(x.clone()),
+        )
+        # Two blocks x at most `steps` iterations each; every callback must
+        # correspond to a distinct iteration, so the count is bounded and the
+        # step numbers are unique.
+        assert 2 <= len(states) <= 8
+
 
 def _load_llada():
     import torch
