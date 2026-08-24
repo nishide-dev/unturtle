@@ -75,13 +75,17 @@ usable number or overstate a bounded one.
 | **peak runtime memory** (from the records) | 4.89 GB (32 steps) / 8.80 GB (64) | 25.2 GB | 16.0 GB (1 step) / 25.2 GB (32) | 19.2 GB | 0.008 GB † | 3.74 GB | not recorded |
 | sequence compression | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | **< 1.0** (only compressing arm) |
 | tokenizer / encoder | **t5-small encoder**, T5 vocab 32 100 | gpt2 BPE 50 258 | gpt2 BPE 50 258 | gpt2 BPE 50 258 (+MASK) | own, 100 278 | gpt2 BPE 50 257 | gpt2 BPE 50 258 |
-| denoiser params | **104.6 M** | **169.6 M** | **169.7 M** | **169.6 M** | ~7 B | 355 M | see #130 |
+| denoiser params | **104 579 940** | **169 627 250** | **169 676 658** ‖ | **169 627 250** | ~7 B | 355 M | see #130 |
 | backbone | DiT, width 768, depth 12 | DiT, width 768, depth 12 | DiT, width 768, depth 12 | DiT, width 768, depth 12 | 36 layers, hidden 4096 | GPT-2, 24 layers | MDLM-DiT + codec |
 | separate decoder / prior | endpoint token projection only (**no learned prior**) | none (state IS vocab space) | none | none | none | none | **yes: codec + latent prior** |
 | training data | OpenWebText-T5 | OpenWebText | OpenWebText | OpenWebText | ~1.5 T tokens, other corpus | WebText | OpenWebText (#130 split) |
 | training budget | **49.9 B token-pres** (95 085 steps × 512 × 1024, 5 epochs; read from the checkpoint) | not published in the repo | not published in the repo | not published in the repo | ~1.5 T tokens (card) | not comparable (GPT-2 era) | **AE 1.0 B + prior 2.0 B token-pres / seed** (frozen gate budget, ~1–2 % of the paper's ~105 B) |
 | provenance of the above | config.yml + checkpoint | checkpoint | checkpoint | checkpoint | config.json | config | #130 frozen |
 | **pinned revision** | `146f84133c1389bfd4ef47f14ec7a955da22faa7` | `624471b9` ‡ | `483ea1b3` ‡ | `d0958fa851335ece6c15260ce0025f030673c0fb` | `0d20f7becf84340b8a8d71a8dda577a502a5c8dd` | `6dcaa7a952f72f9298047fd5137cd6e4f05f41da` | as recorded in #130 |
+
+‖ FMLM-B carries +49 408 parameters over FLM-B — exactly its flow map's
+second time-conditioning MLP (`sigma_map_prime`), see the decomposition
+section. FLM-B and MDLM-OWT are byte-identical to each other.
 
 ‡ The FLM/FMLM revisions are the abbreviated forms the #155 records carry.
 Part B requires a full SHA at extraction time and treats an unresolvable
@@ -141,9 +145,32 @@ so the columns sum to the totals with no residual:
 | **total** | **169 627 250** | **104 579 940** |
 | **buckets sum to total** | ✅ | ✅ |
 
-FLM-B and MDLM-OWT decompose **byte-identically** — same tensor names, same
-counts, group by group. That is what "same trunk architecture" means
-concretely here.
+**FLM-B and MDLM-OWT decompose byte-identically** — measured: their tensor
+name → size maps are equal as sets, so every group above matches exactly.
+That is what "same trunk architecture" means concretely here.
+
+**FMLM-B is NOT byte-identical to them**, and the difference is exactly the
+flow-map machinery:
+
+| | count |
+|---|---|
+| FLM-B total | 169 627 250 |
+| MDLM-OWT total | 169 627 250 (identical to FLM-B) |
+| FMLM-B total | **169 676 658** |
+| FMLM-B − FLM-B | **+49 408** |
+
+The +49 408 is four tensors present only in FMLM:
+`sigma_map_prime.mlp.{0,2}.{weight,bias}` (32 768 + 16 384 + 128 + 128) —
+the **second time-conditioning path** a flow map needs, since FMLM is
+conditioned on two times rather than one (#155). No shared tensor differs in
+size and no FLM tensor is missing from FMLM.
+
+So the accurate structural claim across the three is:
+
+> **FLM-B and MDLM-OWT are byte-identical in their parameter decomposition.
+> FMLM-B differs from them by exactly +49 408 parameters, all of it the
+> flow map's second time-conditioning MLP.** Training budget and objective
+> remain unmatched for all three.
 
 **Reconciled difference accounting** (exact, no rounding residual):
 
@@ -290,14 +317,16 @@ average two definitions.
 
 **Licensed:**
 
-- the observation that vocabulary-space (FLM/FMLM) and masked-discrete
-  (MDLM) arms are already backbone-matched at 169.6 M, which makes them the
-  cheapest pair to extend into a matched Part C arm;
+- the observation that **FLM-B and MDLM-OWT are byte-identical** in their
+  parameter decomposition (169 627 250 each), which makes that specific pair
+  the cheapest to extend into a matched Part C arm; FMLM-B sits +49 408
+  away, all of it its flow map's second time-conditioning MLP, so it is a
+  near-match rather than an exact one;
 - the observation that the embedding arm reaches decision-grade quality at a
   **392× smaller mathematical state dimensionality** and a smaller parameter
-  count, with **59.1 M of the 65.0 M difference located in the
-  vocabulary-facing modules** — this is the concrete form H1's "interface
-  burden" question takes, and it is a location, not a cause;
+  count, with **60 978 158 of the 65 047 310 difference (≈61.0 M of 65.0 M)
+  located in the vocabulary-directed modules** — this is the concrete form
+  H1's "interface burden" question takes, and it is a location, not a cause;
 - the observation that FMLM's 1-step cell (GenPPL 166.41, MAUVE 0.2342)
   versus its 32-step cell (45.01, 0.9545) is a *within-method* NFE effect,
   free of cross-family confounds — the one comparison in this matrix that no
