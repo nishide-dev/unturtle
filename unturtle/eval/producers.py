@@ -1004,51 +1004,60 @@ def generation_tokenizer_identity(*, name: str, revision: str | None) -> dict[st
     return {"name": name, "revision": str(revision)}
 
 
-def padding_bias_bound(
-    *,
-    row_lengths: list[int],
-    observed_distinct_fraction: float,
-    observed_unique_rows_fraction: float | None = None,
-) -> dict[str, Any]:
-    """The maximum error padding could have introduced into the guards.
+def padding_bias_bound(*, row_lengths: list[int]) -> dict[str, Any]:
+    """A TRUE upper bound on the error padding introduced into the guards.
 
     For records produced BEFORE `ragged_diversity_guards` existed: the rows
-    were padded to the widest one, so the guards carry a bounded bias.  This
-    computes that bound from the row lengths instead of asserting it is
-    small, so a reader can check the arithmetic:
+    were padded to the widest one, so the guards carry a bounded error.
 
-    - ``filler_share_of_pooled``: filler tokens / all tokens the pooled
-      entropy saw — the entropy contribution of the padding;
-    - ``distinct_fraction_max_bias``: each padded row's ratio was divided by
-      the width instead of its own length, understating it by a factor
-      ``len/width``; scaled by the padded share of rows and the observed
-      value, this is the largest downward shift of the mean;
-    - ``unique_rows_unaffected``: padding can only MERGE rows, so an
-      observed 1.0 cannot have been inflated by it.
+    ``distinct_fraction_abs_error_bound`` is length-only and ABSOLUTE:
+
+        sum((width - length) + 1 for padded rows) / (row_count * width)
+
+    Padding turns a row's ``u/L`` into ``u'/w`` where ``u <= u' <= u+1``
+    (the pad id adds at most one new distinct symbol), so the per-row change
+    is at most ``((w - L) + 1)/w`` and unpadded rows contribute nothing.
+    Verified exhaustively over 1 742 364 configurations (n<=3, w<=4,
+    3-symbol alphabet including the pad id): zero violations.
+
+    The bound is two-sided because padding moves distinct in EITHER
+    direction — it lowers the ratio by inflating the denominator, and raises
+    it when the pad id is a symbol the row did not contain.  An earlier
+    version scaled the observed value by the padded share; that was not an
+    upper bound (rows ``[[1,1,1],[1,1,1],[1,1,1,1],[1,1,2,3]]`` give a true
+    error of 0.0833 against its 0.0625) and its one-sided premise was wrong
+    (``[[1,1,1],[2,2,2,2]]`` scores HIGHER padded), so it was replaced
+    (#167 review 3).
+
+    Pooled entropy and unique-rows get statements, not bounds:
+    ``filler_share_of_pooled`` is a contamination RATE (what fraction of the
+    pooled tokens were filler), which is not an entropy error bound; and an
+    observed ``unique_rows_fraction`` is a LOWER bound on the true value,
+    since padding can only merge rows, never separate them.
     """
     if not row_lengths:
         raise ValueError("no rows — there is nothing to bound")
     width = max(row_lengths)
-    padded_rows = sum(1 for length in row_lengths if length < width)
+    padded = [length for length in row_lengths if length < width]
     filler = sum(width - length for length in row_lengths)
     content = sum(row_lengths)
-    shortest = min(row_lengths)
     return {
-        "padded_rows": padded_rows,
+        "padded_rows": len(padded),
         "row_count": len(row_lengths),
         "width": width,
         "filler_tokens": filler,
+        "distinct_fraction_abs_error_bound": (
+            sum((width - length) + 1 for length in padded) / (len(row_lengths) * width)
+        ),
         "filler_share_of_pooled": filler / (content + filler) if filler else 0.0,
-        "distinct_fraction_max_bias": (
-            (padded_rows / len(row_lengths))
-            * (1 - shortest / width)
-            * observed_distinct_fraction
-        )
-        if padded_rows
-        else 0.0,
-        "unique_rows_unaffected": observed_unique_rows_fraction == 1.0
-        if observed_unique_rows_fraction is not None
-        else None,
-        "note": "bound for a record measured with padded guards; padding "
-        "can only lower distinct_fraction and merge rows, never raise them",
+        "pooled_entropy_note": "filler_share_of_pooled is the contamination "
+        "rate of the pooled distribution, NOT an error bound on the entropy; "
+        "the entropy error depends on the filler token's frequency relative "
+        "to the content distribution and is not derivable from lengths alone",
+        "unique_rows_note": "the observed unique_rows_fraction is a LOWER "
+        "bound on the true value: padding can merge two rows whose padded "
+        "forms collide, but never separate rows that were equal",
+        "note": "absolute, length-only bound; padding moves distinct_fraction "
+        "in either direction (denominator inflation lowers it, a pad id the "
+        "row lacked raises it)",
     }

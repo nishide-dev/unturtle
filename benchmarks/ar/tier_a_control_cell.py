@@ -22,7 +22,8 @@ Stage-0 freeze (issue #165):
              bf16, temperature 1.0, no top-k/top-p, max_new_tokens 1024
   NFE        1024 forwards (one per generated token) — EXECUTED, not requested
   samples    1000, seed 42, one cell-owned generator
-  canonical  hf_causal_evaluator("gpt2-large", revision="main",
+  canonical  hf_causal_evaluator("gpt2-large",
+             revision="32b71b12589c2f8d625668d2335a01cac3249519",
              max_length=1024), corpus-pooled GenPPL + paired unigram entropy
 
 There is no "official evaluator" column for this control: GPT-2's paper

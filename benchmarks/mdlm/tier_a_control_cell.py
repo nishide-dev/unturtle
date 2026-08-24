@@ -23,8 +23,11 @@ Stage-0 freeze (issue #165):
   canonical  steps 128 (upstream `sampling.steps` default) + noise_removal,
              so NFE = 129; steps 1024 as a curve-only secondary
   samples    1000, seed 42, one cell-owned generator
-  quality    hf_causal_evaluator("gpt2-large", revision="main",
+  quality    hf_causal_evaluator("gpt2-large",
+             revision="32b71b12589c2f8d625668d2335a01cac3249519",
              max_length=1024), corpus-pooled GenPPL + paired unigram entropy
+  decode     gpt2 tokenizer pinned to 607a30d783dfa663caf39e06633721c8d4cfcd7e
+             (the decoded text IS the quality surface)
 
 Alignment with the upstream sampler, audited verbatim against
 dev/repos/mdlm/diffusion.py (#165, recorded before any measurement):
