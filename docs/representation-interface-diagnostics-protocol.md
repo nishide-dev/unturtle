@@ -83,16 +83,22 @@ rule.** #165 verified that under loglinear noise MDLM's `move_chance_t` *is*
 `t`, so for that family the masking probability and the time variable
 coincide. Nothing licenses transplanting that identity to ELF's
 logit-normal embedding-space time, to FLM/FMLM's LUT-reparameterized `tau`,
-to Sumi's log-SNR schedule, or to a learned-latent prior's timestep. Each
-family gets its own axis definition, and a family whose mapping cannot be
-derived keeps its native axis.
+or to a learned-latent prior's timestep. Each family gets its own axis
+definition, and a family whose mapping cannot be derived keeps its native
+axis.
+
+**Sumi is not a Part B family.** It has no diagnostic section here; it
+appears in Part A as the observational `uniform_state` anchor and nothing in
+this protocol measures it. Bringing it into Part B would require freezing
+its corruption-severity definition first (its state is a uniform-noise
+canvas, not a masked or embedding one), which is a protocol amendment, not
+an implementation detail.
 
 | family | native axis | normalized axis | mapping | status |
 |---|---|---|---|---|
 | **MDLM** | loglinear `t` | corruption quantile `q` | **`q = move_chance_t = t`** — verified for this schedule (#165) | `DERIVED` |
 | **ELF** | `t ∈ (t_eps, 1)`, logit-normal sampling | corruption quantile `q` | only if the pack's own `alpha(t)` yields a monotone severity map: `q = 1 - alpha(t)`, computed from the pack's schedule code and recorded numerically per point. **If that derivation cannot be shown from the code, ELF keeps `native_t`.** | `TO BE DERIVED BEFORE MEASUREMENT` |
 | **FLM / FMLM** | `tau` → `t` via the LUT | corruption quantile `q` | only if the LUT-mapped `t` gives a monotone severity map: the state is `(1-t)·ε + t·onehot`, so `q = 1 - t` is the mass on noise — but the LUT must be read and the monotonicity checked, not assumed. **Otherwise `native_tau`.** | `TO BE DERIVED BEFORE MEASUREMENT` |
-| **Sumi** | log-SNR (`min/max_log_snr = ∓9`, linear schedule) | corruption quantile `q` | only if a defensible quantile can be defined from `alpha_t = sigmoid(log_snr)`: `q = 1 - alpha_t`. Sumi's state is a uniform-noise canvas, not a masked one, so "corruption quantile" needs an argued definition before use. **Otherwise `native_log_snr`.** | `TO BE DERIVED BEFORE MEASUREMENT` |
 | **learned latent** | prior/diffusion timestep | corruption quantile `q` | must be defined on **standardized latent corruption** (the whitened-space signal-to-noise ratio), never by calling the training timestep `q`. A timestep is an index into a schedule; corruption severity is a property of the state. | `TO BE DERIVED BEFORE MEASUREMENT` |
 
 `DERIVED` means the mapping is established and citable now. `TO BE DERIVED
@@ -117,7 +123,13 @@ variable named — and it may be compared *within* that family across
 checkpoints or step counts. It never shares an AUC column with a family
 whose x-axis means something else.
 
-### 1.6 Controlled perturbation grid
+### 1.6 Controlled perturbation grid — ELF / FLM / FMLM only
+
+Perturbation applies to the three continuous-state families (see the scope
+table under "Perturbation robustness" in §2.1). MDLM has no continuous state
+to perturb, Sumi has no Part B diagnostic section, and the learned-latent
+arm's interface stress is measured by its `wrong_latent` / `nll_prior`
+controls rather than by a perturbation curve.
 
 Perturbation magnitude is **relative to the clean state's own standard
 deviation**, per family, computed over the reference split:
@@ -189,19 +201,29 @@ grid, at a **fixed** corruption level:
 - `robustness_auc` = trapezoidal area of `top1_recovery(s)` over
   `s ∈ [0, 0.30]`, divided by `0.30` so it is a mean recovery over the
   perturbation range, in the same unit as recovery (fraction);
-- **the fixed corruption level is `q = 0.50` ONLY for families with a
-  derived corruption-quantile mapping** (§1.5). A family on a native axis
-  uses a **pre-specified native midpoint**, declared here before any
-  measurement, and its `robustness_auc` goes in a **separate column** — it is
-  not averaged or ranked against quantile-mapped families:
+**Scope: `robustness_auc` is defined for ELF, FLM and FMLM only.** These are
+the three families in this study with a continuous state that can be
+perturbed by an isotropic Gaussian and then re-read through an endpoint
+token projection. The others are deliberately excluded rather than given an
+invented perturbation:
 
-  | family | fixed level if quantile-mapped | pre-specified native fallback |
+| family | perturbation diagnostics | why |
+|---|---|---|
+| ELF, FLM, FMLM | **in scope** | continuous state + endpoint token readout |
+| MDLM | **out of scope** | no continuous state to perturb; contributes the discrete anchor of §2.4 (§2.4's own rule) |
+| Sumi | **out of scope for Part B** | it appears in Part A as an observational `uniform_state` anchor and has no Part B diagnostic section; adding a perturbation for it would require freezing its perturbed object and readout first |
+| learned latent | **out of scope for `robustness_auc`** | §3 defines no perturbation-recovery readout. Its interface stress is measured by the `wrong_latent` and `nll_prior` controls instead, which are already frozen there. A latent perturbation curve would need its perturbed object (whitened latent), decoder readout, metric and control frozen — that is a protocol amendment, not an implementation detail |
+
+- **the fixed corruption level is `q = 0.50` for the in-scope families that
+  have a derived corruption-quantile mapping** (§1.5). An in-scope family on
+  a native axis uses a **pre-specified native midpoint**, declared here
+  before any measurement, and its `robustness_auc` goes in a **separate
+  column** — never averaged or ranked against quantile-mapped families:
+
+  | in-scope family | fixed level if quantile-mapped | pre-specified native fallback |
   |---|---|---|
-  | MDLM | `q = 0.50` | n/a (mapping derived) |
   | ELF | `q = 0.50` | `t = 0.5` on the pack's own time variable |
   | FLM / FMLM | `q = 0.50` | `tau = 0.5` on the LUT axis |
-  | Sumi | `q = 0.50` | `log_snr = 0.0` (the midpoint of ∓9) |
-  | learned latent | `q = 0.50` | standardized-corruption SNR = 1.0 |
 
 - both the level and the fallback are fixed *now*, so the robustness number
   cannot be quoted at whichever corruption level happens to separate the
@@ -288,7 +310,9 @@ latent conditions — paired by construction).
 
 1. normalized prediction-error curve and its AUC over the frozen grid;
 2. endpoint token `top1_recovery` and `endpoint_nll`;
-3. perturbation `robustness_auc` at `q = 0.50`;
+3. perturbation `robustness_auc` **(ELF / FLM / FMLM only)** at `q = 0.50`,
+   or at the pre-specified native midpoint for an in-scope family without a
+   derived quantile mapping — kept in a separate column from the mapped ones;
 4. `prior_decoder_gap`;
 5. `wrong_latent_discrimination`;
 6. the family's fixed manifold-distance proxy
