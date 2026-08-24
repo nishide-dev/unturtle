@@ -267,6 +267,28 @@ class TestLladaHonoursTheContract:
         # step numbers are unique.
         assert 2 <= len(states) <= 8
 
+    @pytest.mark.slow
+    @pytest.mark.gpu
+    def test_same_arm_same_seed_is_token_identical(self):
+        """#157 step 2 premise: drift between arms is only attributable to the
+        decode path if a single arm is reproducible.  Measured here rather than
+        assumed — the quality producer's determinism note cites this."""
+        from unturtle.eval.content_drift import paired_content_drift
+
+        model, mask_id = _load_llada()
+        first = _generate(model, mask_id, algorithm="mdlm", steps=4, gen_length=16)
+        second = _generate(model, mask_id, algorithm="mdlm", steps=4, gen_length=16)
+        rows_a = [r.tolist() for r in first]
+        rows_b = [r.tolist() for r in second]
+        drift = paired_content_drift(
+            reference_texts=[str(r) for r in rows_a],
+            candidate_texts=[str(r) for r in rows_b],
+            reference_ids=rows_a,
+            candidate_ids=rows_b,
+        )
+        assert drift["exact_token_agreement"] == pytest.approx(1.0)
+        assert drift["mean_normalized_token_distance"] == 0.0
+
 
 def _load_llada():
     import torch
