@@ -137,6 +137,32 @@ class TestCommitTrajectory:
         assert out["normalized_commit_step"][0] == pytest.approx(1 / 2)
         assert out["revision_events"] == 1
 
+    def test_first_commit_survives_a_re_masking_sampler(self):
+        """Mutation target: recording the LAST commit instead of the first.
+
+        My other fixtures never re-mask, so first and last coincide there and
+        the distinction is invisible.  It is real for a sampler that CAN
+        re-mask a position — `alg='origin'` redraws every masked slot each
+        step with `p_transfer = 1 - s/t`, so a committed position can return
+        to the mask state and commit again.  The recorded step must be the
+        FIRST decision, with the round trip visible as revisions.
+        """
+        from unturtle.eval.decoding_baseline import commit_order_metrics
+
+        M = -1
+        traj = [
+            torch.tensor([[M, M]]),
+            torch.tensor([[7, M]]),  # pos 0 first commits at step 1
+            torch.tensor([[M, M]]),  # ...and is re-masked
+            torch.tensor([[4, 9]]),  # ...then commits again at step 3
+        ]
+        out = commit_order_metrics(traj, mask_id=M)
+        # first commit, not the later one
+        assert out["normalized_commit_step"][0] == pytest.approx(1 / 3)
+        assert out["normalized_commit_step"][1] == pytest.approx(3 / 3)
+        # the round trip is not silently absorbed into commit order
+        assert out["tokens_committed_per_step"] == [1, 0, 2]
+
     def test_a_never_committed_position_is_reported_not_imputed(self):
         from unturtle.eval.decoding_baseline import commit_order_metrics
 
