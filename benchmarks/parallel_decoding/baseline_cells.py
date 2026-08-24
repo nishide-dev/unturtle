@@ -175,13 +175,17 @@ def run_arm(model, mask_id, arm, batch_size, gen_length, args, capture=False):
 
     label, _cache, commit, alg, kwargs = arm
     prompt = torch.full((batch_size, 1), mask_id, dtype=torch.long, device=args.device)
-    trajectory: list = []
+    from unturtle.eval.decoding_baseline import CommitReducer
+
     observed: list[int] = []
+    # Condition 5: keep running statistics, never a list of snapshots (a full
+    # trajectory is steps x batch x length).
+    reducer = CommitReducer(mask_id=mask_id) if capture else None
 
     def stream(step, total, x):
         observed.append(int(step))
-        if capture:
-            trajectory.append(x.detach().cpu().clone())
+        if reducer is not None:
+            reducer.update(int(step), x)
 
     # The block loop requires (max_length - prompt_len) % block_length == 0,
     # so max_length is set from the prompt width to make the generated span
@@ -204,16 +208,23 @@ def run_arm(model, mask_id, arm, batch_size, gen_length, args, capture=False):
     if commit == "threshold":
         call["confidence_threshold"] = args.threshold
 
+    # Condition 4: a timed pass runs with the callback DISABLED, so cloning,
+    # Python work and synchronization cannot land inside the timed region.
+    if not capture:
+        call["stream_callback"] = None
+
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
         torch.cuda.synchronize()
     started = time.perf_counter()
     with torch.no_grad():
-        model.generate(prompt, **call)
+        tokens = model.generate(prompt, **call)
     if torch.cuda.is_available():
         torch.cuda.synchronize()
     wall = time.perf_counter() - started
-    return wall, (max(observed) if observed else 0), trajectory
+    if not isinstance(tokens, torch.Tensor):
+        tokens = tokens.sequences
+    return wall, (max(observed) if observed else 0), reducer, tokens.detach().cpu()
 
 
 def main():
@@ -222,7 +233,7 @@ def main():
     from unturtle.eval.decoding_baseline import (
         baseline_cell_key,
         cache_path_class,
-        commit_order_metrics,
+        pair_timing_and_trace,
         run_typed_cell,
         speed_cell,
     )
@@ -252,7 +263,20 @@ def main():
                     torch.cuda.reset_peak_memory_stats()
 
                 def run(bs, arm=arm, gen_length=gen_length):
-                    return run_arm(model, mask_id, arm, bs, gen_length, args)
+                    # Condition 4: wall-clock from a callback-DISABLED pass;
+                    # the executed step count from a separate traced pass,
+                    # paired on the final tokens. The timed pass observes no
+                    # steps by construction, so NFE cannot come from it.
+                    wall, _no_steps, _none, timed_tokens = run_arm(
+                        model, mask_id, arm, bs, gen_length, args, capture=False
+                    )
+                    _w2, executed, _reducer, traced_tokens = run_arm(
+                        model, mask_id, arm, bs, gen_length, args, capture=True
+                    )
+                    pairing = pair_timing_and_trace(
+                        timed_tokens=timed_tokens, traced_tokens=traced_tokens
+                    )
+                    return wall, executed, pairing
 
                 cell = run_typed_cell(run, batch_size=batch_size)
                 record = {
@@ -266,7 +290,18 @@ def main():
                     "status": cell["status"],
                 }
                 if cell["status"] == "ok":
-                    wall, executed_steps, _ = cell["value"]
+                    wall, executed_steps, pairing = cell["value"]
+                    record["pairing"] = pairing["status"]
+                    if pairing["status"] != "ok":
+                        # The two passes diverged, so the step count does not
+                        # describe the timed run; the cell keeps its wall time
+                        # but reports no NFE rather than an unrelated one.
+                        record["status"] = "protocol_deviation"
+                        record["reason"] = pairing["reason"]
+                        record["wall_seconds"] = wall
+                        records.append(record)
+                        print(json.dumps(record), flush=True)
+                        continue
                     record["speed"] = speed_cell(
                         wall_seconds=wall,
                         batch_size=batch_size,
@@ -288,7 +323,12 @@ def main():
     for arm in ARMS:
         label, cache_path, commit, alg, _ = arm
         try:
-            _wall, _steps, trajectory = run_arm(
+            # timed pass (callback off) and trace pass (callback on), same
+            # checkpoint / config / seed — then paired on the final tokens.
+            _wall, _steps, _none, timed_tokens = run_arm(
+                model, mask_id, arm, 1, args.gen_length, args, capture=False
+            )
+            _wall2, _steps2, reducer, traced_tokens = run_arm(
                 model, mask_id, arm, 1, args.gen_length, args, capture=True
             )
         except torch.cuda.OutOfMemoryError as error:
@@ -299,11 +339,16 @@ def main():
                 }
             )
             continue
-        commit_metrics = (
-            commit_order_metrics(trajectory, mask_id=mask_id)
-            if len(trajectory) >= 2
-            else {"status": "not_captured"}
+        pairing = pair_timing_and_trace(
+            timed_tokens=timed_tokens, traced_tokens=traced_tokens
         )
+        if pairing["status"] != "ok":
+            commit_metrics = pairing
+        elif reducer is None:
+            commit_metrics = {"status": "not_captured"}
+        else:
+            commit_metrics = reducer.result()
+            commit_metrics["status"] = "measured"
         records.append(
             {
                 "arm": label,
