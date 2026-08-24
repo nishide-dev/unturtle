@@ -45,6 +45,9 @@ from typing import Any, Callable
 
 __all__ = [
     "CACHE_PATHS",
+    "CommitReducer",
+    "assert_monotonic_steps",
+    "pair_timing_and_trace",
     "COMMIT_POLICIES",
     "answer_before_reasoning",
     "baseline_cell_key",
@@ -279,3 +282,138 @@ def run_typed_cell(
     except torch.cuda.OutOfMemoryError as error:
         return {"status": "oom", "reason": str(error) or "CUDA out of memory"}
     return {"status": "ok", "value": value}
+
+
+def assert_monotonic_steps(steps: list[int]) -> None:
+    """Refuse step numbers that are not strictly increasing.
+
+    The shared block-decode loop keeps a per-block `step_idx` that RESETS at
+    every block boundary, so it cannot be the number a trajectory reports —
+    `[1,2,3,1,2,3]` would make two different iterations look like the same
+    step and collapse first-commit accounting (#157 (b') condition 2).
+    """
+    if not steps:
+        raise ValueError("no steps observed; a trajectory needs at least one")
+    for previous, current in zip(steps, steps[1:], strict=False):
+        if current <= previous:
+            raise ValueError(
+                f"step numbers are not monotonic ({previous} -> {current}); a "
+                "per-block counter that resets cannot be reported as the "
+                "global step"
+            )
+
+
+def pair_timing_and_trace(*, timed_tokens: Any, traced_tokens: Any) -> dict[str, Any]:
+    """Guard that a trajectory belongs to the run it will be attached to.
+
+    Timing and tracing are separate passes (#157 (b') condition 4): the
+    callback's cloning, Python work and synchronization would otherwise land
+    inside the timed region.  Two passes are only combinable if they produced
+    the SAME tokens under the same checkpoint, config and seed; otherwise the
+    trajectory describes a different generation and the cell is marked
+    `protocol_deviation` rather than silently merged.
+    """
+    import torch
+
+    if tuple(timed_tokens.shape) != tuple(traced_tokens.shape):
+        return {
+            "status": "protocol_deviation",
+            "reason": f"timed and traced passes diverge in shape "
+            f"{tuple(timed_tokens.shape)} vs {tuple(traced_tokens.shape)}; the "
+            "trajectory is not from the timed run",
+        }
+    if not bool(torch.equal(timed_tokens, traced_tokens)):
+        differing = int((timed_tokens != traced_tokens).sum())
+        return {
+            "status": "protocol_deviation",
+            "reason": f"timed and traced passes diverge in {differing} token "
+            "positions; the trajectory is not from the timed run and the two "
+            "are never combined",
+        }
+    return {"status": "ok"}
+
+
+class CommitReducer:
+    """Streaming commit statistics — no snapshot list is retained.
+
+    Updated once per denoising iteration from `stream_callback`, keeping only
+    running state (#157 (b') condition 5): first-commit step per position,
+    per-step commit counts and position statistics, and a revision counter.
+    A full trajectory would be steps x batch x length and is never stored.
+    """
+
+    def __init__(self, *, mask_id: int) -> None:
+        self.mask_id = mask_id
+        self._previous: Any = None
+        self._last_step: int | None = None
+        self._first_commit: list[int | None] = []
+        self._per_step: list[int] = []
+        self._position_mean: list[float] = []
+        self._position_std: list[float] = []
+        self._revisions = 0
+        self._steps: list[int] = []
+
+    def update(self, step: int, tokens: Any) -> None:
+        import torch
+
+        if self._last_step is not None and step <= self._last_step:
+            raise ValueError(
+                f"step numbers must be monotonic; got {step} after "
+                f"{self._last_step} (a per-block counter that resets cannot be "
+                "reported as the global step)"
+            )
+        current = tokens.detach().to("cpu")
+        length = int(current.shape[-1])
+        if not self._first_commit:
+            self._first_commit = [None] * length
+
+        newly: list[int] = []
+        if self._previous is None:
+            for position in range(length):
+                if not bool((current[..., position] == self.mask_id).all()):
+                    newly.append(position)
+                    self._first_commit[position] = step
+        else:
+            for position in range(length):
+                was = self._previous[..., position]
+                now = current[..., position]
+                was_masked = bool((was == self.mask_id).all())
+                now_masked = bool((now == self.mask_id).all())
+                if was_masked and not now_masked:
+                    newly.append(position)
+                    if self._first_commit[position] is None:
+                        self._first_commit[position] = step
+                elif not was_masked and not now_masked and not bool((was == now).all()):
+                    self._revisions += 1
+
+        self._per_step.append(len(newly))
+        if newly:
+            positions = torch.tensor(newly, dtype=torch.float32)
+            self._position_mean.append(float(positions.mean()))
+            self._position_std.append(float(positions.std(unbiased=False)))
+        else:
+            self._position_mean.append(float("nan"))
+            self._position_std.append(float("nan"))
+        self._previous = current
+        self._last_step = step
+        self._steps.append(step)
+
+    def result(self) -> dict[str, Any]:
+        assert_monotonic_steps(self._steps)
+        steps = len(self._steps)
+        return {
+            "steps_observed": steps,
+            "step_numbers": list(self._steps),
+            "first_commit_step": list(self._first_commit),
+            "normalized_commit_step": [
+                (value / steps) if value is not None else None
+                for value in self._first_commit
+            ],
+            "tokens_committed_per_step": list(self._per_step),
+            "committed_position_mean": list(self._position_mean),
+            "committed_position_std": list(self._position_std),
+            "revision_events": self._revisions,
+            "uncommitted_positions": sum(
+                1 for value in self._first_commit if value is None
+            ),
+        }
