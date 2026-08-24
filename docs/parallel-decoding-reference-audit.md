@@ -317,26 +317,58 @@ which is what makes the cache axis and the commit axis separable:
 | `generate_with_prefix_cache` | prefix KV for positions **before** the current block | one **full** forward per block, at the block boundary | after the block's first commit, every layer/tensor is sliced to `[:, :, :current_block_start]`; the trimmed prefix is then **held constant for the rest of the block** |
 | `generate_with_dual_cache` | prefix KV **and** the current block's own KV | one full forward per block (`out_full`), then narrow forwards over `x[:, s:e]` | a boolean `replace_position` marks `[s:e]`; subsequent steps pass only the block slice with that mask, so current-block entries are **overwritten in place at the marked positions** while the prefix stays |
 
-All three are **approximate** in the same sense: entries computed under one
-masked context are reused under a later one, which is not an identity. The
-approximation is *larger* for dual cache, since it also reuses within the
-block being actively unmasked.
+**The three paths are not all approximate.** `generate` recomputes a fresh
+full forward at every step and reuses no stale KV, so it is the **exact
+reference path** — the arm every cache claim is measured against:
+
+| path | reuse | classification |
+|---|---|---|
+| `generate` | none | **exact** |
+| `generate_with_prefix_cache` | prefix entries computed under an earlier masked context | **approximate reuse**, scope = positions before the current block |
+| `generate_with_dual_cache` | prefix **and** current-block entries | **approximate reuse**, scope = prefix **plus** the block being actively unmasked |
+
+Both cache paths are approximate in the same sense — an entry computed under
+one masked context is reused under a later one, which is not an identity.
+Dual cache has the **wider approximation scope** because its reuse extends
+into the block currently being unmasked; whether that yields a *larger error*
+is an empirical question the source does not answer, and this audit does not
+assert it.
 
 **Separating the cache effect from the parallel-commit effect.** The two axes
 are independent in the reference and must be measured that way, so the
 frozen ablation shape is a **2-D grid**, not a single "with/without cache"
 comparison:
 
-| | one-token-per-step commit | threshold parallel commit |
+| | schedule/quota commit (`threshold=None`) | threshold parallel commit |
 |---|---|---|
-| no cache | baseline cell | commit effect alone |
+| no cache (exact) | baseline cell | commit effect alone |
 | prefix cache | cache effect alone | both |
-| dual cache | stronger cache effect alone | both |
+| dual cache | wider-scope cache effect alone | both |
 
-The commit axis is `threshold=None` (schedule-driven, `num_transfer_tokens`)
-versus a fixed threshold; the cache axis is the three paths above. Reporting
-only the diagonal would confound the two, which is precisely the trap the v1
-paper's own dependency-violation finding warns about.
+The commit axis is `threshold=None` versus a fixed threshold; the cache axis
+is the three paths above. Reporting only the diagonal would confound the two,
+which is precisely the trap the v1 paper's own dependency-violation finding
+warns about.
+
+**`threshold=None` is a quota policy, not one token per step.**
+`get_num_transfer_tokens` allocates `floor(masked_in_block / steps)` per step
+and distributes the remainder as `+1` over the first `masked mod steps`
+steps, so a step commits **several** tokens whenever `masked_in_block >
+steps`. Every quota equals 1 only in the boundary case
+`steps == masked_in_block` (and quotas of 0 appear when `steps >
+masked_in_block`).
+
+A genuine **one-token-per-step control** is therefore a separate thing, and
+if a later ablation needs it, it must be frozen as one of:
+
+- a `(steps, block_length)` setting where `steps == masked_in_block` for
+  every block — exact but only reachable at specific lengths; or
+- an explicit commit policy that transfers the single highest-confidence
+  masked position per step, declared as its own arm rather than obtained by
+  tuning `threshold`.
+
+Neither is claimed here, and no cell in the grid above is labelled
+"one token per step".
 
 **Commit / unmask policy.** Confidence-threshold parallel commit — **already
 present in Unturtle** as `parallel_decode` + `confidence_threshold`, with the
