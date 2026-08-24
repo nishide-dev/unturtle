@@ -15,12 +15,17 @@ out of scope here.
 Revisions pinned at audit time — an unresolvable revision makes a candidate
 `BLOCKED`, not "measured against latest":
 
-| artifact | revision |
-|---|---|
-| local `dev/repos/fast-dllm` clone | `a9b81e4caa240c8cad4f7dc1889ff4852a0fca5b` |
-| `Efficient-Large-Model/Fast_dLLM_v2_7B` | `0661abf5f9f0ee338970d091052a26c8efa51974` |
-| `GSAI-ML/LLaDA-8B-Instruct` | `08b83a6feb34df1a6011b80c3c00c7563e963b07` |
-| `Dream-org/Dream-v0-Instruct-7B` | `05334cb9faaf763692dcf9d8737c642be2b2a6ae` |
+The **canonical identity is the upstream repository and commit**;
+`dev/repos/` is a local untracked clone (gitignored, absent from this PR's
+tree) and is named only as where the audit read the code:
+
+| artifact | canonical identity | read locally at |
+|---|---|---|
+| Fast-dLLM v1 + v2 code | `NVlabs/Fast-dLLM@a9b81e4caa240c8cad4f7dc1889ff4852a0fca5b`, paths `v1/` and `v2/` | `dev/repos/fast-dllm` (untracked clone) |
+| Fast-dLLM v2 weights | `Efficient-Large-Model/Fast_dLLM_v2_7B@0661abf5f9f0ee338970d091052a26c8efa51974` | HF cache |
+| v1 host model | `GSAI-ML/LLaDA-8B-Instruct@08b83a6feb34df1a6011b80c3c00c7563e963b07` | HF cache |
+| v1 host model | `Dream-org/Dream-v0-Instruct-7B@05334cb9faaf763692dcf9d8737c642be2b2a6ae` | HF cache |
+| dKV-Cache code | `horseee/dKV-Cache@49a76fcc43b744ec2d960137f216e419317138b1` | not cloned |
 
 ---
 
@@ -30,13 +35,20 @@ Revisions pinned at audit time — an unresolvable revision makes a candidate
 |---|---|---|
 | 1. Unturtle `block_decode` | **REFERENCE_READY** | in-tree, already exercises block cache + confidence-aware parallel decode; the natural frozen baseline |
 | 2. Set Diffusion (arXiv:2607.01775) | **BLOCKED** | no official code or weights locatable at audit time; nothing to reproduce |
-| 3. Fast-dLLM v2 (arXiv:2509.26328) | **REFERENCE_READY** | Apache-2.0 code in-tree at a pinned commit + official 7B checkpoint at a pinned SHA; hierarchical cache is implemented, not just described |
-| 4. Fast-dLLM v1 training-free cache (arXiv:2505.22618) | **REFERENCE_READY** | Apache-2.0 code in-tree; training-free, so its "artifact" is code + a host model (LLaDA / Dream, both pinned) |
-| dLLM-Cache / dKV-Cache | **BLOCKED** | no locatable official artifact under those names at audit time |
+| 3. Fast-dLLM v2 (arXiv:2509.26328) | **REFERENCE_READY** | Apache-2.0 code at a pinned upstream commit + official 7B checkpoint at a pinned SHA; hierarchical cache is implemented, not just described |
+| 4. Fast-dLLM v1 training-free cache (arXiv:2505.22618) | **REFERENCE_READY** | Apache-2.0 code at a pinned upstream commit; training-free, so its "artifact" is code + a host model (LLaDA / Dream, both pinned) |
 
-Two of the four枠 are ready, one枠 is blocked on artifact availability, and
-the training-free枠 resolves to Fast-dLLM v1 rather than the other named
-caches.
+Additional named caches from the same slot, audited separately:
+
+| candidate | state | why |
+|---|---|---|
+| dKV-Cache (arXiv:2505.15781) | **BLOCKED — LICENSE UNRESOLVED** | the artifact **does** exist: `horseee/dKV-Cache` (xML Lab / NUS, first author Xinyin Ma), head `49a76fcc43b744ec2d960137f216e419317138b1`, with Dream and LLaDA implementations and a `cache_steps` refresh interval. But the repository declares **no license** — no `LICENSE` file and no GitHub license metadata (checked via the API). Availability is not the blocker; redistribution and modification rights are |
+| dLLM-Cache | **BLOCKED** | no locatable official artifact under that name at audit time |
+
+**Count for the four original slots: 3 REFERENCE_READY, 1 BLOCKED** (Set
+Diffusion). Including the two additional named caches: 3 ready, 3 blocked.
+The training-free slot resolves to Fast-dLLM v1, with dKV-Cache blocked on
+licensing rather than on existence.
 
 ---
 
@@ -90,14 +102,46 @@ would be measured, so it has no external number to cite.
 change here affects every masked-diffusion family, so it is the one candidate
 whose modification is not pack-local.
 
-**Falsifiable claim it can test.** *At batch 8 and 32 with 1024-token output,
-`block_decode` with `parallel_decode` at a fixed confidence threshold gives
-no throughput advantage over plain `mdlm` once NFE is counted as executed
-denoiser calls rather than loop steps.* Refutable by the baseline producer:
-if executed-NFE-normalized throughput is higher, the claim is false. This
-matters because arXiv:2510.18480 reports cache gains shrinking with batch
-size, and #165's Tier-A cells already show MDLM's throughput being nearly
-flat from batch 1 to 32 (0.429 → 0.414 samples/s).
+**Which checkpoints can actually run this path.** Verified against the
+capability probe, not assumed: `_supports_block_decode` requires a callable
+`_model_forward_with_cache` and refuses `hybrid_attention` models. Only
+**LLaDA** and **Dream** implement that forward
+(`unturtle/models/backbones/{llada,dream}/generation_utils.py`). MDLM-DiT and
+ModernBERT set `supports_block_decode = False` explicitly.
+
+Checked on the #165 checkpoint: `kuleshov-group/mdlm-owt` reports
+`supports_block_decode = False`, has no `_model_forward_with_cache`, and
+`find_algorithm("block_decode").supports(model)` returns **False** while
+`mdlm` returns True. So a `mdlm` vs `block_decode` comparison on that
+checkpoint is **not possible** — an earlier draft of this audit proposed
+exactly that and was wrong.
+
+**Paired comparison is available on LLaDA / Dream**, where both algorithms
+are capability-valid on one checkpoint: `mdlm` (no cache) and `block_decode`
+(cache + optional `parallel_decode`) differ only in the decode path, so the
+comparison is same-checkpoint and same-weights. `GSAI-ML/LLaDA-8B-Instruct`
+@ `08b83a6feb34…` is the natural pin, since it is already required for the
+Fast-dLLM v1 slot.
+
+**Falsifiable claim it can test.** *At batch 8 and 32 with 1024-token output
+on one LLaDA checkpoint, `block_decode` with `parallel_decode` at a fixed
+confidence threshold gives no steady-state wall-clock throughput advantage
+over plain `mdlm` at matched quality and dependency correctness.*
+
+The speed coordinate is **steady-state wall-clock latency and throughput at
+fixed quality/dependency constraints** — not NFE-normalized throughput.
+Per-forward efficiency is a different quantity and can move opposite to
+wall-clock: a path that needs more forwards but cheaper ones can be faster in
+seconds and worse per forward. **Executed NFE is reported alongside as an
+explanatory variable, never as the denominator of the verdict.**
+
+Refutable by the baseline producer: if wall-clock throughput is higher at
+equal quality and equal `coupled_token_accuracy`, the claim is false. The
+claim is worth stating because arXiv:2510.18480 reports cache gains shrinking
+with batch size, and #165's Tier-A cells show MDLM's throughput nearly flat
+from batch 1 to 32 (0.429 → 0.414 samples/s) — though on a checkpoint that
+cannot run the cached path at all, which is precisely why the baseline must
+be run on LLaDA/Dream.
 
 ---
 
@@ -147,8 +191,8 @@ method.
 
 ## 3. Fast-dLLM v2 (arXiv:2509.26328) — REFERENCE_READY
 
-**Code.** In-tree at `dev/repos/fast-dllm/v2/` (clone commit `a9b81e4`),
-Apache-2.0. `generation_functions.py` implements the hierarchical cache
+**Code.** `NVlabs/Fast-dLLM@a9b81e4`, path `v2/`, Apache-2.0 (read from an
+untracked local clone). `generation_functions.py` implements the hierarchical cache
 directly: `use_block_cache`, a separate `block_past_key_values`, and a
 `replace_position` argument on the forward — i.e. block-level historical
 context plus a sub-block cache, as claimed.
@@ -170,19 +214,36 @@ Unturtle: adopting v2's *cache* without its *training recipe* would
 reproduce the #125/#127 failure mode (topology mismatch), because the
 hierarchical cache assumes the complementary-mask topology.
 
-**Cache state, refresh, invalidation.** Two levels. The block level holds
-completed-block context; the sub-block level (`block_past_key_values` with
-`replace_position`) is refreshed within a block. Whether sub-block entries
-are invalidated or overwritten in place is a code-reading question this
-audit deliberately leaves open — answering it requires running the code,
-which is out of scope for Part 0.
+**Cache state, refresh, invalidation.** Two tiers, read from
+`generation_functions.py` at the pinned commit:
 
-**Commit / unmask policy.** Block-diffusion parallel commit within a block;
-exact policy to be read from `generation_functions.py` when the baseline
-work starts.
+- **historical block tier** (`past_key_values`): built once per block over
+  completed context, passed with `update_past_key_values=False` so it is
+  **read-only during the block**. Present in BOTH branches of the
+  `use_block_cache` toggle;
+- **sub-block tier** (`block_past_key_values`): created by a full
+  block-width forward, then **reused for narrow forwards** over
+  `[start:end]` with `replace_position=small_block_start_idx`. Refresh is
+  conditional: the full-width forward reruns (and the tier is rebuilt) when
+  `block_past_key_values is None` **or** the first position of the current
+  sub-block is still masked; otherwise the narrow path reuses the tier and
+  writes into it at `replace_position`. So invalidation is **positional
+  overwrite at the sub-block offset**, not eviction, and the rebuild trigger
+  is the sub-block's own leading-mask state.
 
-**Supported context / output length.** To be recorded from the model config
-at baseline time; the 7B model's own context limit governs.
+**Commit / unmask policy.** Threshold parallel commit with a guaranteed
+minimum: masked-position confidences below `threshold` stay masked, but the
+**argmax position is force-unmasked every step**
+(`unmask_idx[arange, max_prob_idx] = True`), so the loop cannot stall. Logits
+are shifted by one position before use (the token-shift mechanism that
+retains AR characteristics), and a row finishes when its committed set
+contains `stop_token`.
+
+**Supported context / output length.** From the pinned config:
+`max_position_embeddings = 32768`, `vocab_size = 152064`, 28 layers,
+hidden 3584, `model_type = Fast_dLLM_Qwen`. Block and sub-block sizes are
+generation arguments, not config fields, so they are per-run settings rather
+than model limits.
 
 **Official quality / systems coordinates.** The paper reports up to ~2.5×
 speedup over standard AR decoding without quality loss *in its evaluated
@@ -194,17 +255,24 @@ not be compared with a canonical cell.
 cache, most naturally a `packs/` entry so its topology stays with its
 sampler. Not a modification of core `block_decode`.
 
-**Falsifiable claim it can test.** *Fast-dLLM v2's hierarchical cache
-delivers its speedup because of the cache hierarchy, not because of the
-7B-vs-169M scale and the AR-derived initialization.* Refutable by comparing
-v2 against its own no-block-cache setting (`use_block_cache=False`, which
-the code exposes) at matched batch and executed NFE: if the intra-model
-delta is small while the delta against Unturtle's `block_decode` is large,
-the speedup is attributable to the model, not the hierarchy.
+**Falsifiable claim it can test — scoped to what the toggle actually
+changes.** `use_block_cache=False` does **not** disable the hierarchy: the
+historical block tier (`past_key_values`) is used in both branches. What the
+toggle removes is the **sub-block tier** (`block_past_key_values` +
+`replace_position`) and, with it, the narrow `[start:end]` forwards — the
+`False` branch always forwards the full block width.
+
+So the claim is: *the incremental sub-block tier, with the historical block
+cache present in both arms, delivers a steady-state wall-clock speedup at
+matched quality — and that speedup does not shrink to nothing at batch 8 and
+32.* Refutable by v2 against itself at `use_block_cache ∈ {True, False}`,
+same checkpoint, same block/sub-block sizes, same threshold.
 
 This is the sharpest available test because the ablation lives **inside one
-checkpoint**, so it is free of the cross-family confounds catalogued in
-#156 Part A.
+checkpoint** and toggles **one tier**, so it is free of the cross-family
+confounds catalogued in #156 Part A. What it cannot test is the hierarchy as
+a whole, nor whether the speedup is attributable to the 7B scale or the AR
+initialization — those need a second model and are not claimed here.
 
 ---
 
@@ -215,8 +283,8 @@ time **only Fast-dLLM v1 has a locatable artifact**; HF searches for
 `dLLM-Cache` and `dKV-Cache` return nothing under those names. Those two are
 recorded as **BLOCKED** with the same unblock condition as Set Diffusion.
 
-**Code.** `dev/repos/fast-dllm/v1/` (clone commit `a9b81e4`), Apache-2.0,
-with `llada/` and `dream/` host integrations.
+**Code.** `NVlabs/Fast-dLLM@a9b81e4`, path `v1/`, Apache-2.0, with `llada/`
+and `dream/` host integrations (read from an untracked local clone).
 
 **Weights.** None of its own — it is training-free. Its host models, both
 pinned: `GSAI-ML/LLaDA-8B-Instruct` @ `08b83a6feb34…` (MIT) and
@@ -239,9 +307,13 @@ decoding.
 **Commit / unmask policy.** Confidence-threshold parallel commit — **already
 present in Unturtle** as `parallel_decode` + `confidence_threshold`, with the
 `alg='entropy'` degeneration already guarded. So for this枠 Unturtle's
-baseline is not a strawman: part of v1 is in-tree.
+baseline is not a strawman: part of v1's mechanism already exists in
+Unturtle core.
 
-**Supported lengths.** Host-model governed (LLaDA 8B / Dream 7B).
+**Supported lengths.** Host-model governed, resolved from the pinned
+configs: LLaDA-8B-Instruct `max_position_embeddings = 4096` (vocab 126464);
+Dream-v0-Instruct-7B `131072` (vocab 152064). The v1 method adds no length
+limit of its own.
 
 **Official quality / systems coordinates.** The paper identifies **dependency
 violation from the conditional-independence assumption** as the major quality
@@ -278,18 +350,39 @@ here as baseline-protocol candidates, **before** any measurement:
 | `tokens_committed_per_step` | count committed at each step, with its position distribution (mean and standard deviation of committed positions per step) | count + position stats |
 | `dependency_correctness_under_commit_constraint` | `coupled_token_accuracy` and `exact_match` measured at ≥2 commit-constraint settings (e.g. one-token-per-step vs threshold parallel commit) | fraction |
 
+**Which metrics are defined on which fixture.** `answer_before_reasoning_rate`
+needs two spans *inside the output*, and `dependency_slice`'s `DependencyTask`
+carries only `prompt`, `source` and `target` — its boundary is between the
+prompt and the output, not within the output. So the metric is **not
+computable there**, and an empty-span exclusion rule would not fix that: it
+would mark every fixture unsupported.
+
+| metric | `dependency_slice` fixtures | a reasoning fixture with declared output spans |
+|---|---|---|
+| `normalized_commit_step` | **supported** | supported |
+| `tokens_committed_per_step` (+ position distribution) | **supported** | supported |
+| `dependency_correctness_under_commit_constraint` | **supported** | n/a |
+| `answer_before_reasoning_rate` | **UNSUPPORTED — reported as such, never as 0** | supported |
+
+`answer_before_reasoning_rate` is therefore scoped to a fixture that
+**declares its own reasoning and answer spans as part of the task
+definition** — the span boundary is task-provided data, not something the
+producer infers by inspecting generated text. Defining that fixture is part
+of the baseline work; until it exists the metric has no cells, and a missing
+cell is recorded as `unsupported`, which #152 already treats as data rather
+than an omission.
+
 Frozen conventions so these cannot be reshaped after seeing results:
 
-- spans are defined by the **task**, not by inspection of the output: for
-  `dependency_slice` tasks the prefix/suffix boundary is the task's own input
-  boundary; for a reasoning task it is the marker the task specifies;
+- spans, where they exist, come from the **task definition**, never from
+  inspecting the output;
 - a position committed once and later revised counts at its **first** commit
   for `normalized_commit_step`, with revisions reported separately via the
   `revision_events` counter that #165 added — the two answer different
   questions and must not be merged;
-- `answer_before_reasoning_rate` requires both spans non-empty; a sample
-  where either is empty is reported as excluded with a reason, never dropped
-  silently.
+- on a fixture that does declare spans, `answer_before_reasoning_rate`
+  requires both to be non-empty; a sample where either is empty is reported
+  as excluded with a reason, never dropped silently.
 
 **This is not authorization for a general trace API.** The first
 implementation is experiment-local: whatever the baseline producer needs to
