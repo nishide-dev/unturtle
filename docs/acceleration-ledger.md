@@ -42,10 +42,10 @@ A third state, **not measured**, is stated explicitly rather than left blank.
 |---|---|
 | family/method | masked diffusion (all families) |
 | operation | loss (LM head + cross-entropy) |
-| backend | Triton via Unsloth CE reuse (`unturtle/kernels/masked_diffusion_loss.py`, `fused_masked_diffusion_loss.py`) |
+| backend | Unsloth Triton CE (`Fast_CrossEntropyLoss`) plus an Unturtle allocation fusion: one `torch.where` replacing `labels.clone()` + masked scatter |
 | semantic scope | masked-diffusion loss on masked positions only; `labels == -100` elsewhere |
 | valid regime | CUDA; falls back on CPU |
-| fallback | reference `F.cross_entropy` path; guards on parameter device, not `torch.cuda.is_available()` |
+| fallback | in-function `else` branch (`fused_masked_diffusion_loss.py:117-137`) using `F.cross_entropy`, mirroring the kernel's op order (scaling before softcapping); guard is `logits.device.type == "cuda"` |
 | dispatch | default |
 | parity evidence | kernel correctness compared against `F.cross_entropy`, not shape-only (project testing rule) |
 | end-to-end evidence | **not measured as a share of step time** |
@@ -60,10 +60,10 @@ family, so its share is a Stage-1 requirement rather than an optional cell.
 |---|---|
 | family/method | masked diffusion |
 | operation | output projection + loss |
-| backend | Triton (`unturtle/kernels/sparse_masked_loss.py`) |
+| backend | **plain PyTorch** — gather → project → `F.cross_entropy` (`unturtle/kernels/sparse_masked_loss.py`); no Triton in this file |
 | semantic scope | projects only masked positions; saving scales with `1 - M/(B*L)` |
-| valid regime | **mask ratio is the decisive variable, not vocabulary size**; memory sign flips around ~40% masking |
-| fallback | dense masked CE (row 1) |
+| valid regime | **mask ratio is the decisive variable, not vocabulary size**; memory sign flips around ~40% masking. Capability-gated: Tiny-A2D (llama/qwen2/qwen3) only; `logit_softcapping`/`logit_scaling` rejected |
+| fallback | dense masked CE (row 1). **Raises rather than falling back silently**; `supports_sparse_masked_loss()` is the sanctioned probe, and `DiffusionTrainer` raises at construction so an opt-in cannot degrade into a no-op |
 | dispatch | **default-off, opt-in** |
 | parity evidence | differential against dense |
 | end-to-end evidence | **end-to-end, regime-swept** — see below |
@@ -82,6 +82,20 @@ which are identical in both arms and dilute the total:
 | 128256 | 0.15 | **−62.1%** | −22.7% | **−37.4%** |
 | 128256 | 0.50 | **−25.7%** | +1.0% | +1.7% |
 | 128256 | 0.75 | −4.3% | +27.7% | +45.5% |
+
+Kernel-level peak memory measured earlier (#77; RTX 6000 Ada, bf16, B=4 L=1024
+H=1024, forward + loss + backward) agrees on the sign and the crossover:
+
+| vocab | mask 15% | mask 50% | mask 75% |
+|---|---|---|---|
+| 32000 | −28% | +8% | +35% |
+| 128256 | −41% | +10% | +49% |
+
+Why dense is harder to beat than the `[B, L, V]` shape suggests:
+`Fast_CrossEntropyLoss` upcasts per tile in registers and never materializes an
+fp32 logits tensor, so dense holds one bf16 `[B, L, V]` while sparse holds a
+bf16 `[M, V]` **plus its autograd graph**. Past `M/(B·L) ≈ 0.4` the gather
+stops paying for itself.
 
 LoRA, 128256 vocab, same setup:
 
@@ -151,10 +165,10 @@ side of the measured crossover.
 |---|---|
 | family/method | Dream (q/k/v use `bias=True`) |
 | operation | fused QKV LoRA |
-| backend | Triton, extends Unsloth `LoRA_QKV` (`unturtle/kernels/fast_lora.py`) |
+| backend | custom `autograd.Function` over Unsloth primitives (`matmul_lora`, `fast_dequantize`); extends Unsloth `LoRA_QKV`. **Authors no Triton itself** — the fusion is at the autograd/GEMM level (`unturtle/kernels/fast_lora.py`) |
 | semantic scope | adds bias in forward and the bias gradient (`dQ.sum(0)`) in backward; standard `apply_lora_qkv` requires `bias=False` |
-| valid regime | CUDA; `lora_dropout != 0` disables the Triton LoRA path |
-| fallback | non-fused PEFT path |
+| valid regime | CUDA + `lora_dropout == 0` + `bias == "none"` + LoRA present + no DoRA. The module itself carries **no guards**; all gating lives in `fast_diffusion_model.py:258-282` |
+| fallback | PEFT's default `LoraLinear.forward` — silent, with a one-shot warning (`fast_diffusion_model.py:284-287`) |
 | dispatch | default where the family matches |
 | parity evidence | differential against the unfused path |
 | end-to-end evidence | **not measured as a share of step time** |
@@ -254,13 +268,49 @@ genuinely executed.
 
 ---
 
+## Incidental findings from the survey
+
+Not optimization targets — recorded so they are not rediscovered as mysteries.
+
+**Evidence asymmetry is the headline.** Only the sparse LM-head path carries
+measured numbers in-code. Rows 1, 3.2 and 5 are enabled **by default** with no
+in-code measurement at all: `fast_lora.py` contains no performance comment of
+any kind, and `fused_masked_diffusion_loss.py`'s justification is purely
+mechanical ("saves one allocation and one kernel launch",
+`fused_masked_diffusion_loss.py:28`) even though
+`benchmarks/kernels/benchmark_loss.py` exists to measure it and no checked-in
+result references it.
+
+**Two terminology drifts.** `fast_lora.py:15` calls the file "Triton-fused LoRA
+kernel extensions" and the runtime warnings say "Triton kernel", but the file
+authors no Triton — verified by grep. Likewise
+`masked_diffusion_loss.py:52-55` still describes a Phase-1 design where the
+`-100` write and Python-level weighting are its own work; the function now
+delegates entirely (`:82-92`). Both are accurate about the *backend* and
+misleading about *who implements it*, which matters for a ledger whose whole
+purpose is attributing cost.
+
+**One dead branch.** `fused_masked_diffusion_loss.py:158-160`: both arms of
+`if loss_weights is None:` return the identical expression
+`per_token_loss.sum() / n_maskable`. Harmless, but it reads as though weighting
+were handled in the `"token"` branch when it is not.
+
+**No `torch.compile` anywhere** in the kernels, the trainer, or
+`fast_diffusion_model.py`.
+
+**A soundness hole worth knowing** (documented in-code, not a defect):
+`masked_diffusion_loss_from_timesteps` cannot distinguish a `(B, L)` timesteps
+tensor from its transpose when `B == L`, so a transposed input is accepted and
+silently yields a different loss (`masked_diffusion_loss.py:126-130`).
+Orientation is the caller's responsibility.
+
 ## Stage-0 conclusion
 
 Evidence status across the required rows:
 
 | row | end-to-end evidence |
 |---|---|
-| 2 sparse LM-head | **yes**, regime-swept, negatives retained |
+| 2 sparse LM-head | **yes**, regime-swept at two levels (kernel #77 + end-to-end), negatives retained |
 | 3 device noising | **yes**, negative result |
 | 4 hybrid attention | **yes**, both sides of the crossover |
 | 1 dense masked CE | no |
