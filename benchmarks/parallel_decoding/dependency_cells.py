@@ -144,8 +144,23 @@ def generate(model, tokenizer, mask_id, arm, tasks, args, *, batch_size, capture
     torch.manual_seed(args.seed)
     for start in range(0, len(tasks), batch_size):
         chunk = tasks[start : start + batch_size]
+        # The checkpoint is INSTRUCT-tuned and ships a chat template. Passing
+        # the bare prompt string leaves the model outside the format it was
+        # tuned for, and it rambles instead of answering: measured on this
+        # fixture, raw prompting scores ~0 coupled accuracy on all three kinds
+        # while the same prompts under the template reproduce `copy` exactly.
+        # A reference arm with no task signal makes every cache comparison
+        # undecidable (condition 5), so the template is part of the fixture.
+        rendered = [
+            tokenizer.apply_chat_template(
+                [{"role": "user", "content": task.prompt}],
+                add_generation_prompt=True,
+                tokenize=False,
+            )
+            for task in chunk
+        ]
         encoded = tokenizer(
-            [task.prompt for task in chunk], return_tensors="pt", padding=True
+            rendered, return_tensors="pt", padding=True, add_special_tokens=False
         )
         input_ids = encoded["input_ids"].to(args.device)
         if mask_id in input_ids.reshape(-1).tolist():
@@ -246,6 +261,7 @@ def main() -> None:
                 "batch_size": batch_size,
                 "cell_role": "primary_semantic" if primary else "batching_guard",
                 "prompt_prefix_agreement": 1.0 if prefix_ok else 0.0,
+                "prompt_rendering": "chat_template(add_generation_prompt=True)",
                 "scores": scores,
                 "per_kind": per_kind,
                 "task_count": len(tasks),

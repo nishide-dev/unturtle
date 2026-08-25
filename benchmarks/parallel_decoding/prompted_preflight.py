@@ -183,7 +183,16 @@ def main() -> None:
         suffixes: list[list[int]] = []
         prefix_ok = True
         for item in prompts:
-            encoded = tokenizer(item["prompt"], return_tensors="pt")
+            # Instruct checkpoint: the bare prompt string leaves the model
+            # outside its tuned format. The preflight's GATE result (immediate
+            # EOS, prefix agreement, residual masks) is unaffected, but the
+            # content it produces is not task-shaped without this.
+            rendered = tokenizer.apply_chat_template(
+                [{"role": "user", "content": item["prompt"]}],
+                add_generation_prompt=True,
+                tokenize=False,
+            )
+            encoded = tokenizer(rendered, return_tensors="pt", add_special_tokens=False)
             input_ids = encoded["input_ids"].to(args.device)
             if mask_id in input_ids[0].tolist():
                 raise RuntimeError(
