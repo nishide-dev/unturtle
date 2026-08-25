@@ -105,12 +105,17 @@ LoRA, 128256 vocab, same setup:
 | 0.50 | −6.0% | +24.2% | +47.5% |
 | 0.75 | +16.1% | +57.5% | +112.9% |
 
-Why the flag stays off: MDLM-style training samples `t ~ U(0,1)`, averaging
-~50% masking — the column where memory is neutral-to-worse. The step-time win
-is real and larger than the kernel benchmark suggested, but it is **not**
-automatically a memory optimization. Under LoRA above ~15% masking the frozen
-backbone's activations already dominate, so the `[M, V]` projection and its
-autograd graph are close to pure overhead.
+Why the flag stays off — and the precise reason matters. At ~50% masking the
+**step-time win survives** under full fine-tuning (−12.6% at 32K vocab, −25.7%
+at 128K); what disappears is the *memory* benefit (+0.4% / +1.7% activations),
+and under LoRA memory becomes an outright cost (+47.5% activations at 0.50,
++112.9% at 0.75) because the frozen backbone's activations already dominate, so
+the `[M, V]` projection and its autograd graph are close to pure overhead.
+
+So the accurate statement is **not** "sparse stops paying at ~50% masking" —
+that would deny a real speedup. It is: *at the ~50% masking MDLM-style training
+averages, this is not a consistent speed **and** memory win, so it is opt-in
+rather than default.* MDLM samples `t ~ U(0,1)`, which lands exactly there.
 
 ## Row 3 — device-side masked noising
 
@@ -197,9 +202,14 @@ side of the measured crossover.
 **SC-CFG adds no extra forward in these cells.** Executed NFE equals the step
 count (32 and 64), and SC-CFG is passed as a per-batch *scale tensor*
 (`generation_utils.py:124`), not a doubled batch — it is in-context
-conditioning. So "SC-CFG forward sharing" in **generation** has no cost to
-recover at cfg=1, and Stage 2 should not pursue it on the strength of the
-issue's candidate list alone. The training path is a different matter (row 8).
+conditioning.
+
+The scope of that claim is deliberately narrow: **there is no extra forward, so
+forward *sharing* has nothing to recover** at cfg=1, and Stage 2 should not
+pursue it on the strength of the issue's candidate list alone. This is **not**
+a claim that SC-CFG is free — the prefix/attention overhead of the SC-CFG
+tokens themselves has not been decomposed, and Stage 1 has not measured it. The
+training path is a different matter (row 8).
 
 ## Row 7 — FMLM / FLM generation
 
@@ -260,11 +270,15 @@ model forwards** beyond the trained forward —
 - then the single grad-enabled forward (`training.py:266`) plus backward.
 
 Both conditions hold at the shipped defaults, so this is the default training
-path, not an exotic setting. That makes self-conditioning a large share of the
-ELF training step **by construction** — but "large by construction" is a
-hypothesis about wall share, and Stage 1 must measure it before any kernel is
-proposed. Unlike ELF generation at cfg=1 (row 6), here the extra forwards are
-genuinely executed.
+path, not an exotic setting, and both auxiliary forwards are genuinely executed
+— unlike ELF generation at cfg=1 (row 6).
+
+On **call count** that makes self-conditioning likely to be a material share of
+the ELF training step. Deliberately not stated more strongly than that: a
+forward count is not a wall share (the auxiliary forwards are `no_grad`, so
+they carry no backward and need not cost what the trained forward costs), and
+Stage 1 must measure it before any kernel is proposed. It is a strong prior,
+not a finding.
 
 ---
 
@@ -272,14 +286,21 @@ genuinely executed.
 
 Not optimization targets — recorded so they are not rediscovered as mysteries.
 
-**Evidence asymmetry is the headline.** Only the sparse LM-head path carries
-measured numbers in-code. Rows 1, 3.2 and 5 are enabled **by default** with no
-in-code measurement at all: `fast_lora.py` contains no performance comment of
-any kind, and `fused_masked_diffusion_loss.py`'s justification is purely
-mechanical ("saves one allocation and one kernel launch",
-`fused_masked_diffusion_loss.py:28`) even though
-`benchmarks/kernels/benchmark_loss.py` exists to measure it and no checked-in
-result references it.
+**Evidence asymmetry is the headline.** Two paths carry measured numbers
+in-code: the sparse LM-head (both the #77 kernel table and the end-to-end
+sweep) and device-side noising, whose module docstring preserves all five
+trials individually, not just the summary.
+
+The asymmetry is on the other side. **Row 1 (dense masked CE) and row 5
+(bias-aware fast LoRA) are enabled by default with no in-code measurement at
+all**, and neither has an attributed share of step time: `fast_lora.py`
+contains no performance comment of any kind, and
+`fused_masked_diffusion_loss.py`'s justification is purely mechanical ("saves
+one allocation and one kernel launch", `fused_masked_diffusion_loss.py:28`)
+even though `benchmarks/kernels/benchmark_loss.py` exists to measure it and no
+checked-in result references it. `masked_diffusion_loss_from_timesteps` is also
+unmeasured but is opt-in and unused internally, so it carries no default-path
+risk.
 
 **Two terminology drifts.** `fast_lora.py:15` calls the file "Triton-fused LoRA
 kernel extensions" and the runtime warnings say "Triton kernel", but the file
@@ -320,10 +341,11 @@ Evidence status across the required rows:
 | 8 ELF training | none |
 
 The three paths with end-to-end evidence are all **already correctly
-dispatched**: sparse is opt-in because 50% masking is where it stops paying,
-noising is justified on correctness with no speed claim, and hybrid is gated on
-the conservative side of its measured crossover. There is no open decision in
-those rows.
+dispatched**: sparse is opt-in because ~50% masking is not a consistent
+speed-*and*-memory win (the step-time win survives there; the memory benefit
+does not), noising is justified on correctness with no speed claim, and hybrid
+is gated on the conservative side of its measured crossover. There is no open
+decision in those rows.
 
 Every path that lacks end-to-end evidence is a *reference* path (rows 6–8) or a
 default whose share has never been attributed (rows 1, 5). That is the Stage-1
