@@ -38,11 +38,22 @@ from __future__ import annotations
 
 import json
 import random
+import re
+import statistics
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
 __all__ = [
     "DependencyTask",
+    "all_numeric_runs",
+    "answer_span",
+    "extract_numeric_answer",
+    "REFERENCE_ARM",
+    "assemble_dependency_cell",
+    "require_reference_arm",
+    "score_extraction_pair",
+    "dependency_length_diagnostics",
     "dependency_tasks",
     "load_external_dependency_records",
     "score_dependency_outputs",
@@ -109,6 +120,177 @@ def dependency_tasks(
     return tuple(tasks)
 
 
+def answer_span(suffix: list[int], *, eos_id: int) -> list[int]:
+    """The semantic answer is the pre-EOS span — nothing after it (#157 step 3).
+
+    The generated canvas is fixed width, so a finished answer is followed by
+    EOS and then whatever filled the rest. Decoding the whole canvas with
+    ``skip_special_tokens=True`` deletes the EOS markers and splices those
+    fragments into one answer; that is what made #157 step 2's quality column
+    unreadable. Scoring therefore stops at the FIRST EOS. The full raw suffix
+    is kept for diagnostics, never for scoring.
+    """
+    return suffix[: suffix.index(eos_id)] if eos_id in suffix else list(suffix)
+
+
+# Every target value in this fixture is a two-digit integer in [10, 99]; the
+# schema-aware parser below depends on that and must be revisited if
+# `dependency_tasks` ever emits a different width.
+_TARGET_DIGITS = 2
+
+# A block is a digit run plus in-line separators only. A LINE BREAK ends a
+# block: "11 22\n33 44 55" is two blocks, not one, so rule 4 can choose
+# between them. Spaces and list punctuation stay inside a block.
+_NUMERIC_BLOCK = re.compile(r"[0-9][0-9 \t,.\u3001\u3002;:/|-]*[0-9]|[0-9]")
+
+
+def _parse_numeric_run(run: str) -> tuple[list[str], int]:
+    """Split one digit run into two-digit values (#157 step 3, frozen rule 3).
+
+    A run of even length is split left-to-right into two-digit values, so a
+    concatenated answer like ``7155843774274627`` recovers the same values as
+    a comma-separated one. An odd-length run cannot be a sequence of two-digit
+    values: it is NOT discarded — it is counted as invalid, because dropping it
+    would hide a malformed answer and flatter the arm that produced it.
+    """
+    if len(run) % _TARGET_DIGITS != 0:
+        return [], 1
+    return [
+        run[index : index + _TARGET_DIGITS]
+        for index in range(0, len(run), _TARGET_DIGITS)
+    ], 0
+
+
+def extract_numeric_answer(text: str) -> dict[str, Any]:
+    """Task-schema-aware final-numeric-block extraction (#157 step 3 PRIMARY).
+
+    Frozen before re-scoring, and deliberately NOT ``re.findall(r"\d+")``:
+    that picks up prose digits (the ``4`` of ``k4``) and leaves concatenated
+    two-digit runs undefined.
+
+    The rule, applied to the pre-EOS answer span only:
+
+    1. normalize with Unicode NFKC;
+    2. enumerate numeric blocks separated by prose;
+    3. parse each block under the task schema (two-digit values; even-length
+       runs split; odd-length runs kept as invalid);
+    4. choose the block with the MOST parsed items, later block wins a tie;
+    5. never truncate or pad to the target length — surplus and shortfall are
+       passed to the scorer as they are.
+
+    Selecting the block that best matches the target, or cutting to the first
+    eight values, would hide wrong and extra answers. This picks by count
+    alone and never consults the target.
+    """
+    normalized = unicodedata.normalize("NFKC", text)
+    best: list[str] = []
+    best_invalid = 0
+    found = False
+    for match in _NUMERIC_BLOCK.finditer(normalized):
+        values: list[str] = []
+        invalid = 0
+        for run in re.findall(r"[0-9]+", match.group(0)):
+            parsed, bad = _parse_numeric_run(run)
+            values.extend(parsed)
+            invalid += bad
+        found = True
+        # rule 4: most parsed items wins; ">=" makes the LATER block win ties.
+        if len(values) >= len(best):
+            best, best_invalid = values, invalid
+    return {
+        "values": tuple(best),
+        "invalid_runs": best_invalid,
+        "status": "ok" if found else "no_numeric_block",
+    }
+
+
+def all_numeric_runs(text: str) -> tuple[str, ...]:
+    """Broad SECONDARY extraction over the whole pre-EOS span (sensitivity).
+
+    Reported beside the primary rule, never used for a verdict. When the two
+    disagree on an arm's qualitative standing, the cell is typed
+    ``extraction_sensitive / undecidable`` rather than resolved by preferring
+    whichever parser reads better.
+    """
+    return tuple(re.findall(r"[0-9]+", unicodedata.normalize("NFKC", text)))
+
+
+def score_extraction_pair(tasks: Any, texts: list[str]) -> dict[str, Any]:
+    """Score one cell under the PRIMARY rule and the SECONDARY sensitivity.
+
+    Both are always reported. When they disagree on the cell's qualitative
+    standing — one finds a nonzero exact match and the other does not — the
+    cell is typed ``extraction_sensitive / undecidable`` instead of being
+    resolved by preferring whichever parser reads better (#157 step 3).
+    """
+    primary = [extract_numeric_answer(text) for text in texts]
+    primary_scores = score_dependency_outputs(
+        tasks, [result["values"] for result in primary]
+    )
+    secondary_scores = score_dependency_outputs(
+        tasks, [all_numeric_runs(text) for text in texts]
+    )
+    disagree = (primary_scores["exact_match"] > 0) != (
+        secondary_scores["exact_match"] > 0
+    )
+    return {
+        "extraction": "final_numeric_block (task-schema-aware)",
+        "primary": primary_scores,
+        "secondary_all_numeric_runs": secondary_scores,
+        "extracted_count_mean": statistics.fmean(
+            [len(result["values"]) for result in primary]
+        ),
+        "expected_count": statistics.fmean([len(task.target) for task in tasks]),
+        "invalid_run_total": sum(result["invalid_runs"] for result in primary),
+        "no_numeric_block_rows": sum(
+            1 for result in primary if result["status"] == "no_numeric_block"
+        ),
+        "extraction_status": (
+            "extraction_sensitive / undecidable" if disagree else "ok"
+        ),
+    }
+
+
+def dependency_length_diagnostics(
+    suffixes: list[list[int]], *, eos_id: int, mask_id: int
+) -> dict[str, Any]:
+    """Generation-length reporting that cannot cancel itself out (#157 step 3).
+
+    ``no_eos_fraction`` is a SEPARATE column and the first-EOS statistics cover
+    only EOS-bearing rows. Imputing ``1024`` for a row that never stopped would
+    make "filled the whole canvas" and "stopped late" the same number — and the
+    #157 preflight found exactly the pattern that destroys: the maskgit arms
+    fill the canvas on ``copy`` while stopping in single digits on ``reverse``
+    and ``kv_recall``. A single mean averages that to something unremarkable.
+
+    Returns ``None`` for the first-EOS statistics when NO row carried an EOS,
+    rather than inventing a position.
+    """
+    if not suffixes:
+        raise ValueError(
+            "length diagnostics over zero rows — record the failed cell "
+            "instead of a fabricated length"
+        )
+    positions = [row.index(eos_id) for row in suffixes if eos_id in row]
+    specials = {eos_id, mask_id}
+    return {
+        "row_count": len(suffixes),
+        "no_eos_fraction": sum(1 for row in suffixes if eos_id not in row)
+        / len(suffixes),
+        "first_eos_mean_over_eos_rows": (
+            statistics.fmean(positions) if positions else None
+        ),
+        "first_eos_median_over_eos_rows": (
+            statistics.median(positions) if positions else None
+        ),
+        "eos_bearing_rows": len(positions),
+        "mean_non_special_tokens": statistics.fmean(
+            [sum(1 for token in row if token not in specials) for row in suffixes]
+        ),
+        "residual_mask_total": sum(row.count(mask_id) for row in suffixes),
+    }
+
+
 def score_dependency_outputs(
     tasks: tuple[DependencyTask, ...] | list[DependencyTask],
     outputs: list[list[str]] | list[tuple[str, ...]],
@@ -164,6 +346,82 @@ def score_dependency_outputs(
 
 
 _REQUIRED_KEYS = ("name", "kind", "prompt", "source", "target")
+
+
+#: The exact (no-cache) arm. Condition 5 types every other arm against THIS
+#: arm's floor, so it is the reference by identity, never by position in a
+#: selection.
+REFERENCE_ARM = "mdlm_origin_quota"
+
+
+def require_reference_arm(labels: list[str] | tuple[str, ...]) -> str:
+    """Refuse an arm selection that omits the exact reference arm.
+
+    Taking the FIRST SELECTED arm as the reference silently promotes a cache
+    arm to floor authority when the exact arm is excluded — the record then
+    reports a floor derived from an approximate path and reads as if it were
+    the reference. A run that cannot be typed must fail loudly instead.
+    """
+    if REFERENCE_ARM not in labels:
+        raise ValueError(
+            f"arm selection {list(labels)} omits the exact reference arm "
+            f"{REFERENCE_ARM!r}: condition 5 types every arm against the exact "
+            "arm's floor, so a selection without it cannot be typed"
+        )
+    return REFERENCE_ARM
+
+
+def assemble_dependency_cell(
+    tasks: Any,
+    texts: list[str],
+    suffixes: list[list[int]],
+    *,
+    eos_id: int,
+    mask_id: int,
+    reference_floor_accuracy: float,
+    floor_kinds: set[str] | None = None,
+) -> dict[str, Any]:
+    """Build one cell's per-kind block and its reference-floor typing.
+
+    Extracted as a PURE function because the schema bug it replaces could not
+    be caught by the test suite: the producer is a benchmark script that CI
+    never executes, so a per-kind block reading the flat pre-freeze schema
+    (``kind_scores["exact_match"]``) while the floor check read the nested one
+    (``cell["primary"][...]``) stayed green while a fresh run would raise
+    ``KeyError``. Re-scoring saved suffixes went through the shared scorer and
+    hid it.
+
+    The whole extraction record is kept per kind — never a hand-picked subset —
+    so a future schema change cannot silently drop a field.
+
+    ``floor_kinds`` is supplied for non-reference arms so every arm is typed by
+    the EXACT arm's floor rather than its own (condition 5): an arm that is
+    merely as bad as the reference must not be scored as preservation. Pass
+    ``None`` on the reference arm to have its own floor computed.
+    """
+    per_kind: dict[str, Any] = {}
+    for kind in sorted({task.kind for task in tasks}):
+        keep = [index for index, task in enumerate(tasks) if task.kind == kind]
+        per_kind[kind] = {
+            **score_extraction_pair(
+                [tasks[index] for index in keep], [texts[index] for index in keep]
+            ),
+            "length": dependency_length_diagnostics(
+                [suffixes[index] for index in keep],
+                eos_id=eos_id,
+                mask_id=mask_id,
+            ),
+        }
+    if floor_kinds is None:
+        floor_kinds = {
+            kind
+            for kind, cell in per_kind.items()
+            if cell["primary"]["coupled_token_accuracy"] <= reference_floor_accuracy
+        }
+    for kind in floor_kinds:
+        if kind in per_kind:
+            per_kind[kind]["measurement_status"] = "reference_floor / undecidable"
+    return {"per_kind": per_kind, "reference_floor_kinds": sorted(floor_kinds)}
 
 
 def load_external_dependency_records(path: Any) -> tuple[DependencyTask, ...]:

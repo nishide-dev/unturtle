@@ -21,6 +21,7 @@ Provides shared block-decode algorithm that can be used by LLaDA, Dream, and oth
 Subclasses implement model-specific forward wrappers while inheriting common block-decode logic.
 """
 
+import logging
 import math
 import time
 import warnings
@@ -30,6 +31,8 @@ import torch
 from torch.nn import functional as F
 
 from .diffusion_generation_utils import sample_tokens, select_threshold_transfer_mask
+
+logger = logging.getLogger(__name__)
 
 
 class BlockDecodeMixin:
@@ -181,6 +184,19 @@ class BlockDecodeMixin:
         total_start = _time_start()
 
         # Block-decode loop
+        # #157 (b'): the block loop's own `step_idx` RESETS at every block, so
+        # it cannot be the number a commit trajectory reports — [1,2,1,2] would
+        # make two different iterations look like the same step. This counter is
+        # global and monotonic across blocks. It counts only iterations that
+        # committed token state: cache-construction forwards, trims and
+        # refreshes commit nothing and are excluded.
+        # Tolerant read: this shared loop is also reached by
+        # DreamGenerationConfig, which defines its own fields and has no
+        # `stream_callback`. A bare attribute access broke generation for a
+        # backbone that never asked for tracing (10 existing tests).
+        stream_callback = getattr(generation_config, "stream_callback", None)
+        global_commit_step = 0
+
         for block_idx in range(num_blocks):
             current_block_start = prompt_len + block_idx * block_length
             current_block_end = current_block_start + block_length
@@ -446,6 +462,20 @@ class BlockDecodeMixin:
 
                 _time_end(transfer_start, "threshold_transfer_s")
                 step_idx += 1
+
+                # One invocation per denoising iteration that updated token
+                # state, numbered globally (#157 (b')). No new API: this reads
+                # only `generation_config.stream_callback`.
+                global_commit_step += 1
+                if stream_callback is not None:
+                    try:
+                        stream_callback(global_commit_step, steps, x.detach().clone())
+                    except Exception as _cb_exc:  # noqa: BLE001
+                        logger.warning(
+                            "stream_callback raised at global step %d: %s",
+                            global_commit_step,
+                            _cb_exc,
+                        )
 
                 # Note: Cache is NOT updated during denoising loop
                 # (Fast-dLLM: cache stays constant within block)
