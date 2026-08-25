@@ -63,7 +63,7 @@ from unturtle.eval.dependency_slice import (
     answer_span,
     dependency_length_diagnostics,
     dependency_tasks,
-    score_dependency_outputs,
+    score_extraction_pair,
 )
 
 RUN_LABEL = (
@@ -223,11 +223,12 @@ def main() -> None:
             )
             # Condition 1: score the pre-EOS span only.
             answers = [answer_span(s, eos_id=eos_id) for s in suffixes]
-            decoded = [
-                tuple(tokenizer.decode(a, skip_special_tokens=True).split())
-                for a in answers
-            ]
-            scores = score_dependency_outputs(tasks, decoded)
+            texts = [tokenizer.decode(a, skip_special_tokens=True) for a in answers]
+            # The frozen extraction rule, shared with the re-scorer so the two
+            # cannot diverge. `str.split()` scored ~0 on answers the model had
+            # largely right, because an instruct model prefixes prose and joins
+            # values with commas.
+            scores = score_extraction_pair(tasks, texts)
 
             # Condition 2: per-kind generation length, never folded together.
             per_kind: dict[str, Any] = {}
@@ -238,10 +239,10 @@ def main() -> None:
                     if task.kind == kind
                 ]
                 kind_tasks = [t for t in tasks if t.kind == kind]
-                kind_decoded = [
-                    d for d, t in zip(decoded, tasks, strict=True) if t.kind == kind
+                kind_texts = [
+                    x for x, t in zip(texts, tasks, strict=True) if t.kind == kind
                 ]
-                kind_scores = score_dependency_outputs(kind_tasks, kind_decoded)
+                kind_scores = score_extraction_pair(kind_tasks, kind_texts)
                 per_kind[kind] = {
                     "length": dependency_length_diagnostics(
                         rows, eos_id=eos_id, mask_id=mask_id
@@ -277,7 +278,8 @@ def main() -> None:
                 floor_kinds = {
                     kind
                     for kind, cell in per_kind.items()
-                    if cell["coupled_token_accuracy"] <= REFERENCE_FLOOR_ACCURACY
+                    if cell["primary"]["coupled_token_accuracy"]
+                    <= REFERENCE_FLOOR_ACCURACY
                 }
             record["reference_floor_kinds"] = sorted(floor_kinds)
             for kind in floor_kinds:

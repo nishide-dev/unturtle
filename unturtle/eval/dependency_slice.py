@@ -49,6 +49,7 @@ __all__ = [
     "all_numeric_runs",
     "answer_span",
     "extract_numeric_answer",
+    "score_extraction_pair",
     "dependency_length_diagnostics",
     "dependency_tasks",
     "load_external_dependency_records",
@@ -209,6 +210,42 @@ def all_numeric_runs(text: str) -> tuple[str, ...]:
     whichever parser reads better.
     """
     return tuple(re.findall(r"[0-9]+", unicodedata.normalize("NFKC", text)))
+
+
+def score_extraction_pair(tasks: Any, texts: list[str]) -> dict[str, Any]:
+    """Score one cell under the PRIMARY rule and the SECONDARY sensitivity.
+
+    Both are always reported. When they disagree on the cell's qualitative
+    standing — one finds a nonzero exact match and the other does not — the
+    cell is typed ``extraction_sensitive / undecidable`` instead of being
+    resolved by preferring whichever parser reads better (#157 step 3).
+    """
+    primary = [extract_numeric_answer(text) for text in texts]
+    primary_scores = score_dependency_outputs(
+        tasks, [result["values"] for result in primary]
+    )
+    secondary_scores = score_dependency_outputs(
+        tasks, [all_numeric_runs(text) for text in texts]
+    )
+    disagree = (primary_scores["exact_match"] > 0) != (
+        secondary_scores["exact_match"] > 0
+    )
+    return {
+        "extraction": "final_numeric_block (task-schema-aware)",
+        "primary": primary_scores,
+        "secondary_all_numeric_runs": secondary_scores,
+        "extracted_count_mean": statistics.fmean(
+            [len(result["values"]) for result in primary]
+        ),
+        "expected_count": statistics.fmean([len(task.target) for task in tasks]),
+        "invalid_run_total": sum(result["invalid_runs"] for result in primary),
+        "no_numeric_block_rows": sum(
+            1 for result in primary if result["status"] == "no_numeric_block"
+        ),
+        "extraction_status": (
+            "extraction_sensitive / undecidable" if disagree else "ok"
+        ),
+    }
 
 
 def dependency_length_diagnostics(
