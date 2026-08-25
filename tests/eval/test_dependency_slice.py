@@ -388,3 +388,148 @@ class TestAllNumericRuns:
         from unturtle.eval.dependency_slice import all_numeric_runs
 
         assert all_numeric_runs("k4 -> 12 41") == ("4", "12", "41")
+
+
+class TestAssembleDependencyCell:
+    """The producer's record schema, exercised WITHOUT a GPU.
+
+    The bug these tests exist for: the per-kind block read the flat pre-freeze
+    schema while the floor check read the nested one. CI stayed green because
+    it never executes the benchmark script, and re-scoring saved suffixes went
+    through the shared scorer, so only a fresh multi-hour run would have hit
+    the KeyError.
+    """
+
+    @staticmethod
+    def _cell(**kwargs):
+        from unturtle.eval.dependency_slice import assemble_dependency_cell
+
+        return assemble_dependency_cell(**kwargs)
+
+    @staticmethod
+    def _fixture():
+        from unturtle.eval.dependency_slice import dependency_tasks
+
+        tasks = dependency_tasks(n_per_kind=1, seed=0, length=8)
+        # One perfect answer per task, plus an EOS so the length diagnostics
+        # see a stopping row.
+        texts = [" ".join(task.target) for task in tasks]
+        suffixes = [[11, 22, 9] for _ in tasks]
+        return tasks, texts, suffixes
+
+    def test_per_kind_carries_the_nested_extraction_schema(self):
+        tasks, texts, suffixes = self._fixture()
+        result = self._cell(
+            tasks=tasks,
+            texts=texts,
+            suffixes=suffixes,
+            eos_id=9,
+            mask_id=7,
+            reference_floor_accuracy=0.05,
+        )
+        for cell in result["per_kind"].values():
+            assert "primary" in cell
+            assert "exact_match" in cell["primary"]
+            assert "coupled_token_accuracy" in cell["primary"]
+            assert "secondary_all_numeric_runs" in cell
+            assert "length" in cell
+
+    def test_per_kind_has_no_flat_duplicate_of_a_nested_score(self):
+        """The scores live at ONE level only.
+
+        A mutant that adds a flat `exact_match` beside the nested `primary`
+        block survived a presence-only assertion — which is exactly the
+        schema-drift that caused the fresh-run KeyError, a flat reader and a
+        nested reader coexisting.
+        """
+        tasks, texts, suffixes = self._fixture()
+        result = self._cell(
+            tasks=tasks,
+            texts=texts,
+            suffixes=suffixes,
+            eos_id=9,
+            mask_id=7,
+            reference_floor_accuracy=0.05,
+        )
+        for cell in result["per_kind"].values():
+            assert "exact_match" not in cell
+            assert "coupled_token_accuracy" not in cell
+
+    def test_the_floor_is_read_from_the_primary_extraction(self):
+        """Reading it from the secondary must change the outcome, so the
+        fixture is built where the two extractions DISAGREE: prose digits give
+        the broad parser a match the schema-aware primary refuses."""
+        from unturtle.eval.dependency_slice import dependency_tasks
+
+        tasks = [
+            task
+            for task in dependency_tasks(n_per_kind=1, seed=0, length=8)
+            if task.kind == "copy"
+        ]
+        # Correct values, then a LONGER junk block. Rule 4 picks by count, so
+        # the primary takes the junk and scores 0; the secondary flattens every
+        # run in order and still lines the correct values up at the front.
+        texts = [" ".join(tasks[0].target) + "\n" + " ".join(["11"] * 12)]
+        suffixes = [[11, 22, 9]]
+        result = self._cell(
+            tasks=tasks,
+            texts=texts,
+            suffixes=suffixes,
+            eos_id=9,
+            mask_id=7,
+            reference_floor_accuracy=0.05,
+        )
+        cell = result["per_kind"]["copy"]
+        assert cell["primary"]["coupled_token_accuracy"] == 0.0
+        assert cell["secondary_all_numeric_runs"]["coupled_token_accuracy"] > 0.0
+        assert result["reference_floor_kinds"] == ["copy"]
+
+    def test_perfect_answers_are_not_at_the_reference_floor(self):
+        tasks, texts, suffixes = self._fixture()
+        result = self._cell(
+            tasks=tasks,
+            texts=texts,
+            suffixes=suffixes,
+            eos_id=9,
+            mask_id=7,
+            reference_floor_accuracy=0.05,
+        )
+        assert result["reference_floor_kinds"] == []
+
+    def test_silent_reference_puts_every_kind_at_the_floor(self):
+        tasks, _texts, suffixes = self._fixture()
+        result = self._cell(
+            tasks=tasks,
+            texts=["" for _ in tasks],
+            suffixes=suffixes,
+            eos_id=9,
+            mask_id=7,
+            reference_floor_accuracy=0.05,
+        )
+        assert sorted(result["reference_floor_kinds"]) == [
+            "copy",
+            "kv_recall",
+            "reverse",
+        ]
+        for cell in result["per_kind"].values():
+            assert cell["measurement_status"] == "reference_floor / undecidable"
+
+    def test_a_non_reference_arm_is_typed_by_the_reference_floor(self):
+        """Condition 5: an arm that is merely as bad as the reference must not
+        be scored as preservation, so the floor is imposed, not recomputed."""
+        tasks, texts, suffixes = self._fixture()
+        result = self._cell(
+            tasks=tasks,
+            texts=texts,  # this arm answers perfectly
+            suffixes=suffixes,
+            eos_id=9,
+            mask_id=7,
+            reference_floor_accuracy=0.05,
+            floor_kinds={"copy"},  # but the REFERENCE had no signal on copy
+        )
+        assert result["reference_floor_kinds"] == ["copy"]
+        assert (
+            result["per_kind"]["copy"]["measurement_status"]
+            == "reference_floor / undecidable"
+        )
+        assert "measurement_status" not in result["per_kind"]["reverse"]

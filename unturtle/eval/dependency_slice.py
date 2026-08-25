@@ -49,6 +49,7 @@ __all__ = [
     "all_numeric_runs",
     "answer_span",
     "extract_numeric_answer",
+    "assemble_dependency_cell",
     "score_extraction_pair",
     "dependency_length_diagnostics",
     "dependency_tasks",
@@ -343,6 +344,59 @@ def score_dependency_outputs(
 
 
 _REQUIRED_KEYS = ("name", "kind", "prompt", "source", "target")
+
+
+def assemble_dependency_cell(
+    tasks: Any,
+    texts: list[str],
+    suffixes: list[list[int]],
+    *,
+    eos_id: int,
+    mask_id: int,
+    reference_floor_accuracy: float,
+    floor_kinds: set[str] | None = None,
+) -> dict[str, Any]:
+    """Build one cell's per-kind block and its reference-floor typing.
+
+    Extracted as a PURE function because the schema bug it replaces could not
+    be caught by the test suite: the producer is a benchmark script that CI
+    never executes, so a per-kind block reading the flat pre-freeze schema
+    (``kind_scores["exact_match"]``) while the floor check read the nested one
+    (``cell["primary"][...]``) stayed green while a fresh run would raise
+    ``KeyError``. Re-scoring saved suffixes went through the shared scorer and
+    hid it.
+
+    The whole extraction record is kept per kind — never a hand-picked subset —
+    so a future schema change cannot silently drop a field.
+
+    ``floor_kinds`` is supplied for non-reference arms so every arm is typed by
+    the EXACT arm's floor rather than its own (condition 5): an arm that is
+    merely as bad as the reference must not be scored as preservation. Pass
+    ``None`` on the reference arm to have its own floor computed.
+    """
+    per_kind: dict[str, Any] = {}
+    for kind in sorted({task.kind for task in tasks}):
+        keep = [index for index, task in enumerate(tasks) if task.kind == kind]
+        per_kind[kind] = {
+            **score_extraction_pair(
+                [tasks[index] for index in keep], [texts[index] for index in keep]
+            ),
+            "length": dependency_length_diagnostics(
+                [suffixes[index] for index in keep],
+                eos_id=eos_id,
+                mask_id=mask_id,
+            ),
+        }
+    if floor_kinds is None:
+        floor_kinds = {
+            kind
+            for kind, cell in per_kind.items()
+            if cell["primary"]["coupled_token_accuracy"] <= reference_floor_accuracy
+        }
+    for kind in floor_kinds:
+        if kind in per_kind:
+            per_kind[kind]["measurement_status"] = "reference_floor / undecidable"
+    return {"per_kind": per_kind, "reference_floor_kinds": sorted(floor_kinds)}
 
 
 def load_external_dependency_records(path: Any) -> tuple[DependencyTask, ...]:

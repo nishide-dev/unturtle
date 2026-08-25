@@ -61,7 +61,7 @@ from unturtle.eval.decoding_baseline import (
 )
 from unturtle.eval.dependency_slice import (
     answer_span,
-    dependency_length_diagnostics,
+    assemble_dependency_cell,
     dependency_tasks,
     score_extraction_pair,
 )
@@ -230,27 +230,21 @@ def main() -> None:
             # values with commas.
             scores = score_extraction_pair(tasks, texts)
 
-            # Condition 2: per-kind generation length, never folded together.
-            per_kind: dict[str, Any] = {}
-            for kind in sorted({task.kind for task in tasks}):
-                rows = [
-                    s
-                    for s, task in zip(suffixes, tasks, strict=True)
-                    if task.kind == kind
-                ]
-                kind_tasks = [t for t in tasks if t.kind == kind]
-                kind_texts = [
-                    x for x, t in zip(texts, tasks, strict=True) if t.kind == kind
-                ]
-                kind_scores = score_extraction_pair(kind_tasks, kind_texts)
-                per_kind[kind] = {
-                    "length": dependency_length_diagnostics(
-                        rows, eos_id=eos_id, mask_id=mask_id
-                    ),
-                    "exact_match": kind_scores["exact_match"],
-                    "coupled_token_accuracy": kind_scores["coupled_token_accuracy"],
-                    "length_mismatch_fraction": kind_scores["length_mismatch_fraction"],
-                }
+            # Conditions 2 and 5 via the shared pure helper, so the
+            # producer's schema is exercised by unit tests instead of only by
+            # a multi-hour GPU run.
+            is_reference = label == ARMS[0][0]
+            assembled = assemble_dependency_cell(
+                tasks,
+                texts,
+                suffixes,
+                eos_id=eos_id,
+                mask_id=mask_id,
+                reference_floor_accuracy=REFERENCE_FLOOR_ACCURACY,
+                floor_kinds=None if is_reference else floor_kinds,
+            )
+            if is_reference:
+                floor_kinds = set(assembled["reference_floor_kinds"])
 
             record: dict[str, Any] = {
                 "arm": label,
@@ -264,27 +258,16 @@ def main() -> None:
                 "prompt_prefix_agreement": 1.0 if prefix_ok else 0.0,
                 "prompt_rendering": "chat_template(add_generation_prompt=True)",
                 "scores": scores,
-                "per_kind": per_kind,
+                "per_kind": assembled["per_kind"],
+                "reference_floor_kinds": assembled["reference_floor_kinds"],
                 "task_count": len(tasks),
             }
             if not primary:
                 record["batching_note"] = (
-                    "task-local RNG is NOT aligned across batch shapes; a "
-                    "per-item difference here is not a batching semantics "
-                    "change. Compare per-kind aggregates only (condition 3)."
-                )
-            # Condition 5: the exact arm defines the floor, per kind.
-            if label == ARMS[0][0]:
-                floor_kinds = {
-                    kind
-                    for kind, cell in per_kind.items()
-                    if cell["primary"]["coupled_token_accuracy"]
-                    <= REFERENCE_FLOOR_ACCURACY
-                }
-            record["reference_floor_kinds"] = sorted(floor_kinds)
-            for kind in floor_kinds:
-                record["per_kind"][kind]["measurement_status"] = (
-                    "reference_floor / undecidable"
+                    "batch-shape / RNG-consumption sensitivity observed; not a "
+                    "batching semantic change. NOT pooled with bs1, not an "
+                    "independent replicate, not used for arm selection, and a "
+                    "per-item difference is not a semantic change (condition 3)."
                 )
             # Condition 4: commitment order beside correctness, bs1 only.
             if reducer is not None:
