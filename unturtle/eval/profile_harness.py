@@ -78,22 +78,70 @@ class OperationEvent:
         return self.inclusive_seconds
 
 
+def _validate_tree(events: list[OperationEvent]) -> dict[str, OperationEvent]:
+    """Refuse an event set whose parent declarations cannot be trusted.
+
+    Checked because coverage is computed FROM these declarations: a dangling
+    parent, a duplicate name or a cycle would make the exclusivity check
+    vacuous rather than wrong-looking.
+    """
+    by_name: dict[str, OperationEvent] = {}
+    for event in events:
+        if event.name in by_name:
+            raise ValueError(
+                f"duplicate event name {event.name!r}: parent references are "
+                "resolved by name, so duplicates make the tree ambiguous"
+            )
+        by_name[event.name] = event
+    for event in events:
+        if event.parent is not None and event.parent not in by_name:
+            raise ValueError(
+                f"event {event.name!r} declares parent {event.parent!r}, which "
+                "is not in this cell's events; coverage cannot be validated "
+                "against a missing ancestor"
+            )
+    for event in events:
+        seen = {event.name}
+        cursor = event.parent
+        while cursor is not None:
+            if cursor in seen:
+                raise ValueError(
+                    f"parent cycle through {cursor!r}: the event tree must be "
+                    "acyclic for ancestor checks to terminate"
+                )
+            seen.add(cursor)
+            cursor = by_name[cursor].parent
+    return by_name
+
+
 def coverage_seconds(events: list[OperationEvent]) -> float:
     """Sum over mutually exclusive intervals only.
 
-    Refuses a parent and child that are both eligible instead of silently
-    double counting them — the whole point of the protocol's coverage section.
+    Refuses an eligible event that has ANY eligible ancestor, not merely an
+    eligible direct parent. The grandparent case is the one that bites:
+
+        root    eligible
+        └─ middle   not eligible
+           └─ leaf  eligible
+
+    `leaf`'s direct parent is ineligible, so a direct-parent check passes while
+    `root` and `leaf` both contribute and the leaf's time is counted twice.
     """
-    eligible = {event.name for event in events if event.coverage_eligible}
+    by_name = _validate_tree(events)
     for event in events:
         if not event.coverage_eligible:
             continue
-        if event.parent is not None and event.parent in eligible:
-            raise ValueError(
-                f"event {event.name!r} and its parent {event.parent!r} are both "
-                "coverage_eligible: summing them would count the same time "
-                "twice. Mark exactly one level eligible."
-            )
+        cursor = event.parent
+        while cursor is not None:
+            ancestor = by_name[cursor]
+            if ancestor.coverage_eligible:
+                raise ValueError(
+                    f"event {event.name!r} and its ancestor {ancestor.name!r} "
+                    "are both coverage_eligible: summing them would count the "
+                    "same time twice. Exactly one level of any path may be "
+                    "eligible."
+                )
+            cursor = ancestor.parent
     return sum(
         event.coverage_contribution() for event in events if event.coverage_eligible
     )
@@ -128,6 +176,10 @@ class ProfileCell:
     peak_reserved_bytes: int | None = None
     warmup_seconds: float | None = None
     hardware: str | None = None
+    #: Per-trial wall times behind `wall_seconds_instrumented_off`. Required so
+    #: a producer cannot hand over a bare scalar and have it read as a
+    #: replicated measurement — the protocol forbids a claim from one trial.
+    trial_seconds: list[float] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -144,6 +196,19 @@ def profile_cell(cell: ProfileCell) -> dict[str, Any]:
     unattributed = cell.wall_seconds_instrumented_on - covered
     status = "ok"
     reasons: list[str] = []
+    if not cell.trial_seconds:
+        status = "profile_invalid"
+        reasons.append(
+            "no trial_seconds recorded: a scalar wall time cannot be "
+            "distinguished from a single unreplicated trial, which the "
+            "protocol forbids as a basis for a claim"
+        )
+    elif len(cell.trial_seconds) == 1:
+        status = "profile_invalid"
+        reasons.append(
+            "single trial: the protocol requires replicated, interleaved "
+            "trials before any performance statement"
+        )
     if covered > cell.wall_seconds_instrumented_on + COVERAGE_TOLERANCE:
         status = "profile_invalid"
         reasons.append(
@@ -174,6 +239,7 @@ def profile_cell(cell: ProfileCell) -> dict[str, Any]:
         "unattributed_seconds": unattributed,
         "verdict_source": "wall_seconds_instrumented_off",
         "warmup_seconds": cell.warmup_seconds,
+        "trials": trial_statistics(cell.trial_seconds) if cell.trial_seconds else None,
         "peak_allocated_bytes": cell.peak_allocated_bytes,
         "peak_reserved_bytes": cell.peak_reserved_bytes,
         "operations": [
@@ -189,5 +255,8 @@ def profile_cell(cell: ProfileCell) -> dict[str, Any]:
         ],
         "status": status,
         "invalid_reasons": reasons,
-        **cell.extra,
+        # Namespaced, NOT spread: a producer passing `extra={"status": "ok"}`
+        # would otherwise overwrite a `profile_invalid` verdict the core just
+        # computed, and zero out `covered_seconds` with it.
+        "extra": cell.extra,
     }

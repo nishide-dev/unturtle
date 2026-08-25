@@ -26,7 +26,7 @@ def _event(**kwargs):
     return OperationEvent(**{**base, **kwargs})
 
 
-def _cell(events, *, on=10.0, off=9.0):
+def _cell(events, *, on=10.0, off=9.0, trials=(9.0, 9.1, 8.9)):
     from unturtle.eval.profile_harness import ProfileCell
 
     return ProfileCell(
@@ -38,6 +38,7 @@ def _cell(events, *, on=10.0, off=9.0):
         wall_seconds_instrumented_off=off,
         wall_seconds_instrumented_on=on,
         events=events,
+        trial_seconds=list(trials),
     )
 
 
@@ -186,3 +187,111 @@ class TestTrialStatistics:
 
         with pytest.raises(ValueError, match="not a measurement"):
             trial_statistics([])
+
+
+class TestTreeValidation:
+    """Coverage is computed FROM the parent declarations, so they are checked."""
+
+    def test_an_eligible_ancestor_two_levels_up_is_refused(self):
+        """The grandparent hole: `leaf`'s direct parent is ineligible, so a
+        direct-parent check passes while root and leaf both contribute."""
+        from unturtle.eval.profile_harness import coverage_seconds
+
+        events = [
+            _event(name="root", inclusive_seconds=10.0),
+            _event(
+                name="middle",
+                inclusive_seconds=8.0,
+                parent="root",
+                coverage_eligible=False,
+            ),
+            _event(name="leaf", inclusive_seconds=6.0, parent="middle"),
+        ]
+        with pytest.raises(ValueError, match="ancestor"):
+            coverage_seconds(events)
+
+    def test_a_deep_chain_with_one_eligible_level_is_accepted(self):
+        from unturtle.eval.profile_harness import coverage_seconds
+
+        events = [
+            _event(name="root", inclusive_seconds=10.0, coverage_eligible=False),
+            _event(
+                name="middle",
+                inclusive_seconds=8.0,
+                parent="root",
+                coverage_eligible=False,
+            ),
+            _event(name="leaf", inclusive_seconds=6.0, parent="middle"),
+        ]
+        assert coverage_seconds(events) == 6.0
+
+    def test_duplicate_event_names_are_refused(self):
+        from unturtle.eval.profile_harness import coverage_seconds
+
+        events = [_event(name="op"), _event(name="op")]
+        with pytest.raises(ValueError, match="duplicate"):
+            coverage_seconds(events)
+
+    def test_a_dangling_parent_is_refused(self):
+        from unturtle.eval.profile_harness import coverage_seconds
+
+        with pytest.raises(ValueError, match="not in this cell"):
+            coverage_seconds([_event(name="child", parent="ghost")])
+
+    def test_a_parent_cycle_is_refused(self):
+        from unturtle.eval.profile_harness import coverage_seconds
+
+        events = [
+            _event(name="a", parent="b", coverage_eligible=False),
+            _event(name="b", parent="a", coverage_eligible=False),
+        ]
+        with pytest.raises(ValueError, match="cycle"):
+            coverage_seconds(events)
+
+
+class TestIntegrityFieldsCannotBeOverwritten:
+    def test_extra_is_namespaced_not_spread(self):
+        """A producer passing extra={"status": "ok"} must not overwrite a
+        profile_invalid verdict the core just computed."""
+        from unturtle.eval.profile_harness import ProfileCell, profile_cell
+
+        cell = ProfileCell(
+            family="f",
+            cell="c",
+            batch_size=1,
+            sequence_length=128,
+            dtype="bf16",
+            wall_seconds_instrumented_off=9.0,
+            wall_seconds_instrumented_on=10.0,
+            events=[_event(inclusive_seconds=12.0)],
+            trial_seconds=[9.0, 9.1, 8.9],
+            extra={"status": "ok", "covered_seconds": 0},
+        )
+        record = profile_cell(cell)
+        assert record["status"] == "profile_invalid"
+        assert record["covered_seconds"] == 12.0
+        assert record["extra"]["status"] == "ok"
+
+
+class TestTrialProvenanceIsRequired:
+    def test_a_cell_without_trials_is_invalid(self):
+        from unturtle.eval.profile_harness import profile_cell
+
+        record = profile_cell(_cell([_event()], trials=()))
+        assert record["status"] == "profile_invalid"
+        assert any("trial_seconds" in r for r in record["invalid_reasons"])
+
+    def test_a_single_trial_cell_is_invalid(self):
+        from unturtle.eval.profile_harness import profile_cell
+
+        record = profile_cell(_cell([_event()], trials=(9.0,)))
+        assert record["status"] == "profile_invalid"
+        assert any("single trial" in r for r in record["invalid_reasons"])
+
+    def test_replicated_trials_are_summarized(self):
+        from unturtle.eval.profile_harness import profile_cell
+
+        record = profile_cell(_cell([_event()], trials=(9.0, 9.2, 9.1)))
+        assert record["status"] == "ok"
+        assert record["trials"]["trials"] == 3
+        assert record["trials"]["median_seconds"] == 9.1

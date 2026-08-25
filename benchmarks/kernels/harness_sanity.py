@@ -109,29 +109,56 @@ def timed_steps(fn, *, warmup: int, steps: int, device: str) -> list[float]:
     return seconds
 
 
-def interleaved(arm_a, arm_b, *, trials: int, warmup: int, steps: int, device: str):
-    """Alternate which arm runs first so thermal drift does not land on one.
+def interleaved_trials(
+    make_arm, labels, *, trials: int, warmup: int, steps: int, device: str
+) -> dict[str, list[dict[str, Any]]]:
+    """Replicated, order-alternating trials over arm FACTORIES.
 
-    The discipline `sparse_lm_head_training.py` already uses; stated here
-    because "interleave the arms" is a protocol rule, not an optional nicety.
+    Takes `make_arm(label) -> (run, teardown)` rather than persistent arm
+    objects: each trial must build a fresh model and trainer, and tear them
+    down with a collect, so the arm that runs second does not inherit the
+    first's resident weights. A persistent callable cannot satisfy that.
+
+    Order alternates per trial so thermal drift does not land entirely on
+    whichever arm runs second — one of the protocol's measurement rules, and
+    the reason a fixed dense-then-sparse loop is not a gate.
     """
-    a_times: list[float] = []
-    b_times: list[float] = []
+    results: dict[str, list[dict[str, Any]]] = {label: [] for label in labels}
     for trial in range(trials):
-        first, second = (arm_a, arm_b) if trial % 2 == 0 else (arm_b, arm_a)
-        first_times = timed_steps(
-            first["fn"], warmup=warmup, steps=steps, device=device
-        )
-        second_times = timed_steps(
-            second["fn"], warmup=warmup, steps=steps, device=device
-        )
-        if trial % 2 == 0:
-            a_times.append(statistics.median(first_times))
-            b_times.append(statistics.median(second_times))
-        else:
-            b_times.append(statistics.median(first_times))
-            a_times.append(statistics.median(second_times))
-    return a_times, b_times
+        order = list(labels) if trial % 2 == 0 else list(reversed(labels))
+        for label in order:
+            run, teardown = make_arm(label)
+            measurement = run(warmup=warmup, steps=steps, device=device)
+            measurement["trial"] = trial
+            measurement["ran_first"] = label == order[0]
+            results[label].append(measurement)
+            teardown()
+    return results
+
+
+def sign_consistency(deltas: list[float], *, expect_negative: bool) -> dict[str, Any]:
+    """How many trials agreed with the expected direction, and by how much.
+
+    Sign alone is not "rough magnitude": a -0.1% delta is noise. The median
+    effect must also clear the spread across trials, which keeps the check
+    hardware-independent without pinning it to the ledger's exact percentages.
+    """
+    if not deltas:
+        raise ValueError("no per-trial deltas; nothing to check consistency over")
+    agree = sum(1 for d in deltas if (d < 0) == expect_negative)
+    median = statistics.median(deltas)
+    spread = max(deltas) - min(deltas)
+    return {
+        "per_trial": deltas,
+        "median": median,
+        "spread": spread,
+        "trials_agreeing": agree,
+        "trials": len(deltas),
+        "majority_agrees": agree * 2 > len(deltas),
+        # The effect must be larger than the run-to-run drift it is measured
+        # against, otherwise the sign is not evidence of anything.
+        "exceeds_spread": abs(median) > spread,
+    }
 
 
 def _load_sparse_benchmark():
@@ -152,10 +179,28 @@ def _load_sparse_benchmark():
 
 
 def check_sparse(args) -> dict[str, Any]:
-    """Reproduce the SHAPE of the sparse finding: win low, penalty high."""
+    """Reproduce the SHAPE of the sparse finding under replicated trials.
+
+    Three axes are asserted independently — low-mask step time, low-mask
+    activations, high-mask activations — because a harness that got only the
+    step sign right would still be missing the regime that made the flag
+    opt-in. Memory is CUDA-only and its absence is a failure, not a pass.
+    """
     import argparse as _argparse
 
     import torch
+
+    if not (args.device.startswith("cuda") and torch.cuda.is_available()):
+        return {
+            "check": "sparse",
+            "status": "unsupported",
+            "reason": (
+                "the sparse gate asserts on activation memory, which needs "
+                "CUDA; a CPU run cannot exercise the axis that made this flag "
+                "opt-in"
+            ),
+            "expectation": EXPECTATIONS["sparse"],
+        }
 
     bench = _load_sparse_benchmark()
     cells: dict[str, Any] = {}
@@ -172,103 +217,118 @@ def check_sparse(args) -> dict[str, Any]:
             steps=args.steps,
         )
         batch = bench._noised_batch(bench_args, mask_ratio)
-        arms = {}
-        for sparse in (False, True):
+
+        def make_arm(label, bench_args=bench_args, batch=batch):
+            # Fresh model and trainer per trial: reusing them across trials
+            # would let the first trial's allocation sit inside every later
+            # peak.
             model = bench._model(bench_args)
-            trainer = bench._trainer(bench_args, model, sparse)
+            trainer = bench._trainer(bench_args, model, label == "sparse")
 
-            def step(trainer=trainer, model=model, batch=batch):
-                loss = trainer.compute_loss(model, dict(batch))
-                loss.backward()
-                model.zero_grad(set_to_none=True)
-
-            baseline = 0
-            if args.device.startswith("cuda") and torch.cuda.is_available():
+            def run(*, warmup, steps, device):
                 torch.cuda.synchronize()
                 torch.cuda.reset_peak_memory_stats()
-                # Weights/grads/batch already resident. The activation figure
-                # subtracts them, because they are identical across arms and
-                # dilute the percentage on the part the flag actually changes.
+                # Weights/grads/batch are resident and identical across arms;
+                # subtracting them leaves the transient set the flag changes.
                 baseline = torch.cuda.memory_allocated()
-            seconds = timed_steps(
-                step, warmup=args.warmup, steps=args.steps, device=args.device
-            )
-            peak = (
-                torch.cuda.max_memory_allocated()
-                if args.device.startswith("cuda") and torch.cuda.is_available()
-                else None
-            )
-            arms["sparse" if sparse else "dense"] = {
-                "median_seconds": statistics.median(seconds),
-                "peak_allocated_bytes": peak,
-                "activation_bytes": (peak - baseline if peak is not None else None),
-            }
-            del model, trainer
-            # `gc.collect()` is load-bearing, not hygiene: the trainer and model
-            # form a reference cycle, so `del` alone leaves the weights
-            # resident and whichever arm runs second starts with the previous
-            # arm's allocation inside its peak. The #77 benchmark records that
-            # this "produced a sign flip between runs"
-            # (sparse_lm_head_training.py:317-323) — and this gate reproduced
-            # exactly that corruption before the collect was added.
-            gc.collect()
-            if args.device.startswith("cuda") and torch.cuda.is_available():
+
+                def step():
+                    loss = trainer.compute_loss(model, dict(batch))
+                    loss.backward()
+                    model.zero_grad(set_to_none=True)
+
+                seconds = timed_steps(step, warmup=warmup, steps=steps, device=device)
+                peak = torch.cuda.max_memory_allocated()
+                return {
+                    "median_seconds": statistics.median(seconds),
+                    "peak_allocated_bytes": peak,
+                    "activation_bytes": peak - baseline,
+                }
+
+            def teardown(model=model, trainer=trainer):
+                nonlocal_model = model
+                nonlocal_trainer = trainer
+                del nonlocal_model, nonlocal_trainer
+                # Load-bearing: the trainer and model form a reference cycle,
+                # so `del` alone leaves the weights resident and the next arm
+                # inherits them. sparse_lm_head_training.py:317-323 records
+                # that this "produced a sign flip between runs", and an earlier
+                # version of this gate reproduced exactly that corruption.
+                gc.collect()
                 torch.cuda.empty_cache()
-        dense, sparse_arm = arms["dense"], arms["sparse"]
-        step_delta = (sparse_arm["median_seconds"] - dense["median_seconds"]) / dense[
-            "median_seconds"
-        ]
-        peak_delta = None
-        if dense["peak_allocated_bytes"] and sparse_arm["peak_allocated_bytes"]:
-            peak_delta = (
-                sparse_arm["peak_allocated_bytes"] - dense["peak_allocated_bytes"]
-            ) / dense["peak_allocated_bytes"]
-        activation_delta = None
-        if dense.get("activation_bytes") and sparse_arm.get("activation_bytes"):
-            activation_delta = (
-                sparse_arm["activation_bytes"] - dense["activation_bytes"]
-            ) / dense["activation_bytes"]
+
+            return run, teardown
+
+        per_arm = interleaved_trials(
+            make_arm,
+            ("dense", "sparse"),
+            trials=args.trials,
+            warmup=args.warmup,
+            steps=args.steps,
+            device=args.device,
+        )
+        step_deltas = []
+        activation_deltas = []
+        for dense, sparse_arm in zip(per_arm["dense"], per_arm["sparse"], strict=True):
+            if not dense["median_seconds"] or not dense["activation_bytes"]:
+                raise ValueError(
+                    "zero dense baseline: a delta cannot be formed against it "
+                    f"(step={dense['median_seconds']}, "
+                    f"activation={dense['activation_bytes']})"
+                )
+            step_deltas.append(
+                (sparse_arm["median_seconds"] - dense["median_seconds"])
+                / dense["median_seconds"]
+            )
+            activation_deltas.append(
+                (sparse_arm["activation_bytes"] - dense["activation_bytes"])
+                / dense["activation_bytes"]
+            )
         cells[f"mask_{mask_ratio}"] = {
-            "arms": arms,
-            "step_time_delta": step_delta,
-            "peak_delta": peak_delta,
-            "activation_delta": activation_delta,
+            "per_arm": per_arm,
+            "step_time": sign_consistency(step_deltas, expect_negative=True),
+            "activation": sign_consistency(
+                activation_deltas, expect_negative=(mask_ratio < 0.4)
+            ),
         }
 
-    low = cells["mask_0.15"]
-    high = cells["mask_0.75"]
-    # Directional, not exact: the sign is the finding, the magnitude is
-    # hardware. A harness reporting a win at BOTH ratios would be ignoring the
-    # regime that made this flag opt-in.
-    #
-    # Memory is asserted on ACTIVATIONS, not raw peak: ~40% of peak is weights,
-    # identical in both arms, which dilutes the effect being measured. The
-    # ledger's own columns make the same distinction.
-    reproduced = (
-        low["step_time_delta"] < 0
-        and (low["activation_delta"] is None or low["activation_delta"] < 0)
-        and (high["activation_delta"] is None or high["activation_delta"] > 0)
+    low, high = cells["mask_0.15"], cells["mask_0.75"]
+    axes = {
+        "low_mask_step_time_win": low["step_time"],
+        "low_mask_activation_win": low["activation"],
+        "high_mask_activation_penalty": high["activation"],
+    }
+    for name, axis in axes.items():
+        if any(
+            value is None or value != value  # NaN
+            for value in (axis["median"], axis["spread"])
+        ):
+            return {
+                "check": "sparse",
+                "status": "measurement_invalid",
+                "reason": f"axis {name} produced a non-finite statistic",
+                "expectation": EXPECTATIONS["sparse"],
+                "cells": cells,
+            }
+    reproduced = all(
+        axis["majority_agrees"] and axis["exceeds_spread"] for axis in axes.values()
     )
     return {
         "check": "sparse",
         "status": "reproduced" if reproduced else "NOT_REPRODUCED",
         "expectation": EXPECTATIONS["sparse"],
+        "trials": args.trials,
+        "axes": {
+            name: {
+                "median": axis["median"],
+                "spread": axis["spread"],
+                "trials_agreeing": f"{axis['trials_agreeing']}/{axis['trials']}",
+                "majority_agrees": axis["majority_agrees"],
+                "exceeds_spread": axis["exceeds_spread"],
+            }
+            for name, axis in axes.items()
+        },
         "cells": cells,
-        "observed_shape": (
-            f"step delta at 0.15 = {low['step_time_delta']:+.1%}; "
-            f"activation delta at 0.15 = "
-            + (
-                f"{low['activation_delta']:+.1%}"
-                if low["activation_delta"] is not None
-                else "n/a"
-            )
-            + "; activation delta at 0.75 = "
-            + (
-                f"{high['activation_delta']:+.1%}"
-                if high["activation_delta"] is not None
-                else "n/a"
-            )
-        ),
     }
 
 
