@@ -38,13 +38,17 @@ from __future__ import annotations
 
 import json
 import random
+import re
 import statistics
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
 __all__ = [
     "DependencyTask",
+    "all_numeric_runs",
     "answer_span",
+    "extract_numeric_answer",
     "dependency_length_diagnostics",
     "dependency_tasks",
     "load_external_dependency_records",
@@ -123,6 +127,88 @@ def answer_span(suffix: list[int], *, eos_id: int) -> list[int]:
     is kept for diagnostics, never for scoring.
     """
     return suffix[: suffix.index(eos_id)] if eos_id in suffix else list(suffix)
+
+
+# Every target value in this fixture is a two-digit integer in [10, 99]; the
+# schema-aware parser below depends on that and must be revisited if
+# `dependency_tasks` ever emits a different width.
+_TARGET_DIGITS = 2
+
+# A block is a digit run plus in-line separators only. A LINE BREAK ends a
+# block: "11 22\n33 44 55" is two blocks, not one, so rule 4 can choose
+# between them. Spaces and list punctuation stay inside a block.
+_NUMERIC_BLOCK = re.compile(r"[0-9][0-9 \t,.\u3001\u3002;:/|-]*[0-9]|[0-9]")
+
+
+def _parse_numeric_run(run: str) -> tuple[list[str], int]:
+    """Split one digit run into two-digit values (#157 step 3, frozen rule 3).
+
+    A run of even length is split left-to-right into two-digit values, so a
+    concatenated answer like ``7155843774274627`` recovers the same values as
+    a comma-separated one. An odd-length run cannot be a sequence of two-digit
+    values: it is NOT discarded — it is counted as invalid, because dropping it
+    would hide a malformed answer and flatter the arm that produced it.
+    """
+    if len(run) % _TARGET_DIGITS != 0:
+        return [], 1
+    return [
+        run[index : index + _TARGET_DIGITS]
+        for index in range(0, len(run), _TARGET_DIGITS)
+    ], 0
+
+
+def extract_numeric_answer(text: str) -> dict[str, Any]:
+    """Task-schema-aware final-numeric-block extraction (#157 step 3 PRIMARY).
+
+    Frozen before re-scoring, and deliberately NOT ``re.findall(r"\d+")``:
+    that picks up prose digits (the ``4`` of ``k4``) and leaves concatenated
+    two-digit runs undefined.
+
+    The rule, applied to the pre-EOS answer span only:
+
+    1. normalize with Unicode NFKC;
+    2. enumerate numeric blocks separated by prose;
+    3. parse each block under the task schema (two-digit values; even-length
+       runs split; odd-length runs kept as invalid);
+    4. choose the block with the MOST parsed items, later block wins a tie;
+    5. never truncate or pad to the target length — surplus and shortfall are
+       passed to the scorer as they are.
+
+    Selecting the block that best matches the target, or cutting to the first
+    eight values, would hide wrong and extra answers. This picks by count
+    alone and never consults the target.
+    """
+    normalized = unicodedata.normalize("NFKC", text)
+    best: list[str] = []
+    best_invalid = 0
+    found = False
+    for match in _NUMERIC_BLOCK.finditer(normalized):
+        values: list[str] = []
+        invalid = 0
+        for run in re.findall(r"[0-9]+", match.group(0)):
+            parsed, bad = _parse_numeric_run(run)
+            values.extend(parsed)
+            invalid += bad
+        found = True
+        # rule 4: most parsed items wins; ">=" makes the LATER block win ties.
+        if len(values) >= len(best):
+            best, best_invalid = values, invalid
+    return {
+        "values": tuple(best),
+        "invalid_runs": best_invalid,
+        "status": "ok" if found else "no_numeric_block",
+    }
+
+
+def all_numeric_runs(text: str) -> tuple[str, ...]:
+    """Broad SECONDARY extraction over the whole pre-EOS span (sensitivity).
+
+    Reported beside the primary rule, never used for a verdict. When the two
+    disagree on an arm's qualitative standing, the cell is typed
+    ``extraction_sensitive / undecidable`` rather than resolved by preferring
+    whichever parser reads better.
+    """
+    return tuple(re.findall(r"[0-9]+", unicodedata.normalize("NFKC", text)))
 
 
 def dependency_length_diagnostics(

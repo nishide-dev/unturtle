@@ -274,3 +274,117 @@ class TestDependencyLengthDiagnostics:
     def test_zero_rows_is_refused(self):
         with pytest.raises(ValueError, match="zero rows"):
             self._diag([], eos_id=9, mask_id=7)
+
+
+class TestExtractNumericAnswer:
+    """The frozen PRIMARY extraction rule (#157 step 3)."""
+
+    @staticmethod
+    def _ex(text):
+        from unturtle.eval.dependency_slice import extract_numeric_answer
+
+        return extract_numeric_answer(text)
+
+    def test_comma_separated_block_after_prose(self):
+        assert self._ex(
+            "Sure, here is the sequence:\n\n46, 85, 80, 87, 36, 79, 52, 46"
+        )["values"] == ("46", "85", "80", "87", "36", "79", "52", "46")
+
+    def test_concatenated_run_splits_into_two_digit_values(self):
+        """A model that emits no separators must recover the same values as a
+        comma-separated one — same task schema, different surface form."""
+        assert self._ex("7155843774274627")["values"] == (
+            "71",
+            "55",
+            "84",
+            "37",
+            "74",
+            "27",
+            "46",
+            "27",
+        )
+
+    def test_prose_digits_do_not_become_the_answer(self):
+        """`re.findall(r"\\d+")` would pick up the 4 of `k4`; this must not."""
+        assert self._ex("Based on k4 and k6 the answer is:\n12 41 85 24")["values"] == (
+            "12",
+            "41",
+            "85",
+            "24",
+        )
+
+    def test_block_with_most_items_wins(self):
+        assert self._ex("11 22\n33 44 55 66")["values"] == (
+            "33",
+            "44",
+            "55",
+            "66",
+        )
+
+    def test_later_block_wins_a_tie(self):
+        assert self._ex("11 22\n33 44")["values"] == ("33", "44")
+
+    def test_odd_length_run_is_invalid_not_dropped(self):
+        """Discarding a malformed run would hide a bad answer and flatter the
+        arm that produced it."""
+        result = self._ex("answer: 123")
+        assert result["values"] == ()
+        assert result["invalid_runs"] == 1
+
+    def test_surplus_is_not_truncated(self):
+        assert len(self._ex("11 22 33 44 55 66 77 88 99")["values"]) == 9
+
+    def test_shortfall_is_not_padded(self):
+        assert self._ex("11 22")["values"] == ("11", "22")
+
+    def test_absence_of_numbers_is_typed_not_guessed(self):
+        result = self._ex("I cannot answer that.")
+        assert result["values"] == ()
+        assert result["status"] == "no_numeric_block"
+
+    def test_nfkc_normalizes_full_width_digits(self):
+        assert self._ex("４６ ８５")["values"] == ("46", "85")
+
+    def test_a_line_break_ends_a_block(self):
+        """Rule 2: blocks are separated by prose, and a LINE BREAK is a
+        separator, not an in-block one.
+
+        Pinned because the first implementation of this rule used `\\s` in the
+        block character class, which merged separate lines into one block. A
+        mutation battery caught it surviving: fixtures whose values all survive
+        concatenation cannot tell the two apart, because the merged block ends
+        with the same items. This fixture can — merging would report six values
+        where the winning block has four.
+        """
+        assert self._ex("11 22 33 44\n55 66")["values"] == (
+            "11",
+            "22",
+            "33",
+            "44",
+        )
+
+    def test_a_stray_leading_number_is_not_merged_into_the_answer(self):
+        """Same separation property from the other side: a stray value on its
+        own line must not be prepended to the real answer block."""
+        assert self._ex("42\n11 22 33")["values"] == ("11", "22", "33")
+
+    def test_never_consults_the_target(self):
+        """Rule 4 picks by COUNT. A longer wrong block must beat a shorter
+        block even when the shorter one would have matched a target."""
+        assert self._ex("46 85\n11 22 33 44 55 66")["values"] == (
+            "11",
+            "22",
+            "33",
+            "44",
+            "55",
+            "66",
+        )
+
+
+class TestAllNumericRuns:
+    """The SECONDARY sensitivity extraction — never a verdict."""
+
+    def test_is_deliberately_broader_than_the_primary_rule(self):
+        from unturtle.eval.dependency_slice import all_numeric_runs
+
+        assert all_numeric_runs("k4 -> 12 41") == ("4", "12", "41")
