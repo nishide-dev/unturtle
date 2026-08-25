@@ -30,8 +30,37 @@ Every cell therefore records:
 | `wall_seconds_instrumented_off` | steady-state end-to-end, instrumentation disabled — **this is the verdict** |
 | `wall_seconds_instrumented_on` | same cell with instrumentation active |
 | `instrumentation_overhead` | the difference, reported not hidden |
-| `operation_sum_seconds` | sum of per-operation inclusive times |
-| `unattributed_seconds` | `wall_instrumented_on − operation_sum` |
+| `covered_seconds` | sum over **mutually exclusive** intervals only (see below) |
+| `unattributed_seconds` | `wall_seconds_instrumented_on − covered_seconds` |
+
+### Coverage is exclusive, never a sum of inclusive times
+
+The taxonomies in §3 are **nested**: `attention_path` sits inside
+`full_model_forward`, and `trained_forward` contains attention and projection
+work. Summing inclusive times across a parent and its children counts the same
+microseconds twice, which inflates coverage and drives
+`unattributed_seconds` negative or implausibly small — the arithmetic would
+then *look* like near-complete attribution precisely when it is worst.
+
+So three quantities are kept distinct:
+
+| quantity | definition | use |
+|---|---|---|
+| `inclusive_seconds` | wall time inside an event, children included | diagnosis only — **never summed across parent and child** |
+| `covered_seconds` | sum of mutually exclusive top-level intervals, or equivalently of exclusive leaf times | the only input to coverage arithmetic |
+| `unattributed_seconds` | `wall_seconds_instrumented_on − covered_seconds` | how much of the step the taxonomy does not explain |
+
+Invariants, enforced rather than assumed:
+
+- every event declares a `parent` (or `null` for top level) and a
+  `coverage_eligible` flag; **only `coverage_eligible` events contribute to
+  `covered_seconds`**, and a parent and its child are never both eligible;
+- `covered_seconds > wall_seconds_instrumented_on + tolerance` types the cell
+  `profile_invalid` — it means the exclusivity declaration is wrong, and a cell
+  that cannot be trusted must say so rather than be published;
+- a negative `unattributed_seconds` is **never clamped to zero**. Clamping would
+  hide exactly the bookkeeping error this section exists to prevent; it is
+  reported as-is and types the cell `profile_invalid`.
 
 `unattributed_seconds` is mandatory. A taxonomy that accounts for 60% of the
 step is a useful partial result, but only if the 40% is visible; silently
@@ -58,8 +87,10 @@ Rules, each one a defence against a specific way this goes wrong:
 
 ## 2. Inclusive time, call count, and exclusive time where it is meaningful
 
-Each operation event records `inclusive_seconds`, `call_count`, and
-`exclusive_seconds` where nesting makes it well-defined. Call count is not
+Each operation event records `inclusive_seconds`, `exclusive_seconds`,
+`call_count`, its `parent`, and `coverage_eligible`. Exclusive time is what
+coverage arithmetic uses (§1); inclusive time is for reading a single event's
+total cost and must not be summed across levels. Call count is not
 decoration: Stage 0's strongest prior is a *count* (ELF training's two
 auxiliary forwards), and the whole point of Stage 1 is to find out whether that
 count converts into wall share. A `no_grad` forward carries no backward, so it
@@ -107,9 +138,14 @@ FMLM's 16–25 GiB peak without measurement.
 
 ### Hybrid attention
 
-- `dense_mask_build` — always executed, so always charged
-- `attention_path` (fast split vs dense)
-- `full_model_forward`
+- `full_model_forward` — top level, `coverage_eligible`
+  - `dense_mask_build` — child; always executed, so always charged
+  - `attention_path` — child; fast split vs dense
+
+This family shows the nesting hazard from §1 concretely: `attention_path` and
+`dense_mask_build` are *inside* `full_model_forward`, so exactly one level may
+be `coverage_eligible`. Marking all three would count the attention time twice
+and report better-than-real coverage.
 
 The dense mask is built regardless of which path runs, so it belongs in the
 accounting even when the fast path is taken.
@@ -121,8 +157,15 @@ accounting even when the fast path is taken.
 - `endpoint_projection`
 
 Included to confirm Stage 0's reading that SC-CFG adds no extra forward at
-cfg=1, and to decompose the SC-CFG token prefix/attention overhead that Stage 0
-explicitly left unmeasured.
+cfg=1.
+
+**The SC-CFG token overhead is NOT decomposed by this taxonomy.** Those tokens
+are part of the denoiser's input, so their prefix/attention cost is *contained
+within* `denoiser_forward` and is not individually attributable. Isolating it
+would need a paired diagnostic — the same cell run with and without the SC-CFG
+tokens — which this protocol does not define. Until such a diagnostic exists,
+the correct statement is "included in `denoiser_forward`, not separately
+attributed", never "decomposed".
 
 ## 4. Profiling order
 
@@ -162,9 +205,12 @@ a kernel, or change any dispatch default — Stage 2 owns selection against its
 six criteria, and a candidate must be a material share of a *frozen
 representative cell*, not of a microbenchmark.
 
-The available verdicts are fixed in advance: `TARGET GO — <operation>`,
-`EXISTING PATHS ADEQUATE`, `UPSTREAM/BACKEND FIRST`, or `UNDECIDABLE`. A GO must
-name family, checkpoint/config, batch, length, dtype and hardware.
+For completeness, **Stage 2's** verdict vocabulary is fixed here in advance so
+that the choice cannot be widened later to fit a result: `TARGET GO —
+<operation>`, `EXISTING PATHS ADEQUATE`, `UPSTREAM/BACKEND FIRST`, or
+`UNDECIDABLE`, and a GO must name family, checkpoint/config, batch, length,
+dtype and hardware. Recording it here does **not** give Stage 1 the authority
+to issue one — Stage 1 produces profiles, and the verdict is Stage 2's.
 
 ## 7. Mutation targets for the instrumentation
 
@@ -174,7 +220,11 @@ The harness is not trusted until these are killed:
 - one-trial timing accepted;
 - warmup/compile charged to only one arm;
 - candidate and reference given different inputs or RNG;
-- `operation_sum` substituted for the outer wall-clock;
+- `covered_seconds` substituted for the outer wall-clock;
+- coverage computed by summing inclusive times across a parent and its child
+  (double counting), or a parent and child both marked `coverage_eligible`;
+- a negative `unattributed_seconds` clamped to zero instead of typing the cell
+  `profile_invalid`;
 - `unattributed_seconds` dropped, or shares normalized to 100%;
 - the two ELF auxiliary forwards merged into one event;
 - FMLM state allocation omitted from accounting;
