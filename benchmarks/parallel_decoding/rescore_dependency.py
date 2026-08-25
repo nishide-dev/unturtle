@@ -34,10 +34,13 @@ import pathlib
 
 from unturtle.eval.dependency_slice import (
     answer_span,
-    dependency_length_diagnostics,
+    assemble_dependency_cell,
     dependency_tasks,
     score_extraction_pair,
 )
+
+REFERENCE_ARM = "mdlm_origin_quota"
+REFERENCE_FLOOR_ACCURACY = 0.05
 
 FIXTURE_SEED = 0
 N_PER_KIND = 8
@@ -74,6 +77,7 @@ def main() -> None:
     )
 
     rescored = []
+    floor_kinds: dict[int, set[str]] = {}
     for cell in cells:
         path = results / f"suffixes_{cell['arm']}_bs{cell['batch_size']}.json"
         suffixes = json.loads(path.read_text())
@@ -84,21 +88,40 @@ def main() -> None:
             for suffix in suffixes
         ]
         cell["scores_frozen_extraction"] = score_extraction_pair(tasks, texts)
-        per_kind = {}
-        for kind in sorted({task.kind for task in tasks}):
-            keep = [index for index, t in enumerate(tasks) if t.kind == kind]
-            per_kind[kind] = {
-                **score_extraction_pair(
-                    [tasks[i] for i in keep], [texts[i] for i in keep]
-                ),
-                "length": dependency_length_diagnostics(
-                    [suffixes[i] for i in keep], eos_id=eos_id, mask_id=mask_id
-                ),
-            }
-        cell["per_kind_frozen_extraction"] = per_kind
+        # The floor typing MUST be recomputed too. Leaving the run's original
+        # `reference_floor_kinds` in place carries a verdict derived from the
+        # invalid `str.split()` scores into the re-scored record — it marked
+        # kinds as floored whose re-scored coupled accuracy is an order of
+        # magnitude above the threshold, which then decided a gate.
+        is_reference = cell["arm"] == REFERENCE_ARM
+        assembled = assemble_dependency_cell(
+            tasks,
+            texts,
+            suffixes,
+            eos_id=eos_id,
+            mask_id=mask_id,
+            reference_floor_accuracy=REFERENCE_FLOOR_ACCURACY,
+            floor_kinds=None if is_reference else floor_kinds.get(cell["batch_size"]),
+        )
+        if is_reference:
+            floor_kinds[cell["batch_size"]] = set(assembled["reference_floor_kinds"])
+            assembled = assemble_dependency_cell(
+                tasks,
+                texts,
+                suffixes,
+                eos_id=eos_id,
+                mask_id=mask_id,
+                reference_floor_accuracy=REFERENCE_FLOOR_ACCURACY,
+                floor_kinds=floor_kinds[cell["batch_size"]],
+            )
+        cell["per_kind_frozen_extraction"] = assembled["per_kind"]
+        cell["reference_floor_kinds_frozen_extraction"] = assembled[
+            "reference_floor_kinds"
+        ]
         cell["superseded"] = (
-            "the `scores` / `per_kind` fields used str.split() and are "
-            "EXTRACTION INVALID; use the *_frozen_extraction fields"
+            "the `scores` / `per_kind` / `reference_floor_kinds` fields used "
+            "str.split() and are EXTRACTION INVALID; use the "
+            "*_frozen_extraction fields"
         )
         rescored.append(cell)
 
