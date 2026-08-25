@@ -38,11 +38,14 @@ from __future__ import annotations
 
 import json
 import random
+import statistics
 from dataclasses import dataclass
 from typing import Any
 
 __all__ = [
     "DependencyTask",
+    "answer_span",
+    "dependency_length_diagnostics",
     "dependency_tasks",
     "load_external_dependency_records",
     "score_dependency_outputs",
@@ -107,6 +110,59 @@ def dependency_tasks(
                 )
             )
     return tuple(tasks)
+
+
+def answer_span(suffix: list[int], *, eos_id: int) -> list[int]:
+    """The semantic answer is the pre-EOS span — nothing after it (#157 step 3).
+
+    The generated canvas is fixed width, so a finished answer is followed by
+    EOS and then whatever filled the rest. Decoding the whole canvas with
+    ``skip_special_tokens=True`` deletes the EOS markers and splices those
+    fragments into one answer; that is what made #157 step 2's quality column
+    unreadable. Scoring therefore stops at the FIRST EOS. The full raw suffix
+    is kept for diagnostics, never for scoring.
+    """
+    return suffix[: suffix.index(eos_id)] if eos_id in suffix else list(suffix)
+
+
+def dependency_length_diagnostics(
+    suffixes: list[list[int]], *, eos_id: int, mask_id: int
+) -> dict[str, Any]:
+    """Generation-length reporting that cannot cancel itself out (#157 step 3).
+
+    ``no_eos_fraction`` is a SEPARATE column and the first-EOS statistics cover
+    only EOS-bearing rows. Imputing ``1024`` for a row that never stopped would
+    make "filled the whole canvas" and "stopped late" the same number — and the
+    #157 preflight found exactly the pattern that destroys: the maskgit arms
+    fill the canvas on ``copy`` while stopping in single digits on ``reverse``
+    and ``kv_recall``. A single mean averages that to something unremarkable.
+
+    Returns ``None`` for the first-EOS statistics when NO row carried an EOS,
+    rather than inventing a position.
+    """
+    if not suffixes:
+        raise ValueError(
+            "length diagnostics over zero rows — record the failed cell "
+            "instead of a fabricated length"
+        )
+    positions = [row.index(eos_id) for row in suffixes if eos_id in row]
+    specials = {eos_id, mask_id}
+    return {
+        "row_count": len(suffixes),
+        "no_eos_fraction": sum(1 for row in suffixes if eos_id not in row)
+        / len(suffixes),
+        "first_eos_mean_over_eos_rows": (
+            statistics.fmean(positions) if positions else None
+        ),
+        "first_eos_median_over_eos_rows": (
+            statistics.median(positions) if positions else None
+        ),
+        "eos_bearing_rows": len(positions),
+        "mean_non_special_tokens": statistics.fmean(
+            [sum(1 for token in row if token not in specials) for row in suffixes]
+        ),
+        "residual_mask_total": sum(row.count(mask_id) for row in suffixes),
+    }
 
 
 def score_dependency_outputs(

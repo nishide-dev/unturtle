@@ -199,3 +199,78 @@ class TestExternalAdapter:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
+
+
+# --- #157 step 3: answer span and per-kind length diagnostics ---------------
+
+
+class TestAnswerSpan:
+    """Scoring must stop at the first EOS (#157 step 3, condition 1)."""
+
+    @staticmethod
+    def _span(*args, **kwargs):
+        from unturtle.eval.dependency_slice import answer_span
+
+        return answer_span(*args, **kwargs)
+
+    def test_stops_at_first_eos(self):
+        assert self._span([1, 2, 9, 3, 4], eos_id=9) == [1, 2]
+
+    def test_whole_suffix_when_no_eos(self):
+        assert self._span([1, 2, 3], eos_id=9) == [1, 2, 3]
+
+    def test_eos_at_position_zero_is_an_empty_answer(self):
+        assert self._span([9, 1, 2], eos_id=9) == []
+
+    def test_does_not_splice_across_a_later_eos(self):
+        """The #157 step-2 failure mode: decoding the whole canvas with
+        skip_special_tokens deletes EOS and joins unrelated fragments."""
+        assert self._span([1, 9, 2, 9, 3], eos_id=9) == [1]
+
+    def test_does_not_mutate_the_input(self):
+        suffix = [1, 2, 9, 3]
+        self._span(suffix, eos_id=9)
+        assert suffix == [1, 2, 9, 3]
+
+
+class TestDependencyLengthDiagnostics:
+    """Per-kind length reporting that cannot cancel out (condition 2)."""
+
+    @staticmethod
+    def _diag(*args, **kwargs):
+        from unturtle.eval.dependency_slice import dependency_length_diagnostics
+
+        return dependency_length_diagnostics(*args, **kwargs)
+
+    def test_no_eos_rows_are_a_separate_column(self):
+        result = self._diag([[1, 2, 9], [1, 2, 3]], eos_id=9, mask_id=7)
+        assert result["no_eos_fraction"] == 0.5
+        assert result["eos_bearing_rows"] == 1
+
+    def test_first_eos_covers_eos_rows_only(self):
+        """A row that never stopped must NOT be imputed as position 1024:
+        'filled the canvas' and 'stopped late' are different findings."""
+        result = self._diag([[1, 2, 9], [1, 2, 3]], eos_id=9, mask_id=7)
+        assert result["first_eos_mean_over_eos_rows"] == 2.0
+
+    def test_polarized_rows_stay_visible(self):
+        """The maskgit pattern: one row fills the canvas, one stops instantly.
+        Both facts must survive rather than averaging to something ordinary."""
+        result = self._diag([[1] * 10, [9] + [1] * 9], eos_id=9, mask_id=7)
+        assert result["no_eos_fraction"] == 0.5
+        assert result["first_eos_mean_over_eos_rows"] == 0.0
+
+    def test_all_rows_without_eos_report_none_not_a_number(self):
+        result = self._diag([[1, 2], [3, 4]], eos_id=9, mask_id=7)
+        assert result["first_eos_mean_over_eos_rows"] is None
+        assert result["first_eos_median_over_eos_rows"] is None
+        assert result["no_eos_fraction"] == 1.0
+
+    def test_specials_excluded_and_masks_counted(self):
+        result = self._diag([[7, 1, 9, 7]], eos_id=9, mask_id=7)
+        assert result["residual_mask_total"] == 2
+        assert result["mean_non_special_tokens"] == 1.0
+
+    def test_zero_rows_is_refused(self):
+        with pytest.raises(ValueError, match="zero rows"):
+            self._diag([], eos_id=9, mask_id=7)
