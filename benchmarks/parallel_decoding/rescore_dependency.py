@@ -33,13 +33,13 @@ import json
 import pathlib
 
 from unturtle.eval.dependency_slice import (
+    REFERENCE_ARM,
     answer_span,
     assemble_dependency_cell,
     dependency_tasks,
     score_extraction_pair,
 )
 
-REFERENCE_ARM = "mdlm_origin_quota"
 REFERENCE_FLOOR_ACCURACY = 0.05
 
 FIXTURE_SEED = 0

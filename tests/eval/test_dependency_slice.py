@@ -533,3 +533,38 @@ class TestAssembleDependencyCell:
             == "reference_floor / undecidable"
         )
         assert "measurement_status" not in result["per_kind"]["reverse"]
+
+
+class TestRequireReferenceArm:
+    """The reference arm is the exact arm by identity (#157 condition 5).
+
+    Guards a fresh-run invariant: the producer used to take the FIRST SELECTED
+    arm as the reference, so `--arms` without the exact arm would silently make
+    a cache arm the floor authority and mistype the record.
+    """
+
+    @staticmethod
+    def _require(labels):
+        from unturtle.eval.dependency_slice import require_reference_arm
+
+        return require_reference_arm(labels)
+
+    def test_a_selection_containing_the_exact_arm_is_accepted(self):
+        assert (
+            self._require(["mdlm_origin_quota", "block_decode_origin_quota"])
+            == "mdlm_origin_quota"
+        )
+
+    def test_the_exact_arm_need_not_be_first(self):
+        assert (
+            self._require(["block_decode_origin_quota", "mdlm_origin_quota"])
+            == "mdlm_origin_quota"
+        )
+
+    def test_a_cache_only_selection_is_refused(self):
+        with pytest.raises(ValueError, match="omits the exact reference arm"):
+            self._require(["block_decode_origin_quota", "block_decode_maskgit_topk"])
+
+    def test_an_empty_selection_is_refused(self):
+        with pytest.raises(ValueError, match="omits the exact reference arm"):
+            self._require([])

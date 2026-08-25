@@ -63,6 +63,7 @@ from unturtle.eval.dependency_slice import (
     answer_span,
     assemble_dependency_cell,
     dependency_tasks,
+    require_reference_arm,
     score_extraction_pair,
 )
 
@@ -216,6 +217,9 @@ def main() -> None:
     selected = [a for a in ARMS if not args.arms or a[0] in args.arms.split(",")]
     if not selected:
         raise SystemExit(f"--arms {args.arms!r} matched no arm label")
+    # The reference is the exact arm by IDENTITY, never the first selected arm:
+    # excluding it would silently promote a cache arm to floor authority.
+    reference_arm = require_reference_arm([arm[0] for arm in selected])
     model, tokenizer, mask_id = load(args)
     eos_id = int(tokenizer.eos_token_id)
 
@@ -251,7 +255,7 @@ def main() -> None:
             # Conditions 2 and 5 via the shared pure helper, so the
             # producer's schema is exercised by unit tests instead of only by
             # a multi-hour GPU run.
-            is_reference = label == selected[0][0]
+            is_reference = label == reference_arm
             assembled = assemble_dependency_cell(
                 tasks,
                 texts,

@@ -49,7 +49,9 @@ __all__ = [
     "all_numeric_runs",
     "answer_span",
     "extract_numeric_answer",
+    "REFERENCE_ARM",
     "assemble_dependency_cell",
+    "require_reference_arm",
     "score_extraction_pair",
     "dependency_length_diagnostics",
     "dependency_tasks",
@@ -344,6 +346,29 @@ def score_dependency_outputs(
 
 
 _REQUIRED_KEYS = ("name", "kind", "prompt", "source", "target")
+
+
+#: The exact (no-cache) arm. Condition 5 types every other arm against THIS
+#: arm's floor, so it is the reference by identity, never by position in a
+#: selection.
+REFERENCE_ARM = "mdlm_origin_quota"
+
+
+def require_reference_arm(labels: list[str] | tuple[str, ...]) -> str:
+    """Refuse an arm selection that omits the exact reference arm.
+
+    Taking the FIRST SELECTED arm as the reference silently promotes a cache
+    arm to floor authority when the exact arm is excluded — the record then
+    reports a floor derived from an approximate path and reads as if it were
+    the reference. A run that cannot be typed must fail loudly instead.
+    """
+    if REFERENCE_ARM not in labels:
+        raise ValueError(
+            f"arm selection {list(labels)} omits the exact reference arm "
+            f"{REFERENCE_ARM!r}: condition 5 types every arm against the exact "
+            "arm's floor, so a selection without it cannot be typed"
+        )
+    return REFERENCE_ARM
 
 
 def assemble_dependency_cell(
