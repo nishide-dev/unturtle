@@ -59,8 +59,20 @@ EXPECTATIONS = {
     },
     "noising": {
         "ledger": "row 3 (#62, benchmarks/collator_vs_process_noising.py)",
-        "shape": "no consistent sign between collator and device paths",
+        "shape": "NO measurable difference between collator and device paths",
         "reference_numbers": "median +0.42%, range -0.61%..+1.12%, 4 of 5 slower",
+        # The established finding is the ABSENCE of an effect, so the gate
+        # criterion must be an absence test — not a reproduction of the
+        # historical noise pattern. "4 of 5 trials slower" was one sample of a
+        # sign that does not hold; requiring it would demand that the harness
+        # reproduce noise, and would fail on a correct run that happened to
+        # land 3 of 5.
+        "criterion": (
+            "the paired effect must NOT clear the material-effect bar: the "
+            "median delta stays within trial dispersion, and per-trial signs "
+            "are not consistent. Reproducing the historical 4-of-5 direction "
+            "is explicitly NOT required."
+        ),
     },
     "hybrid": {
         "ledger": "row 4 (#63/#99, _hybrid.py:179)",
