@@ -47,6 +47,7 @@ import json
 import pathlib
 import statistics
 import time
+import weakref
 from typing import Any
 
 # Ledger expectations. Directional only — see the module docstring.
@@ -110,29 +111,36 @@ def timed_steps(fn, *, warmup: int, steps: int, device: str) -> list[float]:
 
 
 def interleaved_trials(
-    make_arm, labels, *, trials: int, warmup: int, steps: int, device: str
+    measure_arm, labels, *, trials: int, warmup: int, steps: int, device: str
 ) -> dict[str, list[dict[str, Any]]]:
-    """Replicated, order-alternating trials over arm FACTORIES.
+    """Replicated, order-alternating trials over a ONE-SHOT measure function.
 
-    Takes `make_arm(label) -> (run, teardown)` rather than persistent arm
-    objects: each trial must build a fresh model and trainer, and tear them
-    down with a collect, so the arm that runs second does not inherit the
-    first's resident weights. A persistent callable cannot satisfy that.
+    ``measure_arm(label, warmup=..., steps=..., device=...)`` must build its
+    model and trainer, measure, drop every reference and collect, all before
+    returning. It returns only the measurement dict.
+
+    An earlier design passed ``(run, teardown)`` closure pairs, which did NOT
+    work: both closures captured ``model`` and ``trainer``, so ``teardown``
+    dropped local aliases while the ``run`` closure and the default arguments
+    kept the weights resident — verified with a weakref, the model outlived
+    teardown AND was still alive while the next arm was being constructed. The
+    cross-arm memory contamination this gate exists to avoid would then recur
+    through the closure instead of through the missing collect.
+
+    A one-shot function makes the lifetime a property of the call: nothing the
+    caller holds can reference the previous arm's model.
 
     Order alternates per trial so thermal drift does not land entirely on
-    whichever arm runs second — one of the protocol's measurement rules, and
-    the reason a fixed dense-then-sparse loop is not a gate.
+    whichever arm runs second.
     """
     results: dict[str, list[dict[str, Any]]] = {label: [] for label in labels}
     for trial in range(trials):
         order = list(labels) if trial % 2 == 0 else list(reversed(labels))
         for label in order:
-            run, teardown = make_arm(label)
-            measurement = run(warmup=warmup, steps=steps, device=device)
+            measurement = measure_arm(label, warmup=warmup, steps=steps, device=device)
             measurement["trial"] = trial
             measurement["ran_first"] = label == order[0]
             results[label].append(measurement)
-            teardown()
     return results
 
 
@@ -218,49 +226,58 @@ def check_sparse(args) -> dict[str, Any]:
         )
         batch = bench._noised_batch(bench_args, mask_ratio)
 
-        def make_arm(label, bench_args=bench_args, batch=batch):
-            # Fresh model and trainer per trial: reusing them across trials
-            # would let the first trial's allocation sit inside every later
-            # peak.
+        def measure_arm(
+            label, *, warmup, steps, device, bench_args=bench_args, batch=batch
+        ):
+            """Build, measure, release — all inside one call.
+
+            Everything the measurement touches is local to this frame, so after
+            the return there is no closure, default argument or caller-held
+            binding that can keep the previous arm's weights resident. That
+            lifetime property is what the gate depends on, and it is asserted
+            by `tests/eval/test_profile_harness.py` via a weakref.
+            """
             model = bench._model(bench_args)
             trainer = bench._trainer(bench_args, model, label == "sparse")
+            probe = weakref.ref(model)
 
-            def run(*, warmup, steps, device):
-                torch.cuda.synchronize()
-                torch.cuda.reset_peak_memory_stats()
-                # Weights/grads/batch are resident and identical across arms;
-                # subtracting them leaves the transient set the flag changes.
-                baseline = torch.cuda.memory_allocated()
+            torch.cuda.synchronize()
+            torch.cuda.reset_peak_memory_stats()
+            # Weights/grads/batch are resident and identical across arms;
+            # subtracting them leaves the transient set the flag changes.
+            baseline = torch.cuda.memory_allocated()
 
-                def step():
-                    loss = trainer.compute_loss(model, dict(batch))
-                    loss.backward()
-                    model.zero_grad(set_to_none=True)
+            def step(model=model, trainer=trainer):
+                # Bound as default arguments rather than captured, so the only
+                # references live in this function object and both die with it.
+                loss = trainer.compute_loss(model, dict(batch))
+                loss.backward()
+                model.zero_grad(set_to_none=True)
 
-                seconds = timed_steps(step, warmup=warmup, steps=steps, device=device)
-                peak = torch.cuda.max_memory_allocated()
-                return {
-                    "median_seconds": statistics.median(seconds),
-                    "peak_allocated_bytes": peak,
-                    "activation_bytes": peak - baseline,
-                }
+            seconds = timed_steps(step, warmup=warmup, steps=steps, device=device)
+            peak = torch.cuda.max_memory_allocated()
 
-            def teardown(model=model, trainer=trainer):
-                nonlocal_model = model
-                nonlocal_trainer = trainer
-                del nonlocal_model, nonlocal_trainer
-                # Load-bearing: the trainer and model form a reference cycle,
-                # so `del` alone leaves the weights resident and the next arm
-                # inherits them. sparse_lm_head_training.py:317-323 records
-                # that this "produced a sign flip between runs", and an earlier
-                # version of this gate reproduced exactly that corruption.
-                gc.collect()
-                torch.cuda.empty_cache()
-
-            return run, teardown
+            # Drop every reference created in this frame before returning:
+            # `step` holds the model and trainer in its defaults, so it goes
+            # first, then the local names.
+            del step
+            trainer = None
+            model = None
+            # Load-bearing: the trainer and model form a reference cycle, so
+            # dropping names is not enough. sparse_lm_head_training.py:317-323
+            # records that skipping this "produced a sign flip between runs",
+            # and an earlier version of this gate reproduced that corruption.
+            gc.collect()
+            torch.cuda.empty_cache()
+            return {
+                "median_seconds": statistics.median(seconds),
+                "peak_allocated_bytes": peak,
+                "activation_bytes": peak - baseline,
+                "model_released": probe() is None,
+            }
 
         per_arm = interleaved_trials(
-            make_arm,
+            measure_arm,
             ("dense", "sparse"),
             trials=args.trials,
             warmup=args.warmup,

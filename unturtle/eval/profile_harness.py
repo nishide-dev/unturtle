@@ -169,17 +169,18 @@ class ProfileCell:
     batch_size: int
     sequence_length: int
     dtype: str
-    wall_seconds_instrumented_off: float
-    wall_seconds_instrumented_on: float
+    #: Per-trial wall times for BOTH arms. The verdict is derived from
+    #: `wall_off_trials` rather than accepted as a scalar: a producer could
+    #: otherwise submit three valid trials and inject an unrelated number as the
+    #: verdict, and instrumentation overhead would be a replicated figure minus
+    #: an arbitrary one.
+    wall_off_trials: list[float] = field(default_factory=list)
+    wall_on_trials: list[float] = field(default_factory=list)
     events: list[OperationEvent] = field(default_factory=list)
     peak_allocated_bytes: int | None = None
     peak_reserved_bytes: int | None = None
     warmup_seconds: float | None = None
     hardware: str | None = None
-    #: Per-trial wall times behind `wall_seconds_instrumented_off`. Required so
-    #: a producer cannot hand over a bare scalar and have it read as a
-    #: replicated measurement — the protocol forbids a claim from one trial.
-    trial_seconds: list[float] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -193,30 +194,39 @@ def profile_cell(cell: ProfileCell) -> dict[str, Any]:
     so it types the cell ``profile_invalid`` instead.
     """
     covered = coverage_seconds(cell.events)
-    unattributed = cell.wall_seconds_instrumented_on - covered
     status = "ok"
     reasons: list[str] = []
-    if not cell.trial_seconds:
-        status = "profile_invalid"
-        reasons.append(
-            "no trial_seconds recorded: a scalar wall time cannot be "
-            "distinguished from a single unreplicated trial, which the "
-            "protocol forbids as a basis for a claim"
-        )
-    elif len(cell.trial_seconds) == 1:
-        status = "profile_invalid"
-        reasons.append(
-            "single trial: the protocol requires replicated, interleaved "
-            "trials before any performance statement"
-        )
-    if covered > cell.wall_seconds_instrumented_on + COVERAGE_TOLERANCE:
+
+    for name, trials in (
+        ("wall_off_trials", cell.wall_off_trials),
+        ("wall_on_trials", cell.wall_on_trials),
+    ):
+        if not trials:
+            status = "profile_invalid"
+            reasons.append(
+                f"{name} is empty: the verdict and the instrumented time are "
+                "derived from replicated trials, never accepted as scalars"
+            )
+        elif len(trials) == 1:
+            status = "profile_invalid"
+            reasons.append(
+                f"{name} has a single trial: the protocol requires replicated, "
+                "interleaved trials before any performance statement"
+            )
+
+    off_stats = trial_statistics(cell.wall_off_trials) if cell.wall_off_trials else None
+    on_stats = trial_statistics(cell.wall_on_trials) if cell.wall_on_trials else None
+    wall_off = off_stats["median_seconds"] if off_stats else float("nan")
+    wall_on = on_stats["median_seconds"] if on_stats else float("nan")
+    unattributed = wall_on - covered
+    if on_stats is not None and covered > wall_on + COVERAGE_TOLERANCE:
         status = "profile_invalid"
         reasons.append(
             f"covered_seconds ({covered:.6f}) exceeds instrumented wall time "
-            f"({cell.wall_seconds_instrumented_on:.6f}) beyond tolerance: the "
-            "exclusivity declaration is wrong"
+            f"({wall_on:.6f}) beyond tolerance: the exclusivity declaration "
+            "is wrong"
         )
-    if unattributed < -COVERAGE_TOLERANCE:
+    if on_stats is not None and unattributed < -COVERAGE_TOLERANCE:
         status = "profile_invalid"
         reasons.append(
             f"unattributed_seconds is negative ({unattributed:.6f}); reported "
@@ -230,16 +240,17 @@ def profile_cell(cell: ProfileCell) -> dict[str, Any]:
         "sequence_length": cell.sequence_length,
         "dtype": cell.dtype,
         "hardware": cell.hardware,
-        "wall_seconds_instrumented_off": cell.wall_seconds_instrumented_off,
-        "wall_seconds_instrumented_on": cell.wall_seconds_instrumented_on,
-        "instrumentation_overhead_seconds": (
-            cell.wall_seconds_instrumented_on - cell.wall_seconds_instrumented_off
-        ),
+        # Both are trial medians, so the overhead is a replicated-vs-replicated
+        # difference rather than a difference against an arbitrary scalar.
+        "wall_seconds_instrumented_off": wall_off,
+        "wall_seconds_instrumented_on": wall_on,
+        "instrumentation_overhead_seconds": wall_on - wall_off,
+        "wall_off_trials": off_stats,
+        "wall_on_trials": on_stats,
         "covered_seconds": covered,
         "unattributed_seconds": unattributed,
         "verdict_source": "wall_seconds_instrumented_off",
         "warmup_seconds": cell.warmup_seconds,
-        "trials": trial_statistics(cell.trial_seconds) if cell.trial_seconds else None,
         "peak_allocated_bytes": cell.peak_allocated_bytes,
         "peak_reserved_bytes": cell.peak_reserved_bytes,
         "operations": [

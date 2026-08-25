@@ -26,7 +26,9 @@ def _event(**kwargs):
     return OperationEvent(**{**base, **kwargs})
 
 
-def _cell(events, *, on=10.0, off=9.0, trials=(9.0, 9.1, 8.9)):
+def _cell(events, *, on=10.0, off=9.0, off_trials=None, on_trials=None):
+    """`on`/`off` are convenience scalars expanded into three identical trials;
+    pass `off_trials`/`on_trials` to control provenance explicitly."""
     from unturtle.eval.profile_harness import ProfileCell
 
     return ProfileCell(
@@ -35,10 +37,9 @@ def _cell(events, *, on=10.0, off=9.0, trials=(9.0, 9.1, 8.9)):
         batch_size=1,
         sequence_length=128,
         dtype="bf16",
-        wall_seconds_instrumented_off=off,
-        wall_seconds_instrumented_on=on,
+        wall_off_trials=list(off_trials if off_trials is not None else [off] * 3),
+        wall_on_trials=list(on_trials if on_trials is not None else [on] * 3),
         events=events,
-        trial_seconds=list(trials),
     )
 
 
@@ -261,10 +262,9 @@ class TestIntegrityFieldsCannotBeOverwritten:
             batch_size=1,
             sequence_length=128,
             dtype="bf16",
-            wall_seconds_instrumented_off=9.0,
-            wall_seconds_instrumented_on=10.0,
+            wall_off_trials=[9.0, 9.1, 8.9],
+            wall_on_trials=[10.0, 10.1, 9.9],
             events=[_event(inclusive_seconds=12.0)],
-            trial_seconds=[9.0, 9.1, 8.9],
             extra={"status": "ok", "covered_seconds": 0},
         )
         record = profile_cell(cell)
@@ -274,24 +274,110 @@ class TestIntegrityFieldsCannotBeOverwritten:
 
 
 class TestTrialProvenanceIsRequired:
-    def test_a_cell_without_trials_is_invalid(self):
+    def test_a_cell_without_off_trials_is_invalid(self):
         from unturtle.eval.profile_harness import profile_cell
 
-        record = profile_cell(_cell([_event()], trials=()))
+        record = profile_cell(_cell([_event()], off_trials=()))
         assert record["status"] == "profile_invalid"
-        assert any("trial_seconds" in r for r in record["invalid_reasons"])
+        assert any("wall_off_trials is empty" in r for r in record["invalid_reasons"])
 
-    def test_a_single_trial_cell_is_invalid(self):
+    def test_a_cell_without_on_trials_is_invalid(self):
         from unturtle.eval.profile_harness import profile_cell
 
-        record = profile_cell(_cell([_event()], trials=(9.0,)))
+        record = profile_cell(_cell([_event()], on_trials=()))
         assert record["status"] == "profile_invalid"
-        assert any("single trial" in r for r in record["invalid_reasons"])
+        assert any("wall_on_trials is empty" in r for r in record["invalid_reasons"])
 
-    def test_replicated_trials_are_summarized(self):
+    def test_a_single_trial_is_invalid_on_either_arm(self):
         from unturtle.eval.profile_harness import profile_cell
 
-        record = profile_cell(_cell([_event()], trials=(9.0, 9.2, 9.1)))
-        assert record["status"] == "ok"
-        assert record["trials"]["trials"] == 3
-        assert record["trials"]["median_seconds"] == 9.1
+        assert (
+            profile_cell(_cell([_event()], off_trials=(9.0,)))["status"]
+            == "profile_invalid"
+        )
+        assert (
+            profile_cell(_cell([_event()], on_trials=(10.0,)))["status"]
+            == "profile_invalid"
+        )
+
+    def test_the_verdict_is_the_median_of_the_off_trials(self):
+        """Not an independently injectable scalar: three valid trials plus an
+        unrelated verdict number was the hole this closes."""
+        from unturtle.eval.profile_harness import profile_cell
+
+        record = profile_cell(
+            _cell([_event()], off_trials=(8.0, 9.0, 10.0), on_trials=(11.0, 12.0, 13.0))
+        )
+        assert record["wall_seconds_instrumented_off"] == 9.0
+        assert record["wall_seconds_instrumented_on"] == 12.0
+        assert record["wall_off_trials"]["trials"] == 3
+
+    def test_overhead_is_replicated_against_replicated(self):
+        from unturtle.eval.profile_harness import profile_cell
+
+        record = profile_cell(
+            _cell([_event()], off_trials=(9.0, 9.0, 9.0), on_trials=(10.0, 10.0, 10.0))
+        )
+        assert record["instrumentation_overhead_seconds"] == pytest.approx(1.0)
+
+
+class TestOneShotArmLifecycle:
+    """A one-shot measure function must leave nothing referencing its model.
+
+    The earlier `(run, teardown)` closure-pair design did not: both closures
+    captured the model, so `teardown` dropped only local aliases while the
+    `run` closure and its default arguments kept it resident — and it was still
+    alive while the NEXT arm was being constructed, which is exactly the
+    cross-arm contamination the gate exists to avoid.
+    """
+
+    def test_the_closure_pair_pattern_leaks_and_the_one_shot_does_not(self):
+        import gc
+        import weakref
+
+        class Model:
+            pass
+
+        # The old shape: teardown cannot release what run still captures.
+        def make_arm_closure_pair():
+            model = Model()
+            trainer = {"m": model}
+
+            def run():
+                return len(trainer)
+
+            def teardown(model=model, trainer=trainer):
+                alias_model = model
+                alias_trainer = trainer
+                del alias_model, alias_trainer
+                gc.collect()
+
+            return run, teardown, weakref.ref(model)
+
+        run, teardown, leaked = make_arm_closure_pair()
+        run()
+        teardown()
+        assert leaked() is not None, "the leak this test documents is gone"
+        del run, teardown
+        gc.collect()
+
+        # The one-shot shape: build, use, release, return — nothing survives.
+        def measure_arm_one_shot(probe_out):
+            model = Model()
+            trainer = {"m": model}
+            probe_out.append(weakref.ref(model))
+
+            def step(model=model, trainer=trainer):
+                return len(trainer)
+
+            step()
+            del step
+            trainer = None
+            model = None
+            gc.collect()
+            return {"ok": True}
+
+        probes: list = []
+        measure_arm_one_shot(probes)
+        gc.collect()
+        assert probes[0]() is None, "one-shot arm must not outlive its call"
