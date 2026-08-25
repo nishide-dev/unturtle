@@ -107,6 +107,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--threshold", type=float, default=0.9)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--batch-sizes", default="1,8")
+    parser.add_argument(
+        "--fixture-seed",
+        type=int,
+        default=FIXTURE_SEED,
+        help="task-set seed; confirm B varies this with the sampling seed held",
+    )
+    parser.add_argument(
+        "--arms",
+        default="",
+        help=(
+            "comma-separated arm labels to run (default: all). The "
+            "confirmation runs use arms 1 and 2 only — the pair that isolates "
+            "the cache with alg and commit policy held fixed."
+        ),
+    )
     parser.add_argument("--out", default="benchmarks/results/pd_dependency")
     return parser.parse_args()
 
@@ -196,8 +211,11 @@ def main() -> None:
     args = parse_args()
     batch_sizes = [int(value) for value in args.batch_sizes.split(",")]
     tasks = dependency_tasks(
-        n_per_kind=N_PER_KIND, seed=FIXTURE_SEED, length=TASK_LENGTH
+        n_per_kind=N_PER_KIND, seed=args.fixture_seed, length=TASK_LENGTH
     )
+    selected = [a for a in ARMS if not args.arms or a[0] in args.arms.split(",")]
+    if not selected:
+        raise SystemExit(f"--arms {args.arms!r} matched no arm label")
     model, tokenizer, mask_id = load(args)
     eos_id = int(tokenizer.eos_token_id)
 
@@ -209,7 +227,7 @@ def main() -> None:
 
     for batch_size in batch_sizes:
         primary = batch_size == batch_sizes[0]
-        for arm in ARMS:
+        for arm in selected:
             label, cache_path, commit, alg, _kwargs = arm
             suffixes, reducer, prefix_ok = generate(
                 model,
@@ -233,7 +251,7 @@ def main() -> None:
             # Conditions 2 and 5 via the shared pure helper, so the
             # producer's schema is exercised by unit tests instead of only by
             # a multi-hour GPU run.
-            is_reference = label == ARMS[0][0]
+            is_reference = label == selected[0][0]
             assembled = assemble_dependency_cell(
                 tasks,
                 texts,
@@ -261,6 +279,8 @@ def main() -> None:
                 "per_kind": assembled["per_kind"],
                 "reference_floor_kinds": assembled["reference_floor_kinds"],
                 "task_count": len(tasks),
+                "fixture_seed": args.fixture_seed,
+                "generation_seed": args.seed,
             }
             if not primary:
                 record["batching_note"] = (
