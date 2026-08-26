@@ -47,6 +47,7 @@ import json
 import pathlib
 import statistics
 import time
+import types
 import weakref
 from typing import Any
 
@@ -117,6 +118,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--steps", type=int, default=10)
     parser.add_argument("--warmup", type=int, default=3)
+    parser.add_argument(
+        "--hybrid-prompt-divisor",
+        type=int,
+        default=4,
+        help=(
+            "prompt length as L/N for the hybrid gate. The full-forward run's "
+            "ratio is not in the provenance; L/4 is the restoration hypothesis "
+            "from the preceding attention benchmark. L/2 is a sensitivity cell."
+        ),
+    )
     parser.add_argument("--out", default="benchmarks/results/pd_harness_sanity")
     return parser.parse_args()
 
@@ -485,6 +496,9 @@ def check_noising(args) -> dict[str, Any]:
             MaskedDiffusionDataCollator,
         )
 
+        # Same initial weights in both arms: the noising RNG stream differs by
+        # design, the model initialisation does not need to.
+        torch.manual_seed(7)
         model = bench._model(bench_args)
         collator = MaskedDiffusionDataCollator(
             tokenizer=tokenizer,
@@ -510,8 +524,23 @@ def check_noising(args) -> dict[str, Any]:
             data_collator=collator,
         )
         probe = weakref.ref(model)
-        seconds = bench._time_path(trainer, model, collator, features, bench_args)
-        del trainer, collator
+
+        # The reused `_time_path` synchronizes only on `args.device == "cuda"`,
+        # an exact match — with `cuda:0` NEITHER synchronize runs and the timing
+        # captures async enqueue rather than completed GPU work. Timed here
+        # instead, through the harness's own sync-bracketed runner.
+        def step(trainer=trainer, model=model, collator=collator):
+            batch = collator([dict(feature) for feature in features])
+            batch = {
+                key: (value.to(device) if hasattr(value, "to") else value)
+                for key, value in batch.items()
+            }
+            loss = trainer.compute_loss(model, batch)
+            loss.backward()
+            model.zero_grad(set_to_none=True)
+
+        seconds = timed_steps(step, warmup=warmup, steps=steps, device=device)
+        del step, trainer, collator
         model = None
         gc.collect()
         if device.startswith("cuda") and torch.cuda.is_available():
@@ -571,19 +600,36 @@ def check_noising(args) -> dict[str, Any]:
 
 
 def check_hybrid(args) -> dict[str, Any]:
-    """Reproduce the sub-crossover SLOWDOWN of the hybrid fast path.
+    """Reproduce the hybrid CROSSOVER under the canonical full-forward config.
 
-    The gated finding is that below `hybrid_fast_min_seq_len` the two-call
-    split is a net loss — full forward 0.90x at L=1024 against 1.50x at 2048.
-    The slowdown is the load-bearing half: a harness that only measured above
-    the crossover would miss the reason the path is gated at all.
+    The gated finding is a crossover: full forward 0.90x at L=1024 against
+    1.50x at L=2048. Both halves are asserted, because a fast path that simply
+    never wins would satisfy the slowdown half alone and the finding would be
+    indistinguishable from "always slower".
 
-    Measured on a FULL model forward, not the attention kernel alone, because
-    the extra kernel launch, `cat` and output transpose the split adds are
-    exactly what the isolated kernel does not show.
+    Two fixture requirements are enforced rather than assumed, both learned the
+    hard way:
+
+    - the model only EMITS `hybrid_prompt_lengths` as an advisory kwarg; the
+      split is performed by `TinyA2DAttention_fast_forward`, which
+      `FastDiffusionModel` installs. A gate that builds a bare model measures
+      two identical forwards, so the patched attention is installed explicitly
+      here and BOTH arms use it;
+    - branch engagement is asserted via call counts, not inspected by hand. An
+      earlier local check patched the wrong symbol and reported zero calls in
+      both arms, proving nothing; the counts are part of the record now.
+
+    Canonical config from the original measurement: H=512 / 8 heads / 8 layers
+    / bf16 / B=4, with prompt ratio L/4 as the restoration hypothesis (the
+    full-forward run's ratio is not in the provenance; the preceding attention
+    benchmark used L/4).
     """
     import torch
 
+    from unturtle.fast_diffusion_model import _install_apply_stubs
+    from unturtle.models.conversion.a2d.tiny_a2d._fast_forward import (
+        TinyA2DAttention_fast_forward,
+    )
     from unturtle.models.conversion.a2d.tiny_a2d.modeling_llama import (
         TinyA2DLlamaConfig,
         TinyA2DLlamaLMHeadModel,
@@ -597,11 +643,15 @@ def check_hybrid(args) -> dict[str, Any]:
             "expectation": EXPECTATIONS["hybrid"],
         }
 
+    layers = 8
+    batch_size = 4
+    prompt_divisor = args.hybrid_prompt_divisor
     cells: dict[str, Any] = {}
+
     for seq_len in (1024, 2048):
 
         def measure_arm(label, *, warmup, steps, device, seq_len=seq_len):
-            """One shot: build, measure, release."""
+            """One shot: build, patch, measure, release."""
             torch.manual_seed(7)
             model = (
                 TinyA2DLlamaLMHeadModel(
@@ -609,33 +659,50 @@ def check_hybrid(args) -> dict[str, Any]:
                         vocab_size=32000,
                         hidden_size=512,
                         intermediate_size=1024,
-                        num_hidden_layers=8,
+                        num_hidden_layers=layers,
                         num_attention_heads=8,
                         num_key_value_heads=8,
                         max_position_embeddings=seq_len * 2,
                         hybrid_attention=True,
-                        # The gate is a declared config field, so the arms differ
-                        # only in where the threshold sits: 0 forces the fast path,
-                        # a huge value disables it. Correctness is identical either
-                        # way — the dense mask is always built.
+                        # The gate is a declared config field; the arms differ
+                        # only in where it sits. Correctness is identical
+                        # either way — the dense mask is always built.
                         hybrid_fast_min_seq_len=0 if label == "fast" else 10**9,
                     )
                 )
                 .to(device=device, dtype=torch.bfloat16)
                 .eval()
             )
+            # Install the patched attention on BOTH arms, exactly as
+            # `FastDiffusionModel` does. Without it neither arm can take the
+            # mask-free split and the two forwards are identical.
+            #
+            # The stubs are a prerequisite, not a detail: the fast forward
+            # calls `self.apply_qkv(self, ...)` unconditionally, and a bare
+            # model has no such attribute — installing only the forward raises
+            # AttributeError on the first step.
+            _install_apply_stubs(model)
+            engaged = {"count": 0}
+            for layer in model.model.layers:
+                bound = types.MethodType(TinyA2DAttention_fast_forward, layer.self_attn)
+
+                def counting(*call_args, _bound=bound, **call_kwargs):
+                    if call_kwargs.get("hybrid_prompt_lengths") is not None:
+                        engaged["count"] += 1
+                    return _bound(*call_args, **call_kwargs)
+
+                layer.self_attn.forward = counting
+
             probe = weakref.ref(model)
-            input_ids = torch.randint(1, 32000, (1, seq_len), device=device)
-            attention_mask = torch.ones(1, seq_len, dtype=torch.long, device=device)
-            # `prompt_lengths` is REQUIRED for the hybrid path to engage at
-            # all: `maybe_build_hybrid_mask` returns None when it is absent
-            # (_hybrid.py, "a converted model without prompt_lengths has no
-            # prompt to preserve"). Omitting it made both arms run the same
-            # bidirectional path, and the ~1.05x that produced was noise
-            # between two identical configurations — which the gate correctly
-            # refused to accept as a reproduction.
+            input_ids = torch.randint(1, 32000, (batch_size, seq_len), device=device)
+            attention_mask = torch.ones(
+                batch_size, seq_len, dtype=torch.long, device=device
+            )
             prompt_lengths = torch.full(
-                (1,), seq_len // 2, dtype=torch.long, device=device
+                (batch_size,),
+                seq_len // prompt_divisor,
+                dtype=torch.long,
+                device=device,
             )
 
             def step(model=model):
@@ -654,6 +721,10 @@ def check_hybrid(args) -> dict[str, Any]:
             return {
                 "median_seconds": statistics.median(seconds),
                 "model_released": probe() is None,
+                "hybrid_branch_calls": engaged["count"],
+                "expected_branch_calls": (
+                    layers * (warmup + steps) if label == "fast" else 0
+                ),
             }
 
         per_arm = interleaved_trials(
@@ -664,21 +735,25 @@ def check_hybrid(args) -> dict[str, Any]:
             steps=args.steps,
             device=args.device,
         )
-        unreleased = [
-            f"L{seq_len}/{label}/trial{m['trial']}"
+        problems = [
+            f"L{seq_len}/{label}/trial{m['trial']}: released={m['model_released']} "
+            f"branch_calls={m['hybrid_branch_calls']} "
+            f"expected={m['expected_branch_calls']}"
             for label, arm in per_arm.items()
             for m in arm
             if not m.get("model_released")
+            or m["hybrid_branch_calls"] != m["expected_branch_calls"]
         ]
-        if unreleased:
+        if problems:
             return {
                 "check": "hybrid",
                 "status": "measurement_invalid",
-                "reason": f"arm model(s) outlived their call: {unreleased}",
+                "reason": (
+                    "arm lifetime or hybrid branch engagement did not match the "
+                    f"contract: {problems}"
+                ),
                 "expectation": EXPECTATIONS["hybrid"],
             }
-        # Speedup, matching the ledger's convention: >1 means the fast path
-        # wins, <1 means it loses.
         speedups = [
             dense["median_seconds"] / fast["median_seconds"]
             for dense, fast in zip(per_arm["dense"], per_arm["fast"], strict=True)
@@ -691,27 +766,24 @@ def check_hybrid(args) -> dict[str, Any]:
         }
 
     low, high = cells["L1024"], cells["L2048"]
-    # The shape: a LOSS below the crossover and a gain above it. Requiring the
-    # majority of trials on each side keeps a single noisy trial from deciding.
-    #
-    # Both halves are asserted deliberately. The sub-crossover slowdown alone
-    # would be satisfied by a fast path that simply never wins, which is not
-    # the gated finding — the finding is a CROSSOVER, and a harness that only
-    # checked the loss side could not tell the two apart.
-    reproduced = (
-        low["median_speedup"] < 1.0
-        and low["trials_below_one"] * 2 > len(low["speedups"])
-        and high["median_speedup"] > 1.0
-    )
     halves = {
         "sub_crossover_loss": low["median_speedup"] < 1.0
         and low["trials_below_one"] * 2 > len(low["speedups"]),
         "above_crossover_gain": high["median_speedup"] > 1.0,
     }
+    reproduced = all(halves.values())
     return {
         "check": "hybrid",
         "status": "reproduced" if reproduced else "NOT_REPRODUCED",
         "expectation": EXPECTATIONS["hybrid"],
+        "config": {
+            "hidden_size": 512,
+            "heads": 8,
+            "layers": layers,
+            "dtype": "bfloat16",
+            "batch_size": batch_size,
+            "prompt_ratio": f"L/{prompt_divisor}",
+        },
         "trials": args.trials,
         "halves_reproduced": halves,
         "observed_shape": (
