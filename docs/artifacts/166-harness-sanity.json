@@ -1,15 +1,15 @@
 {
   "run": {
-    "head_sha": "0f64fd9cd76f78b5575709c7fe097517217f953b",
-    "command": "benchmarks/kernels/harness_sanity.py --check all --device cuda:0 --steps 20 --warmup 5 --out benchmarks/results/pd_harness_sanity",
+    "head_sha": "d2d1a2124285f8765c31f5758bf33c77372177d5",
+    "worktree_clean": true,
+    "worktree_dirty_paths": [],
+    "command": "benchmarks/kernels/harness_sanity.py --check all --device cuda:0 --out /home/nishide.21066/.claude/jobs/1492d35a/tmp/sanity-out",
     "args": {
       "check": "all",
       "device": "cuda:0",
       "trials": 3,
-      "steps": 20,
-      "warmup": 5,
       "hybrid_prompt_divisor": 4,
-      "out": "benchmarks/results/pd_harness_sanity"
+      "out": "/home/nishide.21066/.claude/jobs/1492d35a/tmp/sanity-out"
     },
     "gpu_name": "NVIDIA RTX 6000 Ada Generation",
     "torch_version": "2.10.0+cu128",
@@ -17,7 +17,10 @@
     "frozen_constants": {
       "NOISING_EQUIVALENCE_MARGIN": 0.02,
       "NOISING_TRIALS": 5,
-      "HYBRID_TRIALS": 5
+      "NOISING_STEPS": 60,
+      "HYBRID_TRIALS": 5,
+      "HYBRID_STEPS": 40,
+      "SPARSE_STEPS": 10
     },
     "verdict_source": "instrumentation-off wall clock; diagnostic engagement passes are untimed and reverted before timing",
     "cells": [
@@ -45,10 +48,11 @@
         "reference_numbers": "32K vocab: -32.6% step at 0.15; +21.4% peak at 0.75"
       },
       "trials": 3,
+      "steps_per_trial": 10,
       "axes": {
         "low_mask_step_time_win": {
-          "median": -0.3258632045754255,
-          "spread": 0.03797025070788912,
+          "median": -0.2965012708240026,
+          "spread": 0.0634734238404247,
           "trials_agreeing": "3/3",
           "majority_agrees": true,
           "exceeds_spread": true
@@ -72,12 +76,12 @@
         "mask_0.15": {
           "step_time": {
             "per_trial": [
-              -0.3258632045754255,
-              -0.31486830324116344,
-              -0.35283855394905256
+              -0.24220283026981876,
+              -0.2965012708240026,
+              -0.30567625411024346
             ],
-            "median": -0.3258632045754255,
-            "spread": 0.03797025070788912,
+            "median": -0.2965012708240026,
+            "spread": 0.0634734238404247,
             "trials_agreeing": 3,
             "trials": 3,
             "majority_agrees": true,
@@ -98,30 +102,30 @@
           },
           "per_arm_medians": {
             "dense": [
-              0.005925632547587156,
-              0.005740952503401786,
-              0.006024849019013345
+              0.005664575030095875,
+              0.0057984874583780766,
+              0.0057828045100905
             ],
             "sparse": [
-              0.003994686936493963,
-              0.003933308529667556,
-              0.0038990500033833086
+              0.0042925989255309105,
+              0.004079228558111936,
+              0.004015138489194214
             ]
           }
         },
         "mask_0.75": {
           "step_time": {
             "per_trial": [
-              0.018691564092368846,
-              0.018079143513415042,
-              0.012297108428091686
+              0.01817678993293165,
+              0.0446114339708636,
+              -0.01676255527468104
             ],
-            "median": 0.018079143513415042,
-            "spread": 0.00639445566427716,
-            "trials_agreeing": 0,
+            "median": 0.01817678993293165,
+            "spread": 0.06137398924554464,
+            "trials_agreeing": 1,
             "trials": 3,
             "majority_agrees": false,
-            "exceeds_spread": true
+            "exceeds_spread": false
           },
           "activation": {
             "per_trial": [
@@ -138,14 +142,14 @@
           },
           "per_arm_medians": {
             "dense": [
-              0.0061906250193715096,
-              0.0060813435120508075,
-              0.006069433526135981
+              0.006386024528183043,
+              0.006010924058500677,
+              0.006308946525678039
             ],
             "sparse": [
-              0.006306337483692914,
-              0.0061912889941595495,
-              0.00614407000830397
+              0.006502101954538375,
+              0.006279080000240356,
+              0.0062031924608163536
             ]
           }
         }
@@ -161,16 +165,17 @@
         "criterion": "EQUIVALENCE, not dispersion: |median delta| <= NOISING_EQUIVALENCE_MARGIN and every per-trial delta within the same margin, over 5 interleaved paired trials. A large deviation types the cell `unstable / NOT_REPRODUCED`. Reproducing the historical 4-of-5 direction is explicitly NOT required."
       },
       "trials": 5,
+      "steps_per_trial": 60,
       "equivalence": {
         "per_trial": [
-          0.0037415139226282795,
-          0.0029706659940606068,
-          -0.00929642525510643,
-          -0.0012488523752713697,
-          0.0015859505002035854
+          -0.0025412854421850853,
+          0.0007510609809814929,
+          0.008783981074342756,
+          -0.00157065772402074,
+          0.0049019680361594474
         ],
-        "median": 0.0015859505002035854,
-        "worst_abs": 0.00929642525510643,
+        "median": 0.0007510609809814929,
+        "worst_abs": 0.008783981074342756,
         "margin": 0.02,
         "median_within_margin": true,
         "all_trials_within_margin": true,
@@ -178,18 +183,18 @@
       },
       "per_arm_medians": {
         "collator": [
-          0.012664937996305525,
-          0.01260998850921169,
-          0.012902757036499679,
-          0.012612000980880111,
-          0.012956563557963818
+          0.013296448509208858,
+          0.013257869053632021,
+          0.013276384968776256,
+          0.013471802521962672,
+          0.013495703984517604
         ],
         "process": [
-          0.012712324038147926,
-          0.0126474485732615,
-          0.012782807520125061,
-          0.012596250453498214,
-          0.01297711202641949
+          0.013262658438179642,
+          0.013267826521769166,
+          0.013393004483077675,
+          0.01345064293127507,
+          0.013561859494075179
         ]
       }
     },
@@ -210,12 +215,13 @@
         "prompt_ratio": "L/4"
       },
       "trials": 5,
+      "steps_per_trial": 40,
       "verdict_source": "instrumentation-off wall clock (diagnostic pass is untimed)",
       "halves_reproduced": {
         "sub_crossover_loss": true,
         "above_crossover_gain": true
       },
-      "observed_shape": "L=1024 median speedup 0.94x (5/5 trials below 1.0); L=2048 median speedup 1.39x",
+      "observed_shape": "L=1024 median speedup 0.93x (5/5 trials below 1.0); L=2048 median speedup 1.38x",
       "cells": {
         "L1024": {
           "split_kernel_calls": {
@@ -223,28 +229,28 @@
             "fast": 8
           },
           "speedups": [
-            0.9407021429819815,
-            0.9267652801014117,
-            0.9438207777631643,
-            0.9857040502523594,
-            0.9267448511997632
+            0.9293642561091602,
+            0.9622816180494275,
+            0.9027559112961617,
+            0.9970837801173204,
+            0.8995370462736816
           ],
-          "median_speedup": 0.9407021429819815,
+          "median_speedup": 0.9293642561091602,
           "trials_below_one": 5,
           "per_arm_medians": {
             "dense": [
-              0.005455738457385451,
-              0.005167981027625501,
-              0.0053876235033385456,
-              0.00526642648037523,
-              0.005299197509884834
+              0.0052985179936513305,
+              0.005302829958964139,
+              0.005536472017411143,
+              0.0055814890074543655,
+              0.00541677646106109
             ],
             "fast": [
-              0.005799644975923002,
-              0.005576364521402866,
-              0.005708312033675611,
-              0.005342806980479509,
-              0.00571807601954788
+              0.0057012285105884075,
+              0.0055106840445660055,
+              0.006132856011390686,
+              0.005597813462372869,
+              0.006021738052368164
             ]
           }
         },
@@ -254,32 +260,33 @@
             "fast": 8
           },
           "speedups": [
-            1.3842480794382483,
-            1.398006533467081,
-            1.3954900269223556,
-            1.3934351636438533,
-            1.3792083509913864
+            1.3772796239209013,
+            1.385241181981964,
+            1.3684287877923196,
+            1.3799463865092534,
+            1.3641009799544426
           ],
-          "median_speedup": 1.3934351636438533,
+          "median_speedup": 1.3772796239209013,
           "trials_below_one": 0,
           "per_arm_medians": {
             "dense": [
-              0.01197959849378094,
-              0.012091392069123685,
-              0.012166963482741266,
-              0.01221162750152871,
-              0.012145505985245109
+              0.012863373034633696,
+              0.01288415997987613,
+              0.01283234654692933,
+              0.01298245694488287,
+              0.012961880536749959
             ],
             "fast": [
-              0.008654228004161268,
-              0.00864902400644496,
-              0.0087187749450095,
-              0.008763685473240912,
-              0.008806143014226109
+              0.00933969602920115,
+              0.009301022917497903,
+              0.009377431008033454,
+              0.009407942998223007,
+              0.009502141503617167
             ]
           }
         }
       }
     }
-  ]
+  ],
+  "stability_note": "The hybrid sub-crossover cell is a SMALL effect on this hardware. Repeated clean runs at the frozen 40 steps gave L=1024 medians of 0.90x, 0.93x, 0.95x and 0.98x, with 3-5 of 5 trials below 1.0; this artifact records 0.93x with 5/5. The direction is consistent across every run and the L=2048 gain is stable (1.34-1.43x), but the median sits near unity, so read the sub-crossover cell as 'direction reproduced, magnitude marginal on this GPU' rather than a precise reproduction of the ledger's 0.90x."
 }
