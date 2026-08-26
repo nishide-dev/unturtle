@@ -1,0 +1,497 @@
+{
+  "run": {
+    "head_sha": "17278c5b477074297050530d67d4c8035951b871",
+    "worktree_clean": true,
+    "worktree_dirty_paths": [],
+    "command": "benchmarks/elf/training_profile.py --device cuda:0 --batch-sizes 1,8,32 --out /home/nishide.21066/.claude/jobs/1492d35a/tmp/elf-artifact",
+    "args": {
+      "device": "cuda:0",
+      "batch_sizes": "1,8,32",
+      "out": "/home/nishide.21066/.claude/jobs/1492d35a/tmp/elf-artifact"
+    },
+    "gpu_name": "NVIDIA RTX 6000 Ada Generation",
+    "torch_version": "2.10.0+cu128",
+    "cuda_version": "12.8",
+    "frozen_constants": {
+      "TRIALS": 3,
+      "STEPS": 8,
+      "WARMUP": 3,
+      "SEQUENCE_LENGTH": 1024,
+      "GRAD_CLIP": 1.0,
+      "EMA_DECAY": 0.9999,
+      "LEARNING_RATE": 0.00025,
+      "grad_accum_steps": 1
+    },
+    "fixture": {
+      "checkpoint": "embedded-language-flows/ELF-B-owt-torch@146f84133c1389bfd4ef47f14ec7a955da22faa7",
+      "dataset": "embedded-language-flows/openwebtext-t5@0a8443e847ee6206e4737a6b9a93218347eabc08",
+      "encoder": "t5-small@df1b051c49625cf57a3d0d8d3863ed4d13564fe4",
+      "model_init": "fresh-init from config.yml (no checkpoint weights)",
+      "precision": "fp32 master params; bf16 autocast over the objective",
+      "unattributed_includes": "grad clipping and the EMA update"
+    },
+    "verdict_source": "wall_off_trials median (instrumentation-off)"
+  },
+  "cells": [
+    {
+      "family": "elf",
+      "cell": "training_step",
+      "batch_size": 1,
+      "sequence_length": 1024,
+      "dtype": "bf16_autocast",
+      "hardware": "NVIDIA RTX 6000 Ada Generation",
+      "wall_seconds_instrumented_off": 0.12079287573578767,
+      "wall_seconds_instrumented_on": 0.12192309500824194,
+      "instrumentation_overhead_seconds": 0.0011302192724542692,
+      "wall_off_trials": {
+        "median_seconds": 0.12079287573578767,
+        "min_seconds": 0.119770063116448,
+        "max_seconds": 0.12145271275949199,
+        "trials": 3,
+        "single_trial": false
+      },
+      "wall_on_trials": {
+        "median_seconds": 0.12192309500824194,
+        "min_seconds": 0.12056421076704282,
+        "max_seconds": 0.12254310424032155,
+        "trials": 3,
+        "single_trial": false
+      },
+      "covered_seconds": 0.11841241523507051,
+      "unattributed_seconds": 0.0035106797731714323,
+      "verdict_source": "wall_seconds_instrumented_off",
+      "warmup_seconds": 0.36882670503109694,
+      "peak_allocated_bytes": 2552406016,
+      "peak_reserved_bytes": 2732589056,
+      "operations": [
+        {
+          "name": "data_collation",
+          "inclusive_seconds": 0.0010249048646073788,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "backward",
+          "inclusive_seconds": 0.014324557516374625,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "optimizer_step",
+          "inclusive_seconds": 0.07378179764782544,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "t5_encoding",
+          "inclusive_seconds": 0.0046110291295917705,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "sc_shared_uncond_forward",
+          "inclusive_seconds": 0.0074533098813844845,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "sc_conditional_forward",
+          "inclusive_seconds": 0.006507205645903014,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "trained_forward",
+          "inclusive_seconds": 0.008790174033492804,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "objective_loss",
+          "inclusive_seconds": 0.029273255495354533,
+          "exclusive_seconds": 0.0019194365158909932,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        }
+      ],
+      "status": "ok",
+      "invalid_reasons": [],
+      "extra": {
+        "steps_per_trial": 8,
+        "warmup_steps": 3,
+        "trials": 3,
+        "self_cond_prob": 0.5,
+        "num_self_cond_cfg_tokens": 4,
+        "peak_representative": "max over trials (fixed before measuring)",
+        "master_parameter_dtype": "fp32",
+        "autocast_dtype": "bfloat16",
+        "peak_allocated_per_trial": [
+          2552406016,
+          2552406016,
+          2552406016
+        ],
+        "peak_reserved_per_trial": [
+          2732589056,
+          2732589056,
+          2732589056
+        ],
+        "objective_loss_inclusive_seconds": 0.029273255495354533,
+        "per_trial_call_counts": [
+          {
+            "backward": 8,
+            "data_collation": 8,
+            "objective_loss": 8,
+            "optimizer_step": 8,
+            "sc_conditional_forward": 8,
+            "sc_shared_uncond_forward": 8,
+            "t5_encoding": 8,
+            "trained_forward": 8
+          },
+          {
+            "backward": 8,
+            "data_collation": 8,
+            "objective_loss": 8,
+            "optimizer_step": 8,
+            "sc_conditional_forward": 8,
+            "sc_shared_uncond_forward": 8,
+            "t5_encoding": 8,
+            "trained_forward": 8
+          },
+          {
+            "backward": 8,
+            "data_collation": 8,
+            "objective_loss": 8,
+            "optimizer_step": 8,
+            "sc_conditional_forward": 8,
+            "sc_shared_uncond_forward": 8,
+            "t5_encoding": 8,
+            "trained_forward": 8
+          }
+        ],
+        "non_quality_bearing": "step-shape profile only; reads no generation output and does not reinterpret Stage-3 results"
+      }
+    },
+    {
+      "family": "elf",
+      "cell": "training_step",
+      "batch_size": 8,
+      "sequence_length": 1024,
+      "dtype": "bf16_autocast",
+      "hardware": "NVIDIA RTX 6000 Ada Generation",
+      "wall_seconds_instrumented_off": 0.29808632847561967,
+      "wall_seconds_instrumented_on": 0.30104672485322226,
+      "instrumentation_overhead_seconds": 0.002960396377602592,
+      "wall_off_trials": {
+        "median_seconds": 0.29808632847561967,
+        "min_seconds": 0.2947690678847721,
+        "max_seconds": 0.30088117587729357,
+        "trials": 3,
+        "single_trial": false
+      },
+      "wall_on_trials": {
+        "median_seconds": 0.30104672485322226,
+        "min_seconds": 0.2972466998762684,
+        "max_seconds": 0.30525338761799503,
+        "trials": 3,
+        "single_trial": false
+      },
+      "covered_seconds": 0.298435916294693,
+      "unattributed_seconds": 0.002610808558529243,
+      "verdict_source": "wall_seconds_instrumented_off",
+      "warmup_seconds": 0.8922983279917389,
+      "peak_allocated_bytes": 9301291008,
+      "peak_reserved_bytes": 10531897344,
+      "operations": [
+        {
+          "name": "data_collation",
+          "inclusive_seconds": 0.011362351739080623,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "backward",
+          "inclusive_seconds": 0.07908433848933782,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "optimizer_step",
+          "inclusive_seconds": 0.08860723323596176,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "t5_encoding",
+          "inclusive_seconds": 0.03635770649998449,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "sc_shared_uncond_forward",
+          "inclusive_seconds": 0.02076011810277123,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "sc_conditional_forward",
+          "inclusive_seconds": 0.02558307551953476,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "trained_forward",
+          "inclusive_seconds": 0.03224823277560063,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "objective_loss",
+          "inclusive_seconds": 0.11937713011866435,
+          "exclusive_seconds": 0.004432859932421707,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        }
+      ],
+      "status": "ok",
+      "invalid_reasons": [],
+      "extra": {
+        "steps_per_trial": 8,
+        "warmup_steps": 3,
+        "trials": 3,
+        "self_cond_prob": 0.5,
+        "num_self_cond_cfg_tokens": 4,
+        "peak_representative": "max over trials (fixed before measuring)",
+        "master_parameter_dtype": "fp32",
+        "autocast_dtype": "bfloat16",
+        "peak_allocated_per_trial": [
+          9301291008,
+          9301291008,
+          9301291008
+        ],
+        "peak_reserved_per_trial": [
+          10531897344,
+          10531897344,
+          10531897344
+        ],
+        "objective_loss_inclusive_seconds": 0.11937713011866435,
+        "per_trial_call_counts": [
+          {
+            "backward": 8,
+            "data_collation": 8,
+            "objective_loss": 8,
+            "optimizer_step": 8,
+            "sc_conditional_forward": 8,
+            "sc_shared_uncond_forward": 8,
+            "t5_encoding": 8,
+            "trained_forward": 8
+          },
+          {
+            "backward": 8,
+            "data_collation": 8,
+            "objective_loss": 8,
+            "optimizer_step": 8,
+            "sc_conditional_forward": 8,
+            "sc_shared_uncond_forward": 8,
+            "t5_encoding": 8,
+            "trained_forward": 8
+          },
+          {
+            "backward": 8,
+            "data_collation": 8,
+            "objective_loss": 8,
+            "optimizer_step": 8,
+            "sc_conditional_forward": 8,
+            "sc_shared_uncond_forward": 8,
+            "t5_encoding": 8,
+            "trained_forward": 8
+          }
+        ],
+        "non_quality_bearing": "step-shape profile only; reads no generation output and does not reinterpret Stage-3 results"
+      }
+    },
+    {
+      "family": "elf",
+      "cell": "training_step",
+      "batch_size": 32,
+      "sequence_length": 1024,
+      "dtype": "bf16_autocast",
+      "hardware": "NVIDIA RTX 6000 Ada Generation",
+      "wall_seconds_instrumented_off": 1.1627708119776798,
+      "wall_seconds_instrumented_on": 1.1464233126316685,
+      "instrumentation_overhead_seconds": -0.01634749934601132,
+      "wall_off_trials": {
+        "median_seconds": 1.1627708119776798,
+        "min_seconds": 1.1127488808560884,
+        "max_seconds": 1.1759897681040457,
+        "trials": 3,
+        "single_trial": false
+      },
+      "wall_on_trials": {
+        "median_seconds": 1.1464233126316685,
+        "min_seconds": 1.1264328146353364,
+        "max_seconds": 1.1866505843936466,
+        "trials": 3,
+        "single_trial": false
+      },
+      "covered_seconds": 1.143561147575383,
+      "unattributed_seconds": 0.0028621650562854484,
+      "verdict_source": "wall_seconds_instrumented_off",
+      "warmup_seconds": 3.443310916889459,
+      "peak_allocated_bytes": 32429611008,
+      "peak_reserved_bytes": 37253808128,
+      "operations": [
+        {
+          "name": "data_collation",
+          "inclusive_seconds": 0.05067328237055335,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "backward",
+          "inclusive_seconds": 0.3818453910353128,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "optimizer_step",
+          "inclusive_seconds": 0.08610811887774616,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "t5_encoding",
+          "inclusive_seconds": 0.15369291650131345,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "sc_shared_uncond_forward",
+          "inclusive_seconds": 0.12606054624484386,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "sc_conditional_forward",
+          "inclusive_seconds": 0.13930774736218154,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "trained_forward",
+          "inclusive_seconds": 0.1868917541432893,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "objective_loss",
+          "inclusive_seconds": 0.624911641512881,
+          "exclusive_seconds": 0.018981391040142626,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        }
+      ],
+      "status": "ok",
+      "invalid_reasons": [],
+      "extra": {
+        "steps_per_trial": 8,
+        "warmup_steps": 3,
+        "trials": 3,
+        "self_cond_prob": 0.5,
+        "num_self_cond_cfg_tokens": 4,
+        "peak_representative": "max over trials (fixed before measuring)",
+        "master_parameter_dtype": "fp32",
+        "autocast_dtype": "bfloat16",
+        "peak_allocated_per_trial": [
+          32429611008,
+          32429611008,
+          32429611008
+        ],
+        "peak_reserved_per_trial": [
+          37253808128,
+          37253808128,
+          37253808128
+        ],
+        "objective_loss_inclusive_seconds": 0.624911641512881,
+        "per_trial_call_counts": [
+          {
+            "backward": 8,
+            "data_collation": 8,
+            "objective_loss": 8,
+            "optimizer_step": 8,
+            "sc_conditional_forward": 8,
+            "sc_shared_uncond_forward": 8,
+            "t5_encoding": 8,
+            "trained_forward": 8
+          },
+          {
+            "backward": 8,
+            "data_collation": 8,
+            "objective_loss": 8,
+            "optimizer_step": 8,
+            "sc_conditional_forward": 8,
+            "sc_shared_uncond_forward": 8,
+            "t5_encoding": 8,
+            "trained_forward": 8
+          },
+          {
+            "backward": 8,
+            "data_collation": 8,
+            "objective_loss": 8,
+            "optimizer_step": 8,
+            "sc_conditional_forward": 8,
+            "sc_shared_uncond_forward": 8,
+            "t5_encoding": 8,
+            "trained_forward": 8
+          }
+        ],
+        "non_quality_bearing": "step-shape profile only; reads no generation output and does not reinterpret Stage-3 results"
+      }
+    }
+  ],
+  "reading_note": "Operation shares are STRONGLY batch dependent, so no single ranking describes the ELF training step. Muon  dominates at B=1 (61.1%) because its per-parameter work is batch-invariant while everything else is not: its absolute cost is nearly flat (73.8 / 88.6 / 86.1 ms) while the step grows 120.8 -> 298.1 -> 1162.8 ms, so its share collapses to 7.4% at B=32. Stage 0 asked whether the two auxiliary self-conditioning forwards convert their call count into wall share: combined they are 11.6% at B=1, 15.6% at B=8 and 22.8% at B=32 \u2014 real and rising, but never dominant, and always smaller than backward. This is a Stage-1 profile only; no target is selected and Stage 2 owns that decision."
+}
