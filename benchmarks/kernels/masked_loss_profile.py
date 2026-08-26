@@ -128,6 +128,26 @@ def oom_phase(phase: str):
         raise OomInPhase(phase, error) from error
 
 
+def rng_fingerprint() -> str:
+    """Hash of the ACTUAL CPU and CUDA RNG states.
+
+    Comparing seed integers is not enough: library initialisation or lazy
+    optimizer-state creation can consume the stream, so two arms handed the same
+    seed can still start from different states. This fingerprints the state
+    itself, taken after construction and immediately before warmup.
+    """
+    import hashlib
+
+    import torch
+
+    digest = hashlib.sha256()
+    digest.update(torch.get_rng_state().numpy().tobytes())
+    if torch.cuda.is_available():
+        for state in torch.cuda.get_rng_state_all():
+            digest.update(state.numpy().tobytes())
+    return digest.hexdigest()[:16]
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", default="cuda:0")
@@ -223,7 +243,9 @@ def build(
         TinyA2DLlamaLMHeadModel,
     )
 
-    # Identical construction stream for both arms of a paired trial.
+    # Identical construction stream for both arms of a paired trial. Note the
+    # trainer re-seeds from `args.seed` below, which is why the same value is
+    # passed there too.
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
@@ -256,6 +278,12 @@ def build(
         report_to=[],
         sparse_lm_head=False,
         loss_norm_type="token",
+        # `transformers.Trainer.__init__` calls `set_seed(args.seed)`, which
+        # would OVERWRITE the per-trial seeding above with its default of 42 —
+        # verified: all three trials then reported one identical RNG
+        # fingerprint. Passing the trial seed makes the trainer's own seeding
+        # agree with ours instead of erasing it.
+        seed=seed,
     )
     trainer = DiffusionTrainer(
         model=model,
@@ -427,6 +455,7 @@ def profile_cell_for(args, *, vocab_size: int, layers: int, batch_size: int):
     released: list[bool] = []
     per_trial_ops: list[dict[str, dict[str, Any]]] = []
     per_trial_model_forward: list[float] = []
+    rng_states: dict[int, dict[str, str]] = {}
 
     def measure(arm: str, seed: int) -> None:
         with oom_phase("build"):
@@ -439,6 +468,9 @@ def profile_cell_for(args, *, vocab_size: int, layers: int, batch_size: int):
             )
         model_probe = weakref.ref(model)
         trainer_probe = weakref.ref(trainer)
+        # After construction, before warmup: the point at which paired arms must
+        # already agree.
+        rng_states.setdefault(seed, {})[arm] = rng_fingerprint()
         timer = CudaEventTimer(device=args.device) if arm == "on" else None
 
         def run(
@@ -679,6 +711,13 @@ def profile_cell_for(args, *, vocab_size: int, layers: int, batch_size: int):
             # The distribution with its provenance, not a point: this row's
             # regime IS the mask ratio, and a single number would hide both the
             # spread and where it came from.
+            # Three things kept apart, because collapsing them invites reading
+            # a fixed-seed execution as the process's expected behaviour.
+            "sampling_contract": (
+                "timesteps are sampled from the frozen MaskedDiffusionProcess "
+                "distribution (linear alpha schedule, t ~ U(0,1)); this "
+                "producer pins no mask ratio"
+            ),
             "realized_mask_fraction": {
                 "source": "separate_diagnostic_replay",
                 "raw_by_trial": mask_by_trial,
@@ -693,7 +732,18 @@ def profile_cell_for(args, *, vocab_size: int, layers: int, batch_size: int):
                 "trial_seeds": list(TRIAL_SEEDS),
                 "used_for": "diagnostic only; feeds no wall, event or memory figure",
             },
+            "realized_mask_fraction_interpretation": (
+                "What THIS artifact's paired execution realized under its fixed "
+                "seed schedule, not an estimate of the process's population "
+                "mask rate. At B=1 each step's fraction reflects close to a "
+                "single timestep draw, so 24 observations retain seed-dependent "
+                "bias; larger batches average within the batch and narrow the "
+                "spread, which is why every cell stores its own raw "
+                "distribution. Report it as 'this execution was median X, range "
+                "Y-Z', never as 'the default regime is X% masking'."
+            ),
             "peak_representative": "max over trials (fixed before measuring)",
+            "rng_state_fingerprints": rng_states,
             "optimizer": {
                 "class": OPTIMIZER,
                 "lr": LEARNING_RATE,
