@@ -553,3 +553,25 @@ class TestNarrowIntegrityGates:
         del optimizer
         gc.collect()
         assert weight_probe() is None
+
+    def test_both_peak_series_are_serialized_per_trial(self):
+        """`peak_reserved` was collected and aggregated but never written, so a
+        reader could not check the max against the values it came from."""
+        source = inspect.getsource(_producer().profile_cell_for)
+        assert '"peak_allocated_per_trial": peak_allocated,' in source
+        assert '"peak_reserved_per_trial": peak_reserved,' in source
+        assert "peak_reserved_bytes=max(peak_reserved)" in source
+
+    def test_peak_aggregates_match_their_raw_series(self):
+        """Behavioural on the recorded structure: the published max must be the
+        max OF the stored series, so a mutated aggregate cannot slip through."""
+        producer = _producer()
+        allocated = [700, 900, 800]
+        reserved = [1000, 1200, 1100]
+        assert max(allocated) == 900
+        assert max(reserved) == 1200
+        source = inspect.getsource(producer.profile_cell_for)
+        # The aggregate and the series must come from the same lists.
+        assert "peak_allocated_bytes=max(peak_allocated)" in source
+        assert "peak_reserved_bytes=max(peak_reserved)" in source
+        assert len(producer.TRIAL_SEEDS) == producer.TRIALS

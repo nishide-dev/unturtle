@@ -1025,7 +1025,12 @@ def profile_cell_for(args, *, vocab_size: int, layers: int, batch_size: int):
             # object: "default-resolved" was a placeholder, not a value, and
             # which AdamW kernel runs affects the step time being attributed.
             "optimizer": optimizer_provenance,
+            # Both series, because they answer different questions: allocated
+            # is the working set, reserved is what the caching allocator held
+            # from the driver. The protocol records both, and only the raw
+            # arrays let a reader check the max aggregates above.
             "peak_allocated_per_trial": peak_allocated,
+            "peak_reserved_per_trial": peak_reserved,
             "per_trial_call_counts": [
                 {name: body["call_count"] for name, body in sorted(ops.items())}
                 for ops in per_trial_ops
