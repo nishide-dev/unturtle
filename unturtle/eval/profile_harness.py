@@ -238,11 +238,20 @@ def _validate_finite(cell: ProfileCell) -> list[str]:
         # its own inclusive total is over-coverage entering through a channel
         # the outer-wall check cannot see: it stays under the wall time while
         # inflating `covered_seconds`.
+        #
+        # Compared STRICTLY, with no tolerance. `COVERAGE_TOLERANCE` is a 1 ms
+        # allowance for a synchronize boundary falling between two independent
+        # reads of the clock; this is a containment relation between two
+        # measurements of the SAME event, where no such slack exists. Borrowing
+        # it let `inclusive=1e-6` sit under `exclusive=9e-4` — a 900x violation
+        # that is under 1 ms in absolute terms, so it passed as `ok` while
+        # inflating coverage. For sub-millisecond operations that is a large
+        # silent over-count.
         if (
             event.exclusive_seconds is not None
             and math.isfinite(event.exclusive_seconds)
             and math.isfinite(event.inclusive_seconds)
-            and event.exclusive_seconds > event.inclusive_seconds + COVERAGE_TOLERANCE
+            and event.exclusive_seconds > event.inclusive_seconds
         ):
             problems.append(
                 f"event {event.name!r} exclusive_seconds "

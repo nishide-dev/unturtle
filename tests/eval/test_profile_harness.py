@@ -491,3 +491,38 @@ class TestExclusiveIsASubsetOfInclusive:
         )
         assert record["status"] == "ok"
         assert record["covered_seconds"] == 1.5
+
+    def test_a_sub_millisecond_violation_is_caught(self):
+        """The containment check must NOT borrow `COVERAGE_TOLERANCE`.
+
+        That 1 ms allowance exists for a synchronize boundary between two
+        independent clock reads. Applied here it let exclusive sit 900x above
+        its own inclusive total — still under 1 ms absolute, so it passed as
+        `ok` while inflating coverage. Sub-millisecond operations are exactly
+        where that matters.
+        """
+        from unturtle.eval.profile_harness import profile_cell
+
+        record = profile_cell(
+            _cell([_event(inclusive_seconds=0.000001, exclusive_seconds=0.0009)])
+        )
+        assert record["status"] == "measurement_invalid"
+        assert any("exceeds its inclusive" in r for r in record["invalid_reasons"])
+
+    def test_a_small_absolute_but_real_violation_is_caught(self):
+        """2x over, and only 1 microsecond in absolute terms."""
+        from unturtle.eval.profile_harness import profile_cell
+
+        record = profile_cell(
+            _cell([_event(inclusive_seconds=0.000001, exclusive_seconds=0.000002)])
+        )
+        assert record["status"] == "measurement_invalid"
+
+    def test_tiny_equal_values_remain_valid(self):
+        """Strictness must not reject a legitimate sub-millisecond leaf."""
+        from unturtle.eval.profile_harness import profile_cell
+
+        record = profile_cell(
+            _cell([_event(inclusive_seconds=0.000001, exclusive_seconds=0.000001)])
+        )
+        assert record["status"] == "ok"
