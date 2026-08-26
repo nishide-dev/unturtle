@@ -128,6 +128,29 @@ def oom_phase(phase: str):
         raise OomInPhase(phase, error) from error
 
 
+def state_fingerprint(model, clean) -> str:
+    """Hash of model parameters and the clean inputs.
+
+    Paired arms must agree on what they are computing, not only on the RNG that
+    produced it: identical states can still diverge if construction picked
+    different weights, and an input difference would make the two walls
+    incomparable while every seed check still passed.
+    """
+    import hashlib
+
+    import torch
+
+    digest = hashlib.sha256()
+    with torch.no_grad():
+        for _name, param in sorted(model.named_parameters()):
+            digest.update(param.detach().to("cpu", torch.float32).numpy().tobytes())
+    for key in sorted(clean):
+        value = clean[key]
+        if hasattr(value, "detach"):
+            digest.update(value.detach().to("cpu").numpy().tobytes())
+    return digest.hexdigest()[:16]
+
+
 def rng_fingerprint() -> str:
     """Hash of the ACTUAL CPU and CUDA RNG states.
 
@@ -456,6 +479,7 @@ def profile_cell_for(args, *, vocab_size: int, layers: int, batch_size: int):
     per_trial_ops: list[dict[str, dict[str, Any]]] = []
     per_trial_model_forward: list[float] = []
     rng_states: dict[int, dict[str, str]] = {}
+    state_states: dict[int, dict[str, str]] = {}
 
     def measure(arm: str, seed: int) -> None:
         with oom_phase("build"):
@@ -471,6 +495,9 @@ def profile_cell_for(args, *, vocab_size: int, layers: int, batch_size: int):
         # After construction, before warmup: the point at which paired arms must
         # already agree.
         rng_states.setdefault(seed, {})[arm] = rng_fingerprint()
+        # Fingerprint the weights and inputs too: the RNG state says the draws
+        # matched, this says the computation did.
+        state_states.setdefault(seed, {})[arm] = state_fingerprint(model, clean)
         timer = CudaEventTimer(device=args.device) if arm == "on" else None
 
         def run(
@@ -538,6 +565,35 @@ def profile_cell_for(args, *, vocab_size: int, layers: int, batch_size: int):
             layers,
             batch_size,
             f"a trial's model or trainer outlived its measurement call: {released}",
+        )
+
+    # Paired arms must agree on the STATE they started from, not merely on the
+    # seed integer: three distinct seeds coexisted with one identical RNG state
+    # when the trainer re-seeded from its own default.
+    for label, table in (("RNG state", rng_states), ("weights/inputs", state_states)):
+        mismatched = {
+            seed: arms
+            for seed, arms in table.items()
+            if len(arms) == 2 and arms["off"] != arms["on"]
+        }
+        if mismatched:
+            return invalid(
+                vocab_size,
+                layers,
+                batch_size,
+                f"paired arms disagree on {label}, so their walls are not "
+                f"comparable: {mismatched}",
+            )
+
+    # Trials must be INDEPENDENT: identical fingerprints across trials mean one
+    # stream replayed, which is the defect the trainer-seed fix removed.
+    if len({arms.get("off") for arms in rng_states.values()}) < len(rng_states):
+        return invalid(
+            vocab_size,
+            layers,
+            batch_size,
+            "two trials started from the same RNG state, so they are not "
+            f"independent draws: {rng_states}",
         )
 
     expected_counts = {name: STEPS for name in REQUIRED_EVENTS}
@@ -744,6 +800,7 @@ def profile_cell_for(args, *, vocab_size: int, layers: int, batch_size: int):
             ),
             "peak_representative": "max over trials (fixed before measuring)",
             "rng_state_fingerprints": rng_states,
+            "weight_input_fingerprints": state_states,
             "optimizer": {
                 "class": OPTIMIZER,
                 "lr": LEARNING_RATE,

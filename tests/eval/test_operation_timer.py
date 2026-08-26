@@ -439,3 +439,31 @@ class TestElfArtifactIntegrity:
         assert encoder == f"t5-small@{producer.T5_REVISION}"
         # An exact 40-character commit, not a bare name.
         assert len(encoder.split("@")[1]) == 40
+
+
+class TestCudaEventTimerReset:
+    def test_reset_discards_pending_scopes(self):
+        """A mutant made `reset()` keep pending events, which then leaked into
+        the next window's totals. Count-only checks missed it because the
+        totals looked empty until the stale scope was collected."""
+        from unturtle.eval.cuda_event_timer import CudaEventTimer
+
+        timer = CudaEventTimer(device="cpu")
+        with timer.measure("stale"):
+            pass
+        timer.reset()
+        # Nothing pending, so collect() must be a no-op and results stay empty.
+        timer.collect()
+        assert timer.result() == {}
+
+    def test_reset_then_new_window_counts_only_new_work(self):
+        from unturtle.eval.cuda_event_timer import CudaEventTimer
+
+        timer = CudaEventTimer(device="cpu")
+        with timer.measure("warmup_only"):
+            pass
+        timer.reset()
+        with timer.measure("counted"):
+            pass
+        timer.collect()
+        assert set(timer.result()) == {"counted"}
