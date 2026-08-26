@@ -59,17 +59,25 @@ from typing import Any
 #: still being tight enough to mean "not material".
 NOISING_EQUIVALENCE_MARGIN = 0.02
 
+#: Timed steps per sparse trial. Frozen with the others so no cell's verdict
+#: depends on a CLI default.
+SPARSE_STEPS = 10
+SPARSE_WARMUP = 3
+
 #: Trials for the canonical hybrid gate. Fixed rather than taken from
 #: `--trials`, whose default of 3 would silently make `--check all` weaker than
 #: the reported 5-trial gate.
 HYBRID_TRIALS = 5
 
-#: Timed steps per hybrid trial, fixed for the same reason as the noising gate:
-#: at the CLI default of 10 steps the sub-crossover cell reads 1.00x with only
-#: 2 of 5 trials below 1.0, while at 20 it reads 0.90-0.94x with 5 of 5 below.
-#: A gate whose verdict depends on the caller remembering a flag is not a gate.
-HYBRID_STEPS = 20
-HYBRID_WARMUP = 5
+#: Timed steps per hybrid trial, fixed for the same reason as the noising gate.
+#: Measured progression on the same machine: 10 steps -> 1.00x with 2/5 trials
+#: below 1.0 (marginal), 20 -> 1.00x with 3/5 (still marginal, passing only on
+#: the majority rule), 40 -> 0.95x with 4/5. The sub-crossover slowdown is a
+#: small effect against a full forward, so it needs the longer window to
+#: separate from launch jitter. A gate whose verdict depends on the caller
+#: remembering a flag is not a gate.
+HYBRID_STEPS = 40
+HYBRID_WARMUP = 10
 
 #: Trials for the noising gate. More than the other cells because an
 #: equivalence claim over a near-zero effect needs the replication.
@@ -131,14 +139,13 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=3,
         help=(
-            "trials for the effect-shape checks. The noising gate ignores this "
-            f"and always uses NOISING_TRIALS={NOISING_TRIALS}: an equivalence "
-            "claim over a near-zero effect needs its own replication, and a "
-            "CLI default must not be able to weaken it."
+            "trials for the sparse gate only. The noising and hybrid gates use "
+            f"NOISING_TRIALS={NOISING_TRIALS} / HYBRID_TRIALS={HYBRID_TRIALS}, "
+            "and every gate's steps-per-trial is frozen in this module: a "
+            "verdict must not depend on the caller passing a large enough "
+            "window. `--steps` and `--warmup` were removed for that reason."
         ),
     )
-    parser.add_argument("--steps", type=int, default=10)
-    parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument(
         "--hybrid-prompt-divisor",
         type=int,
@@ -312,8 +319,8 @@ def check_sparse(args) -> dict[str, Any]:
             batch_size=2,
             seq_len=512,
             lora=False,
-            warmup=args.warmup,
-            steps=args.steps,
+            warmup=SPARSE_WARMUP,
+            steps=SPARSE_STEPS,
         )
         batch = bench._noised_batch(bench_args, mask_ratio)
 
@@ -371,8 +378,8 @@ def check_sparse(args) -> dict[str, Any]:
             measure_arm,
             ("dense", "sparse"),
             trials=args.trials,
-            warmup=args.warmup,
-            steps=args.steps,
+            warmup=SPARSE_WARMUP,
+            steps=SPARSE_STEPS,
             device=args.device,
         )
         step_deltas = []
@@ -449,6 +456,7 @@ def check_sparse(args) -> dict[str, Any]:
         "status": "reproduced" if reproduced else "NOT_REPRODUCED",
         "expectation": EXPECTATIONS["sparse"],
         "trials": args.trials,
+        "steps_per_trial": SPARSE_STEPS,
         "axes": {
             name: {
                 "median": axis["median"],
@@ -920,6 +928,7 @@ def _provenance(args, records: list[dict[str, Any]]) -> dict[str, Any]:
             "NOISING_STEPS": NOISING_STEPS,
             "HYBRID_TRIALS": HYBRID_TRIALS,
             "HYBRID_STEPS": HYBRID_STEPS,
+            "SPARSE_STEPS": SPARSE_STEPS,
         },
         "verdict_source": (
             "instrumentation-off wall clock; diagnostic engagement passes are "
