@@ -73,6 +73,9 @@ CHECKPOINT = "embedded-language-flows/ELF-B-owt-torch"
 CHECKPOINT_REVISION = "146f84133c1389bfd4ef47f14ec7a955da22faa7"
 DATASET = "embedded-language-flows/openwebtext-t5"
 DATASET_REVISION = "0a8443e847ee6206e4737a6b9a93218347eabc08"
+#: Frozen from the pilot's resolved commit. Recording what a run happened to
+#: fetch documents the past; pinning it makes the next run reproducible.
+T5_REVISION = "df1b051c49625cf57a3d0d8d3863ed4d13564fe4"
 TOTAL_SHARDS = 75
 SEQUENCE_LENGTH = 1024
 GRAD_CLIP = 1.0
@@ -92,11 +95,38 @@ CALL_SITE_EVENTS = {
 }
 
 
+class OomInPhase(Exception):
+    """An OOM tagged with the phase it happened in.
+
+    A typed OOM is a RESULT (#152), and `build` / `warmup` / `timed` are
+    different findings: failing to allocate the model is not the same as
+    failing under the timed step's activations.
+    """
+
+    def __init__(self, phase: str, cause: BaseException) -> None:
+        super().__init__(f"OOM during {phase}: {cause}")
+        self.phase = phase
+        self.cause = cause
+
+
+@contextmanager
+def oom_phase(phase: str):
+    """Re-raise a CUDA OOM tagged with the phase, leaving others untouched."""
+    import torch
+
+    try:
+        yield
+    except torch.cuda.OutOfMemoryError as error:
+        raise OomInPhase(phase, error) from error
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", default="cuda:0")
-    parser.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float32"])
-    parser.add_argument("--seq-len", type=int, default=256)
+    # No --seq-len or --dtype: the run is pinned to SEQUENCE_LENGTH with fp32
+    # master params under bf16 autocast, and a flag that could not change the
+    # measurement while changing the RECORD would make the artifact lie about
+    # what it measured (it recorded 256 while truncating to 1024).
     parser.add_argument(
         "--batch-sizes",
         default=",".join(str(b) for b in BATCH_SIZES),
@@ -171,9 +201,14 @@ def load_fixture(args: argparse.Namespace) -> dict[str, Any]:
     raw_config = yaml.safe_load(pathlib.Path(config_path).read_text())
 
     encoder_name = str(raw_config.get("encoder_model_name", "t5-small"))
-    inner = T5EncoderModel.from_pretrained(encoder_name)
-    # The resolved commit, not just the name: a name is not provenance.
+    inner = T5EncoderModel.from_pretrained(encoder_name, revision=T5_REVISION)
     encoder_revision = getattr(getattr(inner, "config", None), "_commit_hash", None)
+    if encoder_revision != T5_REVISION:
+        raise RuntimeError(
+            f"encoder resolved to {encoder_revision!r}, expected the pinned "
+            f"{T5_REVISION!r}: an unpinned encoder makes the artifact "
+            "irreproducible"
+        )
     inner = inner.to(args.device).eval().requires_grad_(False)
 
     class EncoderShim(torch.nn.Module):
@@ -250,33 +285,23 @@ def build(args: argparse.Namespace, fixture: dict[str, Any], batch_size: int):
     optimizer = build_muon_optimizer(model, lr=LEARNING_RATE)
     ema = init_ema(model)
 
-    # A fixed row-index schedule, replayed identically by every trial.
+    # A fixed row-index schedule, replayed identically by every trial. RAGGED
+    # rows are handed over deliberately: truncation, padding and stacking are
+    # per-step collator work and belong inside the timed `data_collation`
+    # scope, not in this untimed setup.
     table = fixture["table"]
     rng = np.random.default_rng(0)
     row_order = rng.permutation(table.num_rows)
     indices = [int(row_order[i % table.num_rows]) for i in range(batch_size)]
-    rows = [
+    cpu_rows = [
         np.asarray(table["input_ids"][index].as_py(), dtype=np.int64)
         for index in indices
     ]
-    padded, lengths = [], []
-    for ids in rows:
-        true_len = min(len(ids), SEQUENCE_LENGTH)
-        ids = ids[:SEQUENCE_LENGTH]
-        if true_len < SEQUENCE_LENGTH:
-            ids = np.concatenate(
-                [ids, np.zeros(SEQUENCE_LENGTH - true_len, dtype=ids.dtype)]
-            )
-        padded.append(ids)
-        lengths.append(true_len)
-    cpu_batch = {
-        "input_ids": np.stack(padded),
-        "true_lengths": np.asarray(lengths, dtype=np.int32)[:, None],
-    }
+
     # Persistent across the trial's steps, advancing as the oracle's does — a
     # fresh seed-0 generator per step would not be the #154 RNG stream.
     generator = torch.Generator(device="cpu").manual_seed(0)
-    return model, fixture["encoder"], optimizer, cpu_batch, config, ema, generator
+    return model, fixture["encoder"], optimizer, cpu_rows, config, ema, generator
 
 
 def build_config(raw_config: dict[str, Any]):
@@ -315,27 +340,38 @@ def build_config(raw_config: dict[str, Any]):
     return config
 
 
-def collate(cpu_batch: dict[str, Any], *, device: str) -> dict[str, Any]:
-    """Oracle mask construction and host-to-device transfer.
+def collate(cpu_rows: list[Any], *, device: str) -> dict[str, Any]:
+    """Truncate, pad, stack, build the oracle masks, and transfer — every step.
 
-    Runs every step inside the `data_collation` scope so padding, mask
-    derivation and the H2D copy are all charged to it. Masks follow
-    `stage3_reduced_gate.make_batch`: derived from true lengths, never all-ones,
-    which would train on padding.
+    All of it is charged to `data_collation`. An earlier version pre-padded and
+    pre-stacked in `build()` and timed only the mask construction and copy,
+    which understated the collator's real cost.
+
+    Masks follow `stage3_reduced_gate.make_batch`: derived from the TRUE
+    lengths, never all-ones, which would train on padding.
     """
     import numpy as np
     import torch
     from unturtle_elf._reference.encoder_utils import build_self_attn_cond_masks
 
-    ids = cpu_batch["input_ids"]
-    lengths = cpu_batch["true_lengths"]
-    batch_size, seq_len = ids.shape
-    positions = np.arange(seq_len)[None, :]
+    padded, lengths = [], []
+    for ids in cpu_rows:
+        true_len = min(len(ids), SEQUENCE_LENGTH)
+        ids = ids[:SEQUENCE_LENGTH]
+        if true_len < SEQUENCE_LENGTH:
+            ids = np.concatenate(
+                [ids, np.zeros(SEQUENCE_LENGTH - true_len, dtype=ids.dtype)]
+            )
+        padded.append(ids)
+        lengths.append(true_len)
+    stacked = np.stack(padded)
+    batch_size = stacked.shape[0]
+    positions = np.arange(SEQUENCE_LENGTH)[None, :]
     is_cond = positions < np.zeros((batch_size, 1), dtype=np.int32)
-    is_valid = positions < lengths
+    is_valid = positions < np.asarray(lengths, dtype=np.int32)[:, None]
     encoder_attn, attn, cond = build_self_attn_cond_masks(is_cond, is_valid, xp=np)
     return {
-        "input_ids": torch.from_numpy(ids).long().to(device),
+        "input_ids": torch.from_numpy(stacked).long().to(device),
         "attention_mask": torch.from_numpy(attn).to(device),
         "encoder_attention_mask": torch.from_numpy(encoder_attn).to(device),
         "cond_seq_mask": torch.from_numpy(cond).to(device),
@@ -397,16 +433,16 @@ def main() -> None:
     for batch_size in batch_sizes:
         try:
             record = profile_batch(args, fixture, batch_size)
-        except torch.cuda.OutOfMemoryError as error:
+        except OomInPhase as error:
             record = {
                 "family": "elf",
                 "cell": "training_step",
                 "batch_size": batch_size,
                 "status": "oom",
-                "reason": str(error)[:400],
+                "reason": str(error.cause)[:400],
                 # A typed OOM is a RESULT, so it carries the same context a
                 # successful cell would (#152).
-                "oom_phase": "build_or_timed",
+                "oom_phase": error.phase,
                 "sequence_length": SEQUENCE_LENGTH,
                 "precision": ("fp32 master params; bf16 autocast over the objective"),
                 "hardware": (
@@ -458,74 +494,38 @@ def profile_batch(
     }
 
     off_trials: list[float] = []
+    on_trials: list[float] = []
     warmup_trials: list[float] = []
     peak_allocated: list[int] = []
     peak_reserved: list[int] = []
     released: list[bool] = []
+    per_trial_ops: list[dict[str, dict[str, Any]]] = []
 
-    for _ in range(TRIALS):
-        model, encoder, optimizer, cpu_batch, config, ema, generator = build(
-            args, fixture, batch_size
-        )
+    def measure(arm: str) -> None:
+        """One arm of one trial: build fresh, measure, release.
+
+        Peak memory is taken from the OFF arm only, so the instrumentation's own
+        allocations never enter the capacity figure.
+        """
+        with oom_phase("build"):
+            model, encoder, optimizer, cpu_rows, config, ema, generator = build(
+                args, fixture, batch_size
+            )
         model_probe = weakref.ref(model)
-        if torch.cuda.is_available():
+        timer = OperationTimer(device=args.device) if arm == "on" else None
+        original = encoder_original = None
+        if timer is not None:
+            original = instrument(model, timer)
+            encoder_original = instrument_encoder(encoder, timer)
+        if arm == "off" and torch.cuda.is_available():
             torch.cuda.synchronize()
             torch.cuda.reset_peak_memory_stats()
 
-        def run_off(
+        def run(
             model=model,
             encoder=encoder,
             optimizer=optimizer,
-            cpu_batch=cpu_batch,
-            config=config,
-            ema=ema,
-            generator=generator,
-        ):
-            return one_step(
-                model,
-                encoder,
-                optimizer,
-                cpu_batch,
-                config,
-                args,
-                ema,
-                generator,
-            )
-
-        warmup_seconds, timed = timed_step_loop(run_off, device=args.device)
-        off_trials.append(sum(timed) / len(timed))
-        warmup_trials.append(warmup_seconds)
-        if torch.cuda.is_available():
-            peak_allocated.append(torch.cuda.max_memory_allocated())
-            peak_reserved.append(torch.cuda.max_memory_reserved())
-        # `run_off` binds the model and encoder as DEFAULT ARGUMENTS, so it must
-        # be deleted BEFORE them or the bindings keep the previous trial's
-        # weights resident while the next `build()` runs (#173's closure leak).
-        # The encoder is a SHARED fixture object reused across trials, so only
-        # the per-trial model is expected to be released here.
-        del run_off, model, optimizer, cpu_batch, config, ema, generator
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        released.append(model_probe() is None)
-
-    on_trials: list[float] = []
-    per_trial_ops: list[dict[str, dict[str, Any]]] = []
-
-    for _ in range(TRIALS):
-        model, encoder, optimizer, cpu_batch, config, ema, generator = build(
-            args, fixture, batch_size
-        )
-        model_probe = weakref.ref(model)
-        timer = OperationTimer(device=args.device)
-        original = instrument(model, timer)
-        encoder_original = instrument_encoder(encoder, timer)
-
-        def run_on(
-            model=model,
-            encoder=encoder,
-            optimizer=optimizer,
-            cpu_batch=cpu_batch,
+            cpu_rows=cpu_rows,
             config=config,
             ema=ema,
             generator=generator,
@@ -535,7 +535,7 @@ def profile_batch(
                 model,
                 encoder,
                 optimizer,
-                cpu_batch,
+                cpu_rows,
                 config,
                 args,
                 ema,
@@ -545,18 +545,43 @@ def profile_batch(
 
         try:
             warmup_seconds, timed = timed_step_loop(
-                run_on, device=args.device, timer=timer
+                run, device=args.device, timer=timer
             )
         finally:
-            model.__class__.__call__ = original
-            encoder.__class__.forward = encoder_original
-        on_trials.append(sum(timed) / len(timed))
-        per_trial_ops.append(timer.result())
-        del run_on, model, optimizer, cpu_batch, config, ema, generator, timer
+            if original is not None:
+                model.__class__.__call__ = original
+            if encoder_original is not None:
+                encoder.__class__.forward = encoder_original
+
+        if arm == "off":
+            off_trials.append(sum(timed) / len(timed))
+            warmup_trials.append(warmup_seconds)
+            if torch.cuda.is_available():
+                peak_allocated.append(torch.cuda.max_memory_allocated())
+                peak_reserved.append(torch.cuda.max_memory_reserved())
+        else:
+            on_trials.append(sum(timed) / len(timed))
+            per_trial_ops.append(timer.result())
+
+        # `run` binds the model as a DEFAULT ARGUMENT, so it must go first or
+        # the binding keeps this trial's weights resident through the next
+        # build. The encoder is a SHARED fixture object and is not expected to
+        # be released here.
+        del run, model, optimizer, cpu_rows, config, ema, generator, timer
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         released.append(model_probe() is None)
+
+    # Arms are INTERLEAVED with alternating order, so thermal or clock drift
+    # does not land entirely on whichever arm always runs second — the frozen
+    # protocol's rule, and the instrumentation overhead here is ~1% of the
+    # step, the same order as such drift.
+    for trial in range(TRIALS):
+        order = ("off", "on") if trial % 2 == 0 else ("on", "off")
+        for arm in order:
+            with oom_phase("timed"):
+                measure(arm)
 
     if not all(released):
         return {
@@ -661,8 +686,8 @@ def profile_batch(
         family="elf",
         cell="training_step",
         batch_size=batch_size,
-        sequence_length=args.seq_len,
-        dtype=args.dtype,
+        sequence_length=SEQUENCE_LENGTH,
+        dtype="bf16_autocast",
         wall_off_trials=off_trials,
         wall_on_trials=on_trials,
         events=events,
@@ -682,6 +707,8 @@ def profile_batch(
             "self_cond_prob": 0.5,
             "num_self_cond_cfg_tokens": 4,
             "peak_representative": "max over trials (fixed before measuring)",
+            "master_parameter_dtype": "fp32",
+            "autocast_dtype": "bfloat16",
             "peak_allocated_per_trial": peak_allocated,
             "peak_reserved_per_trial": peak_reserved,
             "objective_loss_inclusive_seconds": per_step("objective_loss"),
@@ -699,7 +726,7 @@ def profile_batch(
 
 
 def one_step(
-    model, encoder, optimizer, cpu_batch, config, args, ema, generator, timer=None
+    model, encoder, optimizer, cpu_rows, config, args, ema, generator, timer=None
 ):
     """One optimizer update with the frozen #154 mechanics.
 
@@ -718,7 +745,7 @@ def one_step(
     scope = timer.measure if timer is not None else _null_scope
 
     with scope("data_collation"):
-        batch = collate(cpu_batch, device=args.device)
+        batch = collate(cpu_rows, device=args.device)
 
     with (
         scope("objective_loss"),
@@ -767,8 +794,9 @@ def timed_step_loop(step, *, device: str, timer=None) -> tuple[float, list[float
 
     sync()
     warmup_start = time.perf_counter()
-    for _ in range(WARMUP):
-        step()
+    with oom_phase("warmup"):
+        for _ in range(WARMUP):
+            step()
     sync()
     warmup_seconds = time.perf_counter() - warmup_start
     if timer is not None:

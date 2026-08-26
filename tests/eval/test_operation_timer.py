@@ -222,8 +222,9 @@ class TestElfProducerMeasurementValidity:
 
         producer = self._producer()
         source = inspect.getsource(producer.profile_batch)
-        assert "del run_off, model" in source
-        assert "del run_on, model" in source
+        # One interleaved `measure(arm)` replaced the separate run_off/run_on
+        # loops; its runner is `run` and must still be deleted first.
+        assert "del run, model" in source
 
     def test_events_and_wall_cover_the_same_window(self):
         """Warmup must be excluded from BOTH, not just from the wall.
@@ -297,17 +298,127 @@ class TestElfProducerMeasurementValidity:
         import numpy as np
 
         producer = self._producer()
-        seq_len, batch_size, true_len = 16, 2, 12
-        cpu_batch = {
-            "input_ids": np.ones((batch_size, seq_len), dtype=np.int64),
-            "true_lengths": np.full((batch_size, 1), true_len, dtype=np.int32),
-        }
-        batch = producer.collate(cpu_batch, device="cpu")
+        short = np.ones(12, dtype=np.int64)
+        batch = producer.collate([short], device="cpu")
         mask = batch["attention_mask"]
-        assert mask.shape[0] == batch_size
-        # Some position must be excluded, and the valid count must match the
-        # true length rather than the padded width.
-        flat = mask.reshape(batch_size, -1)
+        flat = mask.reshape(1, -1)
         assert float(flat.max()) != float(flat.min()), (
             "an all-uniform attention mask means the padded tail is not excluded"
         )
+
+
+class TestElfArtifactIntegrity:
+    """The artifact must describe what actually ran."""
+
+    @staticmethod
+    def _producer():
+        import importlib.util
+        import pathlib
+
+        path = (
+            pathlib.Path(__file__).resolve().parents[2]
+            / "benchmarks"
+            / "elf"
+            / "training_profile.py"
+        )
+        spec = importlib.util.spec_from_file_location("_elf_profile3", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_length_and_dtype_cannot_be_misreported_from_the_cli(self):
+        """The producer recorded `sequence_length: 256` while truncating to
+        1024, because the CLI exposed a `--seq-len` that changed only the
+        record. Neither flag may exist."""
+        import inspect
+
+        producer = self._producer()
+        source = inspect.getsource(producer.parse_args)
+        assert '"--seq-len"' not in source
+        assert '"--dtype"' not in source
+        cell = inspect.getsource(producer.profile_batch)
+        assert "sequence_length=SEQUENCE_LENGTH" in cell
+        assert "args.seq_len" not in cell
+        assert "args.dtype" not in cell
+
+    def test_the_encoder_revision_is_pinned_and_verified(self):
+        """Recording what a run fetched documents the past; pinning makes the
+        next run reproducible."""
+        import inspect
+
+        producer = self._producer()
+        assert len(producer.T5_REVISION) == 40
+        source = inspect.getsource(producer.load_fixture)
+        assert "revision=T5_REVISION" in source
+        assert "!= T5_REVISION" in source
+
+    def test_collation_pads_ragged_rows(self):
+        """Truncation, padding and stacking are per-step collator work.
+
+        Behavioural: hand in genuinely ragged rows and require a rectangular,
+        correctly-masked batch out — a pre-stacked fixture would let the timed
+        scope measure only the copy.
+        """
+        import numpy as np
+
+        producer = self._producer()
+        long_row = np.ones(producer.SEQUENCE_LENGTH + 50, dtype=np.int64)
+        short_row = np.ones(10, dtype=np.int64)
+        batch = producer.collate([long_row, short_row], device="cpu")
+        assert batch["input_ids"].shape == (2, producer.SEQUENCE_LENGTH)
+        mask = batch["attention_mask"]
+        flat = mask.reshape(2, -1)
+        # The truncated row is fully valid; the short row must have an excluded
+        # tail, so the two rows cannot have identical masks.
+        assert not bool((flat[0] == flat[1]).all()), (
+            "a ragged pair must not produce identical attention masks"
+        )
+
+    def test_arms_are_interleaved_with_alternating_order(self):
+        import inspect
+
+        producer = self._producer()
+        source = inspect.getsource(producer.profile_batch)
+        assert 'order = ("off", "on") if trial % 2 == 0 else ("on", "off")' in source
+
+    def test_oom_phases_are_distinguished(self):
+        """`build`, `warmup` and `timed` are different findings."""
+        import inspect
+
+        producer = self._producer()
+        assert hasattr(producer, "OomInPhase")
+        cell = inspect.getsource(producer.profile_batch)
+        assert 'oom_phase("build")' in cell
+        assert 'oom_phase("timed")' in cell
+        loop = inspect.getsource(producer.timed_step_loop)
+        assert 'oom_phase("warmup")' in loop
+
+    def test_oom_in_phase_carries_its_phase_and_cause(self):
+        producer = self._producer()
+        cause = RuntimeError("out of memory")
+        error = producer.OomInPhase("warmup", cause)
+        assert error.phase == "warmup"
+        assert error.cause is cause
+        assert "warmup" in str(error)
+
+    def test_the_phase_context_tags_with_its_own_phase(self):
+        """Behavioural: a mutant hardcoding one phase label passed a
+        call-site-only check, because those tests never raised anything."""
+        import torch
+
+        producer = self._producer()
+        for phase in ("build", "warmup", "timed"):
+            with (
+                pytest.raises(producer.OomInPhase) as caught,
+                producer.oom_phase(phase),
+            ):
+                raise torch.cuda.OutOfMemoryError("synthetic")
+            assert caught.value.phase == phase, (
+                f"oom_phase({phase!r}) must tag with that phase, not "
+                f"{caught.value.phase!r}"
+            )
+
+    def test_the_phase_context_leaves_other_errors_alone(self):
+        producer = self._producer()
+        with pytest.raises(ValueError), producer.oom_phase("build"):
+            raise ValueError("unrelated")
