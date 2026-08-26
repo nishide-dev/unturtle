@@ -871,8 +871,24 @@ def _provenance(args, records: list[dict[str, Any]]) -> dict[str, Any]:
         ).stdout.strip()
     except Exception:  # pragma: no cover - provenance must not fail a run
         head = "unknown"
+    try:
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except Exception:  # pragma: no cover - provenance must not fail a run
+        dirty = None
     return {
+        # The commit whose code produced these numbers. An artifact whose SHA
+        # predates the measurement procedure it describes is not reproducible,
+        # so this is recorded at run time and never hand-edited.
         "head_sha": head,
+        "worktree_clean": (dirty == "") if dirty is not None else None,
+        "worktree_dirty_paths": (
+            [line[3:] for line in dirty.splitlines()] if dirty else []
+        ),
         "command": " ".join(sys.argv),
         "args": vars(args),
         "gpu_name": (
