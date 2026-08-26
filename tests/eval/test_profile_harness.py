@@ -420,3 +420,74 @@ class TestFiniteValidation:
         from unturtle.eval.profile_harness import profile_cell
 
         assert profile_cell(_cell([_event(inclusive_seconds=4.0)]))["status"] == "ok"
+
+
+class TestCallCountIsAnInteger:
+    """`call_count` is a count, and the annotation is not enforced at runtime.
+
+    A bare `< 0` check lets NaN through — `nan < 0` is False — along with inf
+    and fractional values, so a malformed event reported `status: ok`.
+    """
+
+    @pytest.mark.parametrize(
+        "value", [float("nan"), float("inf"), float("-inf"), 1.5, -0.5]
+    )
+    def test_non_integer_counts_are_measurement_invalid(self, value):
+        from unturtle.eval.profile_harness import profile_cell
+
+        record = profile_cell(_cell([_event(call_count=value)]))
+        assert record["status"] == "measurement_invalid"
+
+    def test_bool_is_not_accepted_as_a_count(self):
+        """`True` is an Integral and would silently read as one call."""
+        from unturtle.eval.profile_harness import profile_cell
+
+        record = profile_cell(_cell([_event(call_count=True)]))
+        assert record["status"] == "measurement_invalid"
+        assert any("call_count" in r for r in record["invalid_reasons"])
+
+    def test_a_negative_integer_is_still_refused(self):
+        from unturtle.eval.profile_harness import profile_cell
+
+        assert (
+            profile_cell(_cell([_event(call_count=-3)]))["status"]
+            == "measurement_invalid"
+        )
+
+    def test_zero_and_positive_integers_are_accepted(self):
+        from unturtle.eval.profile_harness import profile_cell
+
+        assert profile_cell(_cell([_event(call_count=0)]))["status"] == "ok"
+        assert profile_cell(_cell([_event(call_count=7)]))["status"] == "ok"
+
+
+class TestExclusiveIsASubsetOfInclusive:
+    """Exclusive time feeds coverage directly, so an exclusive value above its
+    own inclusive total inflates `covered_seconds` while staying under the
+    outer wall time — over-coverage the wall check cannot see."""
+
+    def test_exclusive_above_inclusive_is_measurement_invalid(self):
+        from unturtle.eval.profile_harness import profile_cell
+
+        record = profile_cell(
+            _cell([_event(inclusive_seconds=1.0, exclusive_seconds=5.0)])
+        )
+        assert record["status"] == "measurement_invalid"
+        assert any("exceeds its inclusive" in r for r in record["invalid_reasons"])
+
+    def test_equal_values_are_valid_for_a_leaf(self):
+        from unturtle.eval.profile_harness import profile_cell
+
+        record = profile_cell(
+            _cell([_event(inclusive_seconds=4.0, exclusive_seconds=4.0)])
+        )
+        assert record["status"] == "ok"
+
+    def test_a_proper_subset_is_valid(self):
+        from unturtle.eval.profile_harness import profile_cell
+
+        record = profile_cell(
+            _cell([_event(inclusive_seconds=4.0, exclusive_seconds=1.5)])
+        )
+        assert record["status"] == "ok"
+        assert record["covered_seconds"] == 1.5

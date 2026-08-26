@@ -104,7 +104,17 @@ def parse_args() -> argparse.Namespace:
         help="which known result to reproduce",
     )
     parser.add_argument("--device", default="cuda:0")
-    parser.add_argument("--trials", type=int, default=3)
+    parser.add_argument(
+        "--trials",
+        type=int,
+        default=3,
+        help=(
+            "trials for the effect-shape checks. The noising gate ignores this "
+            f"and always uses NOISING_TRIALS={NOISING_TRIALS}: an equivalence "
+            "claim over a near-zero effect needs its own replication, and a "
+            "CLI default must not be able to weaken it."
+        ),
+    )
     parser.add_argument("--steps", type=int, default=10)
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--out", default="benchmarks/results/pd_harness_sanity")

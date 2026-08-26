@@ -31,6 +31,8 @@ below are enforced rather than assumed.
 
 from __future__ import annotations
 
+import math
+import numbers
 import statistics
 from dataclasses import dataclass, field
 from typing import Any
@@ -192,8 +194,6 @@ def _validate_finite(cell: ProfileCell) -> list[str]:
     vacuously. A `-inf` event time does the same to `covered_seconds`. These are
     measurement failures, and a harness must say so rather than publish them.
     """
-    import math
-
     problems: list[str] = []
     for name, trials in (
         ("wall_off_trials", cell.wall_off_trials),
@@ -219,9 +219,36 @@ def _validate_finite(cell: ProfileCell) -> list[str]:
                 problems.append(
                     f"event {event.name!r} {field_name} is negative ({value!r})"
                 )
-        if event.call_count < 0:
+        # A count, not a measurement: the annotation is not enforced at
+        # runtime, and `nan < 0` is False, so a bare sign check lets NaN, inf
+        # and fractional counts through as `ok`. `bool` is excluded because
+        # `True` is an Integral that would silently read as one call.
+        if isinstance(event.call_count, bool) or not isinstance(
+            event.call_count, numbers.Integral
+        ):
+            problems.append(
+                f"event {event.name!r} call_count must be a non-negative "
+                f"integer, got {event.call_count!r} ({type(event.call_count).__name__})"
+            )
+        elif event.call_count < 0:
             problems.append(
                 f"event {event.name!r} call_count is negative ({event.call_count})"
+            )
+        # Exclusive time feeds coverage directly, so an exclusive value above
+        # its own inclusive total is over-coverage entering through a channel
+        # the outer-wall check cannot see: it stays under the wall time while
+        # inflating `covered_seconds`.
+        if (
+            event.exclusive_seconds is not None
+            and math.isfinite(event.exclusive_seconds)
+            and math.isfinite(event.inclusive_seconds)
+            and event.exclusive_seconds > event.inclusive_seconds + COVERAGE_TOLERANCE
+        ):
+            problems.append(
+                f"event {event.name!r} exclusive_seconds "
+                f"({event.exclusive_seconds}) exceeds its inclusive_seconds "
+                f"({event.inclusive_seconds}): exclusive time is a subset of "
+                "inclusive time by definition"
             )
     return problems
 
