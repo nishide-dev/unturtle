@@ -65,6 +65,20 @@ TRIALS = 3
 STEPS = 8
 WARMUP = 3
 
+#: Frozen fixture identity — the #154 smoke path, not a synthetic stand-in.
+#: Every component is revision-pinned, including T5: `stage3_reduced_gate`
+#: resolves the encoder by NAME only, which is not sufficient provenance for an
+#: artifact, so the resolved commit is recorded at run time.
+CHECKPOINT = "embedded-language-flows/ELF-B-owt-torch"
+CHECKPOINT_REVISION = "146f84133c1389bfd4ef47f14ec7a955da22faa7"
+DATASET = "embedded-language-flows/openwebtext-t5"
+DATASET_REVISION = "0a8443e847ee6206e4737a6b9a93218347eabc08"
+TOTAL_SHARDS = 75
+SEQUENCE_LENGTH = 1024
+GRAD_CLIP = 1.0
+EMA_DECAY = 0.9999
+LEARNING_RATE = 2.5e-4
+
 #: Protocol representative batches. Larger sizes are attempted and their OOM is
 #: recorded as typed data rather than dropped (#152).
 BATCH_SIZES = (1, 8, 32)
@@ -118,35 +132,164 @@ def provenance(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "torch_version": torch.__version__,
         "cuda_version": torch.version.cuda,
-        "frozen_constants": {"TRIALS": TRIALS, "STEPS": STEPS, "WARMUP": WARMUP},
+        "frozen_constants": {
+            "TRIALS": TRIALS,
+            "STEPS": STEPS,
+            "WARMUP": WARMUP,
+            "SEQUENCE_LENGTH": SEQUENCE_LENGTH,
+            "GRAD_CLIP": GRAD_CLIP,
+            "EMA_DECAY": EMA_DECAY,
+            "LEARNING_RATE": LEARNING_RATE,
+            "grad_accum_steps": 1,
+        },
+        "fixture": {
+            "checkpoint": f"{CHECKPOINT}@{CHECKPOINT_REVISION}",
+            "dataset": f"{DATASET}@{DATASET_REVISION}",
+            "model_init": "fresh-init from config.yml (no checkpoint weights)",
+            "precision": "fp32 master params; bf16 autocast over the objective",
+            "unattributed_includes": "grad clipping and the EMA update",
+        },
         "verdict_source": "wall_off_trials median (instrumentation-off)",
     }
 
 
-def build(args: argparse.Namespace, batch_size: int):
-    """Model, encoder shim, optimizer and one batch at smoke scale.
+def load_fixture(args: argparse.Namespace) -> dict[str, Any]:
+    """Download and materialize the frozen #154 inputs. NOT timed.
 
-    Constructs `ELF` directly rather than loading the #153 checkpoint: this is a
-    step-SHAPE profile, and a real checkpoint would add download and load cost
-    without changing which operations the step performs. The config is a plain
-    namespace carrying the oracle defaults the objective reads, matching how
-    `benchmarks/elf/stage3_reduced_gate.py` assembles it — so a missing key
-    cannot become a silent default.
-
-    NON-QUALITY-BEARING: reads no generation output and does not reinterpret
-    Stage-3 results.
+    Data materialization is deliberately outside every timed scope; only the
+    per-step collation and transfer are charged to `data_collation`.
     """
+    import pyarrow as pa
     import torch
-    from unturtle_elf._reference.model import ELF
+    import yaml
+    from huggingface_hub import hf_hub_download
+    from transformers import T5EncoderModel
+
+    config_path = hf_hub_download(
+        CHECKPOINT, "config.yml", revision=CHECKPOINT_REVISION
+    )
+    raw_config = yaml.safe_load(pathlib.Path(config_path).read_text())
+
+    encoder_name = str(raw_config.get("encoder_model_name", "t5-small"))
+    inner = T5EncoderModel.from_pretrained(encoder_name)
+    # The resolved commit, not just the name: a name is not provenance.
+    encoder_revision = getattr(getattr(inner, "config", None), "_commit_hash", None)
+    inner = inner.to(args.device).eval().requires_grad_(False)
+
+    class EncoderShim(torch.nn.Module):
+        """Adapts HF `T5EncoderModel` to the oracle's encoder contract.
+
+        Correction #4 from the Stage-3 gate: the oracle hands its 3-D float
+        self-attention mask straight to `T5EncoderModel`, which transformers 5.x
+        rejects (`bitwise_and` on Float). For the UNCONDITIONAL scope every
+        query row of that mask equals the 2-D validity mask, so collapsing is
+        exact here — a conditional run would need a different adapter, and this
+        profile is unconditional.
+        """
+
+        def __init__(self, inner):
+            super().__init__()
+            self.inner = inner
+
+        def forward(self, input_ids, attention_mask=None, deterministic=True):
+            del deterministic
+            if attention_mask is not None and attention_mask.dim() == 3:
+                attention_mask = attention_mask[:, 0, :]
+            if attention_mask is not None:
+                attention_mask = attention_mask.long()
+            return self.inner(
+                input_ids=input_ids, attention_mask=attention_mask
+            ).last_hidden_state
+
+    encoder = EncoderShim(inner).to(args.device).eval()
+
+    # Shard naming and the Arrow stream reader follow
+    # `stage3_reduced_gate._shard_path` / `load_table`; one shard is enough for
+    # a step-shape profile, and the row schedule is fixed regardless.
+    shard = hf_hub_download(
+        DATASET,
+        f"data-{0:05d}-of-{TOTAL_SHARDS:05d}.arrow",
+        revision=DATASET_REVISION,
+        repo_type="dataset",
+    )
+    with pa.memory_map(shard, "rb") as source:
+        table = pa.ipc.open_stream(source).read_all()
+    return {
+        "raw_config": raw_config,
+        "encoder": encoder,
+        "encoder_name": encoder_name,
+        "encoder_revision": encoder_revision,
+        "table": table,
+        "torch": torch,
+    }
+
+
+def build(args: argparse.Namespace, fixture: dict[str, Any], batch_size: int):
+    """Fresh-init ELF-B from the frozen config, plus optimizer and EMA state.
+
+    Fresh-init rather than loading checkpoint weights: this is a TRAINING
+    profile, so the evaluation EMA weights are the wrong boundary. Model and
+    optimizer master parameters stay fp32 — the objective runs under bf16
+    autocast at the call site, which is the #154 precision semantics; casting
+    the whole model to bf16 would be a different configuration.
+    """
+    import numpy as np
+    import torch
+    from unturtle_elf.loader import build_elf_model
+    from unturtle_elf.training import build_muon_optimizer, init_ema
+
+    raw_config = fixture["raw_config"]
+    config = build_config(raw_config)
+
+    # Same global RNG state before every trial's construction, so weights and
+    # dropout draws are the same stream in the OFF and ON passes.
+    torch.manual_seed(0)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(0)
+    model = build_elf_model(raw_config).to(args.device)  # fp32 master params
+    optimizer = build_muon_optimizer(model, lr=LEARNING_RATE)
+    ema = init_ema(model)
+
+    # A fixed row-index schedule, replayed identically by every trial.
+    table = fixture["table"]
+    rng = np.random.default_rng(0)
+    row_order = rng.permutation(table.num_rows)
+    indices = [int(row_order[i % table.num_rows]) for i in range(batch_size)]
+    rows = [
+        np.asarray(table["input_ids"][index].as_py(), dtype=np.int64)
+        for index in indices
+    ]
+    padded, lengths = [], []
+    for ids in rows:
+        true_len = min(len(ids), SEQUENCE_LENGTH)
+        ids = ids[:SEQUENCE_LENGTH]
+        if true_len < SEQUENCE_LENGTH:
+            ids = np.concatenate(
+                [ids, np.zeros(SEQUENCE_LENGTH - true_len, dtype=ids.dtype)]
+            )
+        padded.append(ids)
+        lengths.append(true_len)
+    cpu_batch = {
+        "input_ids": np.stack(padded),
+        "true_lengths": np.asarray(lengths, dtype=np.int32)[:, None],
+    }
+    # Persistent across the trial's steps, advancing as the oracle's does — a
+    # fresh seed-0 generator per step would not be the #154 RNG stream.
+    generator = torch.Generator(device="cpu").manual_seed(0)
+    return model, fixture["encoder"], optimizer, cpu_batch, config, ema, generator
+
+
+def build_config(raw_config: dict[str, Any]):
+    """The frozen training config: oracle defaults, then checkpoint values.
+
+    Defaults are copied explicitly so a key the checkpoint omits cannot become
+    a silent default (the Stage-3 correction `stage3_reduced_gate` records).
+    """
 
     class Config:
         pass
 
     config = Config()
-    # Exactly the fields the objective reads, enumerated from
-    # `training.py` and `_reference/sampling_utils.py` rather than guessed, so a
-    # missing key cannot become a silent default. `vocab_size` is kept for the
-    # model constructor below, not for the objective.
     for key, value in {
         "pad_token": "pad",
         "t_eps": 5e-2,
@@ -164,55 +307,12 @@ def build(args: argparse.Namespace, batch_size: int):
         "decoder_prob": 0.5,
         "latent_mean": 0.0,
         "latent_std": 1.0,
-        "vocab_size": 32000,
+        "ema_decay1": EMA_DECAY,
     }.items():
         setattr(config, key, value)
-
-    encoder_dim = 128
-    seq_len = args.seq_len
-    torch.manual_seed(7)
-    model = ELF(
-        text_encoder_dim=encoder_dim,
-        max_length=seq_len,
-        hidden_size=256,
-        depth=4,
-        num_heads=4,
-        bottleneck_dim=64,
-        num_self_cond_cfg_tokens=config.num_self_cond_cfg_tokens,
-        vocab_size=config.vocab_size,
-    ).to(device=args.device, dtype=getattr(torch, args.dtype))
-
-    class EncoderShim(torch.nn.Module):
-        """Stands in for the frozen T5 encoder at smoke scale.
-
-        The encoding event is still timed, so its share is visible rather than
-        folded into another event; only its magnitude is unrepresentative of the
-        real encoder, which the record states.
-        """
-
-        def forward(self, input_ids, attention_mask=None, deterministic=True):
-            return torch.randn(
-                input_ids.shape[0],
-                seq_len,
-                encoder_dim,
-                device=input_ids.device,
-            )
-
-    # CPU rows only: mask construction and the H2D copy belong to the timed
-    # `data_collation` event, so `build()` must not pre-move anything.
-    import numpy as np
-
-    rows = np.random.default_rng(7).integers(
-        1, config.vocab_size, size=(batch_size, seq_len), dtype=np.int64
-    )
-    cpu_batch = {
-        "input_ids": rows,
-        "true_lengths": np.full((batch_size, 1), int(seq_len * 0.85), dtype=np.int32),
-    }
-    from unturtle_elf.training import build_muon_optimizer
-
-    optimizer = build_muon_optimizer(model, lr=1e-4)
-    return model, EncoderShim().to(args.device), optimizer, cpu_batch, config
+    for key, value in raw_config.items():  # checkpoint values win
+        setattr(config, key, value)
+    return config
 
 
 def collate(cpu_batch: dict[str, Any], *, device: str) -> dict[str, Any]:
@@ -289,11 +389,14 @@ def main() -> None:
     out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     batch_sizes = [int(value) for value in args.batch_sizes.split(",")]
+    # Loaded once, outside every timed scope: download and materialization are
+    # not part of the step being profiled.
+    fixture = load_fixture(args)
     records: list[dict[str, Any]] = []
 
     for batch_size in batch_sizes:
         try:
-            record = profile_batch(args, batch_size)
+            record = profile_batch(args, fixture, batch_size)
         except torch.cuda.OutOfMemoryError as error:
             record = {
                 "family": "elf",
@@ -301,6 +404,19 @@ def main() -> None:
                 "batch_size": batch_size,
                 "status": "oom",
                 "reason": str(error)[:400],
+                # A typed OOM is a RESULT, so it carries the same context a
+                # successful cell would (#152).
+                "oom_phase": "build_or_timed",
+                "sequence_length": SEQUENCE_LENGTH,
+                "precision": ("fp32 master params; bf16 autocast over the objective"),
+                "hardware": (
+                    torch.cuda.get_device_name(0)
+                    if torch.cuda.is_available()
+                    else "cpu"
+                ),
+                "checkpoint": f"{CHECKPOINT}@{CHECKPOINT_REVISION}",
+                "dataset": f"{DATASET}@{DATASET_REVISION}",
+                "encoder": (f"{fixture['encoder_name']}@{fixture['encoder_revision']}"),
             }
         records.append(record)
         print(
@@ -318,7 +434,9 @@ def main() -> None:
     print(f"wrote {len(records)} cells to {out / 'elf_training_profile.json'}")
 
 
-def profile_batch(args: argparse.Namespace, batch_size: int) -> dict[str, Any]:
+def profile_batch(
+    args: argparse.Namespace, fixture: dict[str, Any], batch_size: int
+) -> dict[str, Any]:
     """One (batch) cell: instrumentation-off trials, then an attributed pass.
 
     Both passes measure the SAME window. Warmup is run, its time recorded
@@ -346,9 +464,10 @@ def profile_batch(args: argparse.Namespace, batch_size: int) -> dict[str, Any]:
     released: list[bool] = []
 
     for _ in range(TRIALS):
-        model, encoder, optimizer, cpu_batch, config = build(args, batch_size)
+        model, encoder, optimizer, cpu_batch, config, ema, generator = build(
+            args, fixture, batch_size
+        )
         model_probe = weakref.ref(model)
-        encoder_probe = weakref.ref(encoder)
         if torch.cuda.is_available():
             torch.cuda.synchronize()
             torch.cuda.reset_peak_memory_stats()
@@ -359,8 +478,19 @@ def profile_batch(args: argparse.Namespace, batch_size: int) -> dict[str, Any]:
             optimizer=optimizer,
             cpu_batch=cpu_batch,
             config=config,
+            ema=ema,
+            generator=generator,
         ):
-            return one_step(model, encoder, optimizer, cpu_batch, config, args)
+            return one_step(
+                model,
+                encoder,
+                optimizer,
+                cpu_batch,
+                config,
+                args,
+                ema,
+                generator,
+            )
 
         warmup_seconds, timed = timed_step_loop(run_off, device=args.device)
         off_trials.append(sum(timed) / len(timed))
@@ -371,19 +501,22 @@ def profile_batch(args: argparse.Namespace, batch_size: int) -> dict[str, Any]:
         # `run_off` binds the model and encoder as DEFAULT ARGUMENTS, so it must
         # be deleted BEFORE them or the bindings keep the previous trial's
         # weights resident while the next `build()` runs (#173's closure leak).
-        del run_off, model, encoder, optimizer, cpu_batch, config
+        # The encoder is a SHARED fixture object reused across trials, so only
+        # the per-trial model is expected to be released here.
+        del run_off, model, optimizer, cpu_batch, config, ema, generator
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        released.append(model_probe() is None and encoder_probe() is None)
+        released.append(model_probe() is None)
 
     on_trials: list[float] = []
     per_trial_ops: list[dict[str, dict[str, Any]]] = []
 
     for _ in range(TRIALS):
-        model, encoder, optimizer, cpu_batch, config = build(args, batch_size)
+        model, encoder, optimizer, cpu_batch, config, ema, generator = build(
+            args, fixture, batch_size
+        )
         model_probe = weakref.ref(model)
-        encoder_probe = weakref.ref(encoder)
         timer = OperationTimer(device=args.device)
         original = instrument(model, timer)
         encoder_original = instrument_encoder(encoder, timer)
@@ -394,10 +527,20 @@ def profile_batch(args: argparse.Namespace, batch_size: int) -> dict[str, Any]:
             optimizer=optimizer,
             cpu_batch=cpu_batch,
             config=config,
+            ema=ema,
+            generator=generator,
             timer=timer,
         ):
             return one_step(
-                model, encoder, optimizer, cpu_batch, config, args, timer=timer
+                model,
+                encoder,
+                optimizer,
+                cpu_batch,
+                config,
+                args,
+                ema,
+                generator,
+                timer=timer,
             )
 
         try:
@@ -409,11 +552,11 @@ def profile_batch(args: argparse.Namespace, batch_size: int) -> dict[str, Any]:
             encoder.__class__.forward = encoder_original
         on_trials.append(sum(timed) / len(timed))
         per_trial_ops.append(timer.result())
-        del run_on, model, encoder, optimizer, cpu_batch, config, timer
+        del run_on, model, optimizer, cpu_batch, config, ema, generator, timer
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        released.append(model_probe() is None and encoder_probe() is None)
+        released.append(model_probe() is None)
 
     if not all(released):
         return {
@@ -432,16 +575,20 @@ def profile_batch(args: argparse.Namespace, batch_size: int) -> dict[str, Any]:
     # from whichever timer names happened to appear: a broken caller lookup
     # would otherwise silently drop an event and still produce an artifact.
     for index, ops in enumerate(per_trial_ops):
-        missing = sorted(required - set(ops))
-        if missing:
+        # EXACT equality, not just "nothing missing": an unexpected event would
+        # otherwise be ignored at publication time, hiding a taxonomy change or
+        # a mis-keyed call site.
+        if set(ops) != required:
             return {
                 "family": "elf",
                 "cell": "training_step",
                 "batch_size": batch_size,
                 "status": "measurement_invalid",
                 "reason": (
-                    f"instrumented trial {index} recorded no {missing}; call-site "
-                    "attribution is broken and the taxonomy is incomplete"
+                    f"instrumented trial {index} observed events "
+                    f"{sorted(ops)}, expected exactly {sorted(required)}: "
+                    f"missing {sorted(required - set(ops))}, unexpected "
+                    f"{sorted(set(ops) - required)}"
                 ),
                 "observed_events": sorted(ops),
             }
@@ -490,16 +637,20 @@ def profile_batch(args: argparse.Namespace, batch_size: int) -> dict[str, Any]:
         OperationEvent(
             name=name,
             inclusive_seconds=per_step(name),
-            call_count=STEPS // STEPS,
+            call_count=1,
             parent=None,
             coverage_eligible=True,
         )
         for name in ("data_collation", "backward", "optimizer_step", *contained)
     ]
+    # `objective_loss` keeps its frozen taxonomy name. Its INCLUSIVE total is
+    # the diagnostic; coverage uses the EXCLUSIVE share, so the objective's own
+    # work counts once and the contained forwards are not double counted.
     events.append(
         OperationEvent(
-            name="objective_loss_exclusive",
-            inclusive_seconds=objective_exclusive,
+            name="objective_loss",
+            inclusive_seconds=per_step("objective_loss"),
+            exclusive_seconds=objective_exclusive,
             call_count=1,
             parent=None,
             coverage_eligible=True,
@@ -547,35 +698,49 @@ def profile_batch(args: argparse.Namespace, batch_size: int) -> dict[str, Any]:
     return profile_cell(cell)
 
 
-def one_step(model, encoder, optimizer, cpu_batch, config, args, timer=None):
-    """One training step, with collation and transfer inside the timed scope.
+def one_step(
+    model, encoder, optimizer, cpu_batch, config, args, ema, generator, timer=None
+):
+    """One optimizer update with the frozen #154 mechanics.
 
-    `data_collation` covers the oracle's mask construction and the host-to-device
-    transfer, performed every step from CPU rows. An earlier version pre-moved
-    the batch in `build()` and timed a dictionary comprehension, which measured
-    nothing.
+    Sequence matches `stage3_reduced_gate` lines 460-475: bf16 autocast over the
+    objective with fp32 master params, backward, grad clip 1.0, Muon step, EMA
+    0.9999, zero-grad.
+
+    Grad clipping and the EMA update are NOT given their own taxonomy events, so
+    their cost lands in `unattributed_seconds` rather than being folded silently
+    into `optimizer_step`. Coverage below 100% is the honest outcome; inflating
+    it by mixing distinct work into a Muon event would not be.
     """
     import torch
-    from unturtle_elf.training import elf_training_loss
+    from unturtle_elf.training import elf_training_loss, ema_update
 
     scope = timer.measure if timer is not None else _null_scope
 
     with scope("data_collation"):
         batch = collate(cpu_batch, device=args.device)
 
-    with scope("objective_loss"):
+    with (
+        scope("objective_loss"),
+        torch.autocast(device_type="cuda", dtype=torch.bfloat16),
+    ):
         loss, _metrics, _aux = elf_training_loss(
             model,
             encoder,
             batch,
             config,
-            dropout_generator=torch.Generator(device="cpu").manual_seed(0),
+            dropout_generator=generator,
         )
     with scope("backward"):
         loss.backward()
+    # grad_accum_steps = 1: one microbatch per optimizer update (#166 cell).
+    torch.nn.utils.clip_grad_norm_(
+        [p for p in model.parameters() if p.requires_grad], GRAD_CLIP
+    )
     with scope("optimizer_step"):
         optimizer.step()
-        optimizer.zero_grad(set_to_none=True)
+    ema_update(ema, model, EMA_DECAY)
+    optimizer.zero_grad(set_to_none=True)
     return loss
 
 

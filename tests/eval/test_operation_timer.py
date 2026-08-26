@@ -254,8 +254,10 @@ class TestElfProducerMeasurementValidity:
 
         producer = self._producer()
         source = inspect.getsource(producer.profile_batch)
-        assert "objective_loss_exclusive" in source
-        assert "objective_loss_inclusive_seconds" in source
+        # The frozen taxonomy name is kept; the exclusive share rides on the
+        # event's `exclusive_seconds` rather than a renamed event.
+        assert "objective_loss_exclusive" not in source
+        assert "exclusive_seconds=objective_exclusive" in source
 
     def test_required_events_are_asserted_not_inferred(self):
         """A broken caller lookup would otherwise drop an event silently."""
@@ -263,9 +265,10 @@ class TestElfProducerMeasurementValidity:
 
         producer = self._producer()
         source = inspect.getsource(producer.profile_batch)
-        assert "required" in source
         assert "measurement_invalid" in source
         assert 'body["call_count"] != STEPS' in source
+        # Exact set equality, so an UNEXPECTED event is also refused.
+        assert "set(ops) != required" in source
 
     def test_peak_memory_representative_is_fixed_in_advance(self):
         import inspect
