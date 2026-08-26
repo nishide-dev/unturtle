@@ -68,6 +68,15 @@ HYBRID_TRIALS = 5
 #: equivalence claim over a near-zero effect needs the replication.
 NOISING_TRIALS = 5
 
+#: Timed steps per noising trial, fixed rather than taken from `--steps`.
+#: At 20 steps the per-trial deltas straddle the 2% band (measured: two of five
+#: trials at +2.21% and -2.10%, typing the cell `unstable`), because 20 steps of
+#: a ~13 ms operation is too short a window for a sub-1% difference. At 60 the
+#: same comparison lands at median +0.02% with every trial inside the band. The
+#: gate must not depend on the caller passing a large enough `--steps`.
+NOISING_STEPS = 60
+NOISING_WARMUP = 15
+
 # Ledger expectations. Directional only — see the module docstring.
 EXPECTATIONS = {
     "sparse": {
@@ -486,8 +495,8 @@ def check_noising(args) -> dict[str, Any]:
         layers=2,
         batch_size=4,
         seq_len=512,
-        warmup=args.warmup,
-        steps=args.steps,
+        warmup=NOISING_WARMUP,
+        steps=NOISING_STEPS,
         trials=NOISING_TRIALS,
     )
     tokenizer = bench._tokenizer()
@@ -559,8 +568,8 @@ def check_noising(args) -> dict[str, Any]:
         measure_arm,
         ("collator", "process"),
         trials=NOISING_TRIALS,
-        warmup=args.warmup,
-        steps=args.steps,
+        warmup=NOISING_WARMUP,
+        steps=NOISING_STEPS,
         device=args.device,
     )
     unreleased = [
@@ -599,6 +608,7 @@ def check_noising(args) -> dict[str, Any]:
         "status": status,
         "expectation": EXPECTATIONS["noising"],
         "trials": NOISING_TRIALS,
+        "steps_per_trial": NOISING_STEPS,
         "equivalence": result,
         "per_arm": per_arm,
     }
@@ -899,6 +909,7 @@ def _provenance(args, records: list[dict[str, Any]]) -> dict[str, Any]:
         "frozen_constants": {
             "NOISING_EQUIVALENCE_MARGIN": NOISING_EQUIVALENCE_MARGIN,
             "NOISING_TRIALS": NOISING_TRIALS,
+            "NOISING_STEPS": NOISING_STEPS,
             "HYBRID_TRIALS": HYBRID_TRIALS,
         },
         "verdict_source": (
