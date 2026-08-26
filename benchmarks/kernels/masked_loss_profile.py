@@ -233,13 +233,17 @@ def require_supported_device(device: str) -> None:
     the honest options are to thread an exact `torch.device` everywhere or to
     refuse. This refuses.
     """
-    if device == "cpu" or device == "cuda:0":
+    if device == "cuda:0":
         return
     raise SystemExit(
-        f"--device {device!r} is not supported by this producer: its "
-        "synchronization, CUDA events, peak-memory stats and GPU-name "
-        "provenance all target the default device, so any other device would "
-        "be silently mis-recorded. Use cuda:0 or cpu."
+        f"--device {device!r} is not supported: this producer is cuda:0 only. "
+        "Its synchronization, CUDA events, peak-memory stats, RNG fingerprints "
+        "and GPU-name provenance all go through the DEFAULT device or every "
+        "device, so another index would be mis-recorded — and `cpu` on a "
+        "GPU-equipped host would fold CUDA RNG state, CUDA peak memory and "
+        "GPU 0's name into a CPU cell. Narrowing the contract is honest; "
+        "threading an exact torch.device through every one of those call sites "
+        "is the alternative and is not what this Stage-1 cell needs."
     )
 
 
@@ -569,6 +573,10 @@ def profile_cell_for(args, *, vocab_size: int, layers: int, batch_size: int):
             )
         model_probe = weakref.ref(model)
         trainer_probe = weakref.ref(trainer)
+        # The optimizer holds references to the model's PARAMETERS, so an
+        # optimizer that outlives its trial keeps the model's allocation alive
+        # even when the model and trainer probes both report released.
+        optimizer_probe = weakref.ref(optimizer)
         # After construction, before warmup: the point at which paired arms must
         # already agree.
         rng_states.setdefault(seed, {})[arm] = rng_fingerprint()
@@ -634,7 +642,11 @@ def profile_cell_for(args, *, vocab_size: int, layers: int, batch_size: int):
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        released.append(model_probe() is None and trainer_probe() is None)
+        released.append(
+            model_probe() is None
+            and trainer_probe() is None
+            and optimizer_probe() is None
+        )
 
     for trial in range(TRIALS):
         order = ("off", "on") if trial % 2 == 0 else ("on", "off")
@@ -649,7 +661,8 @@ def profile_cell_for(args, *, vocab_size: int, layers: int, batch_size: int):
             vocab_size,
             layers,
             batch_size,
-            f"a trial's model or trainer outlived its measurement call: {released}",
+            "a trial's model, trainer or optimizer outlived its measurement "
+            f"call: {released}",
         )
 
     # Paired arms must agree on the STATE they started from, not merely on the
@@ -724,6 +737,7 @@ def profile_cell_for(args, *, vocab_size: int, layers: int, batch_size: int):
     # steps never saw.
     mask_by_trial: list[list[float]] = []
     replay_fingerprints: dict[int, str] = {}
+    replay_state_fingerprints: dict[int, str] = {}
     mask_invalid: str | None = None
     for seed in TRIAL_SEEDS:
         model, trainer, clean, optimizer = build(
@@ -735,7 +749,9 @@ def profile_cell_for(args, *, vocab_size: int, layers: int, batch_size: int):
         )
         model_probe = weakref.ref(model)
         trainer_probe = weakref.ref(trainer)
+        optimizer_probe = weakref.ref(optimizer)
         replay_fingerprints[seed] = rng_fingerprint()
+        replay_state_fingerprints[seed] = state_fingerprint(model, clean)
         if trainer.forward_process is None:
             return invalid(
                 vocab_size,
@@ -803,10 +819,15 @@ def profile_cell_for(args, *, vocab_size: int, layers: int, batch_size: int):
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        if model_probe() is not None or trainer_probe() is not None:
+        if (
+            model_probe() is not None
+            or trainer_probe() is not None
+            or optimizer_probe() is not None
+        ):
             mask_invalid = (
-                "a diagnostic replay's model or trainer outlived its trial, so "
-                "the next cell would start with its allocation resident"
+                "a diagnostic replay's model, trainer or optimizer outlived its "
+                "trial, so the next cell would start with its allocation "
+                "resident"
             )
         if mask_invalid is not None:
             break
@@ -843,18 +864,42 @@ def profile_cell_for(args, *, vocab_size: int, layers: int, batch_size: int):
         )
     # Each replay trial must start from the same state as its measured twin,
     # so the distribution describes the execution that was timed.
-    for seed, fingerprint in replay_fingerprints.items():
-        measured = rng_states.get(seed, {}).get("off")
-        if measured is not None and fingerprint != measured:
+    # Both tables must be POPULATED before they are compared: an empty table
+    # makes the loop below iterate zero times and pass vacuously, which is what
+    # happened when the capture was removed but the gate left in place.
+    for label, table in (
+        ("replay RNG", replay_fingerprints),
+        ("replay weights/inputs", replay_state_fingerprints),
+    ):
+        if len(table) != len(TRIAL_SEEDS):
             return invalid(
                 vocab_size,
                 layers,
                 batch_size,
-                f"the mask replay for seed {seed} started from RNG state "
-                f"{fingerprint} but the measured trial started from "
-                f"{measured}, so the replayed distribution is not the one "
-                "that was timed",
+                f"{label} fingerprints cover {len(table)} of "
+                f"{len(TRIAL_SEEDS)} trials, so the replay-versus-measured "
+                "comparison would pass without checking anything",
             )
+
+    # RNG state AND weights/inputs, both: matching the RNG alone would let a
+    # replay with different weights or a different clean batch pass as "the
+    # execution that was timed".
+    for label, replay_table, measured_table in (
+        ("RNG state", replay_fingerprints, rng_states),
+        ("weights/inputs", replay_state_fingerprints, state_states),
+    ):
+        for seed, fingerprint in replay_table.items():
+            measured = measured_table.get(seed, {}).get("off")
+            if measured is not None and fingerprint != measured:
+                return invalid(
+                    vocab_size,
+                    layers,
+                    batch_size,
+                    f"the mask replay for seed {seed} started from {label} "
+                    f"{fingerprint} but the measured trial started from "
+                    f"{measured}, so the replayed distribution is not the one "
+                    "that was timed",
+                )
 
     def per_step(name: str) -> float:
         return statistics.median(
@@ -973,6 +1018,8 @@ def profile_cell_for(args, *, vocab_size: int, layers: int, batch_size: int):
             ),
             "peak_representative": "max over trials (fixed before measuring)",
             "rng_state_fingerprints": rng_states,
+            "replay_rng_fingerprints": replay_fingerprints,
+            "replay_state_fingerprints": replay_state_fingerprints,
             "weight_input_fingerprints": state_states,
             # The RESOLVED optimizer configuration, read off the instantiated
             # object: "default-resolved" was a placeholder, not a value, and

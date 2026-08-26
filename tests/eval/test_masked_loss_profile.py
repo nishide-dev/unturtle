@@ -288,7 +288,10 @@ class TestPairingAndLifecycle:
     def test_lifecycle_release_is_verdict_bearing(self):
         source = inspect.getsource(_producer().profile_cell_for)
         assert "weakref.ref(model)" in source
-        assert "outlived its measurement call" in source
+        assert "outlived its measurement " in source
+        # All three objects must appear in the release gate's message, so a
+        # reader knows which lifetimes are actually checked.
+        assert "model, trainer or optimizer" in source
 
     def test_peak_memory_is_off_arm_only_with_max_fixed_in_advance(self):
         source = inspect.getsource(_producer().profile_cell_for)
@@ -455,7 +458,6 @@ class TestReviewedMeasurementGates:
         device, so any other index would be silently mis-recorded."""
         producer = _producer()
         producer.require_supported_device("cuda:0")
-        producer.require_supported_device("cpu")
         with pytest.raises(SystemExit, match="not supported"):
             producer.require_supported_device("cuda:1")
 
@@ -472,3 +474,82 @@ class TestReviewedMeasurementGates:
             assert resolved[key] != "default-resolved"
         assert record["param_groups"]
         assert "torch_version" in record
+
+
+class TestNarrowIntegrityGates:
+    """The three integrity fixes from the second Commit-A review."""
+
+    def test_cpu_is_refused_not_silently_mis_recorded(self):
+        """On a GPU host, `cpu` would have folded CUDA RNG state, CUDA peak
+        memory and GPU 0's name into a CPU cell, because the producer branches
+        on `torch.cuda.is_available()` rather than the chosen device."""
+        producer = _producer()
+        producer.require_supported_device("cuda:0")
+        for device in ("cpu", "cuda:1", "cuda"):
+            with pytest.raises(SystemExit, match="cuda:0 only"):
+                producer.require_supported_device(device)
+
+    def test_the_replay_is_gated_on_weights_and_inputs_too(self):
+        """Matching the RNG alone let a replay with different weights or a
+        different clean batch pass as 'the execution that was timed'."""
+        source = inspect.getsource(_producer().profile_cell_for)
+        assert "replay_state_fingerprints" in source
+        assert "state_fingerprint(model, clean)" in source
+        # Both tables must be compared, not just the RNG one.
+        assert '("RNG state", replay_fingerprints, rng_states)' in source
+        assert '("weights/inputs", replay_state_fingerprints, state_states)' in source
+
+    def test_an_empty_fingerprint_table_cannot_pass_vacuously(self):
+        """Removing the capture left the comparison loop iterating zero times,
+        so the gate passed while checking nothing."""
+        source = inspect.getsource(_producer().profile_cell_for)
+        assert "len(table) != len(TRIAL_SEEDS)" in source
+        assert "would pass without checking anything" in source
+        # And the capture itself must be present.
+        assert "replay_state_fingerprints[seed] = state_fingerprint(" in source
+
+    def test_both_replay_fingerprints_are_published(self):
+        source = inspect.getsource(_producer().profile_cell_for)
+        assert '"replay_rng_fingerprints"' in source
+        assert '"replay_state_fingerprints"' in source
+
+    def test_the_optimizer_lifetime_is_verdict_bearing(self):
+        """The optimizer holds references to the model's PARAMETERS, so it can
+        keep the allocation alive after the model and trainer probes both read
+        released."""
+        producer = _producer()
+        source = inspect.getsource(producer.profile_cell_for)
+        assert source.count("weakref.ref(optimizer)") == 2, (
+            "both the measurement path and the diagnostic replay need it"
+        )
+        assert "optimizer_probe() is None" in source
+        assert "optimizer_probe() is not None" in source
+
+    def test_an_optimizer_alone_keeps_the_weights_alive(self):
+        """The premise, corrected by measurement.
+
+        The optimizer retains the PARAMETER TENSORS, not the module: the module
+        is freed on `del model` while its weight memory stays allocated. So a
+        module-liveness probe reports "released" while the allocation the peak
+        cares about is still resident — which is exactly why the optimizer
+        needs its own probe.
+        """
+        import gc
+        import weakref
+
+        import torch
+
+        model = torch.nn.Linear(8, 8)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+        module_probe = weakref.ref(model)
+        weight_probe = weakref.ref(next(model.parameters()))
+        del model
+        gc.collect()
+        assert module_probe() is None, "the module itself is freed"
+        assert weight_probe() is not None, (
+            "but the optimizer still holds the parameter tensor, so the weight "
+            "allocation survives a model-only release check"
+        )
+        del optimizer
+        gc.collect()
+        assert weight_probe() is None
