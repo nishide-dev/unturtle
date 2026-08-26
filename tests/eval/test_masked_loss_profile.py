@@ -360,3 +360,115 @@ class TestTaxonomyIntegrity:
         module = producer._sparse_benchmark()
         assert hasattr(module, "_tokenizer")
         assert hasattr(module, "main")
+
+
+class TestReviewedMeasurementGates:
+    """The five gates added after the Commit-A review."""
+
+    def test_collection_happens_inside_the_timed_interval(self):
+        """The clock used to stop BEFORE `collect()`, so collection overhead sat
+        outside `wall_on_trials`."""
+        source = inspect.getsource(_producer().timed_step_loop)
+        body = source.split("seconds: list[float] = []")[1]
+        collect_at = body.index("timer.collect(synchronize=False)")
+        append_at = body.index("seconds.append")
+        assert collect_at < append_at, (
+            "collection must be folded in before the clock is read"
+        )
+
+    def test_the_timed_step_synchronizes_once(self):
+        """`collect()` synchronized a second time, making it two per step."""
+        source = inspect.getsource(_producer().timed_step_loop)
+        body = source.split("seconds: list[float] = []")[1]
+        assert body.count("sync()") == 2  # one before start, one at the boundary
+        assert "collect(synchronize=False)" in body
+
+    def test_collect_can_skip_its_own_sync(self):
+        from unturtle.eval.cuda_event_timer import CudaEventTimer
+
+        timer = CudaEventTimer(device="cpu")
+        with timer.measure("op"):
+            pass
+        timer.collect(synchronize=False)
+        assert timer.result()["op"]["call_count"] == 1
+
+    def test_peak_memory_is_reset_after_warmup(self):
+        """Resetting before warmup counted warmup transients and lazy
+        optimizer-state creation in the peak."""
+        producer = _producer()
+        loop = inspect.getsource(producer.timed_step_loop)
+        assert "on_warmup_done" in loop
+        assert loop.index("warmup_seconds =") < loop.index("on_warmup_done()")
+        cell = inspect.getsource(producer.profile_cell_for)
+        assert "def after_warmup(" in cell
+        assert "reset_peak_memory_stats()" in cell
+        # Both call sites must pass the callback; `on_warmup_done=None` at
+        # either one silently restores the pre-warmup reset.
+        assert cell.count("on_warmup_done=after_warmup") == 2
+        assert "on_warmup_done=None" not in cell
+
+    def test_the_warmup_callback_actually_fires(self):
+        """Behavioural: a mutant passing None kept every source string."""
+        producer = _producer()
+        fired = []
+        producer.timed_step_loop(
+            lambda: None,
+            device="cpu",
+            on_warmup_done=lambda: fired.append(True),
+        )
+        assert fired == [True], "the warmup hook must be invoked exactly once"
+
+    def test_the_residual_is_checked_per_trial_before_any_median(self):
+        """A difference of medians lets one trial's negative residual hide
+        behind another's surplus."""
+        source = inspect.getsource(_producer().profile_cell_for)
+        assert "per_trial_residual" in source
+        assert "zip(per_trial_model_forward, per_trial_ops, strict=True)" in source
+        assert source.index("per_trial_residual = [") < source.index(
+            "residual = statistics.median(per_trial_residual)"
+        )
+        # The check must iterate the real list: a mutant swapped it for `[]`,
+        # keeping every other string intact.
+        assert "enumerate(per_trial_residual)" in source
+        assert "enumerate([])" not in source
+
+    def test_replay_completeness_is_gated(self):
+        source = inspect.getsource(_producer().profile_cell_for)
+        assert "len(mask_by_trial) != TRIALS" in source
+        assert "len(draws) != STEPS" in source
+        assert "len(mask_fractions) != TRIALS * STEPS" in source
+        assert "forward_process is None" in source
+
+    def test_replay_start_state_must_match_the_measured_trial(self):
+        source = inspect.getsource(_producer().profile_cell_for)
+        assert "replay_fingerprints" in source
+        assert "is not the one" in source
+        assert "fingerprint != measured" in source
+        assert "if False:" not in source
+
+    def test_each_seed_runs_exactly_one_off_and_one_on(self):
+        source = inspect.getsource(_producer().profile_cell_for)
+        assert 'set(arms) != {"off", "on"}' in source
+
+    def test_a_non_default_cuda_device_is_refused(self):
+        """Sync, events, peak stats and the GPU name all target the default
+        device, so any other index would be silently mis-recorded."""
+        producer = _producer()
+        producer.require_supported_device("cuda:0")
+        producer.require_supported_device("cpu")
+        with pytest.raises(SystemExit, match="not supported"):
+            producer.require_supported_device("cuda:1")
+
+    def test_optimizer_flags_are_resolved_values_not_placeholders(self):
+        """`"default-resolved"` was a placeholder, not a value."""
+        import torch
+
+        producer = _producer()
+        model = torch.nn.Linear(4, 4)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+        record = producer.optimizer_fingerprint(optimizer)
+        resolved = record["resolved_defaults"]
+        for key in ("foreach", "fused", "capturable", "maximize", "differentiable"):
+            assert resolved[key] != "default-resolved"
+        assert record["param_groups"]
+        assert "torch_version" in record

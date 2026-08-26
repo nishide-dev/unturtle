@@ -94,8 +94,13 @@ class CudaEventTimer:
             end.record()
             self._pending.append((name, start, end))
 
-    def collect(self) -> None:
-        """Synchronize ONCE, then fold every pending pair into the totals."""
+    def collect(self, *, synchronize: bool = True) -> None:
+        """Fold every pending pair into the totals.
+
+        `synchronize=False` is for a caller that has ALREADY synchronized at the
+        step boundary — passing True there would sync twice per step, and the
+        protocol's rule is one boundary synchronize.
+        """
         for name, seconds in self._wall_pending:
             self.inclusive[name] = self.inclusive.get(name, 0.0) + seconds
             self.counts[name] = self.counts.get(name, 0) + 1
@@ -105,7 +110,8 @@ class CudaEventTimer:
             return
         import torch
 
-        torch.cuda.synchronize()
+        if synchronize:
+            torch.cuda.synchronize()
         for name, start, end in self._pending:
             seconds = start.elapsed_time(end) / 1000.0
             self.inclusive[name] = self.inclusive.get(name, 0.0) + seconds
