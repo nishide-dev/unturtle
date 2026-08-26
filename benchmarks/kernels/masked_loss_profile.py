@@ -85,6 +85,7 @@ LEARNING_RATE = 1e-4
 BETAS = (0.9, 0.999)
 EPS = 1e-8
 WEIGHT_DECAY = 0.01
+AMSGRAD = False
 
 #: Per-trial seeds. Paired arms within a trial share a seed so OFF and ON see
 #: the same stream; trials differ so the mask diagnostic gets distinct draws.
@@ -282,6 +283,7 @@ def build(
         betas=BETAS,
         eps=EPS,
         weight_decay=WEIGHT_DECAY,
+        amsgrad=AMSGRAD,
     )
     return model, trainer, clean, optimizer
 
@@ -530,9 +532,15 @@ def profile_cell_for(args, *, vocab_size: int, layers: int, batch_size: int):
     # --- mask diagnostic: a SEPARATE replay, after all timing ---
     # Kept out of the measured path entirely. Collecting it inside the OFF arm
     # would put a GPU reduction and a Python append into the very wall time that
-    # serves as the verdict, so the OFF arm would no longer be
-    # instrumentation-off. It feeds no wall, event or memory figure.
+    # serves as the verdict. It feeds no wall, event or memory figure.
+    #
+    # Each trial replays a FULL step, not `forward_process` alone. Verified:
+    # eight bare process calls diverge from the real stream at the SECOND draw
+    # (0.5469 against 0.4492) because the model forward and dropout also consume
+    # the global RNG, so a process-only replay reports a mask regime the timed
+    # steps never saw.
     mask_by_trial: list[list[float]] = []
+    mask_invalid: str | None = None
     for seed in TRIAL_SEEDS:
         model, trainer, clean, optimizer = build(
             args,
@@ -541,32 +549,75 @@ def profile_cell_for(args, *, vocab_size: int, layers: int, batch_size: int):
             batch_size=batch_size,
             seed=seed,
         )
+        model_probe = weakref.ref(model)
         draws: list[float] = []
-        process = trainer.forward_process
-        if process is not None:
-            # A full step's worth of draws, advancing the stream exactly as the
-            # timed loop does — not one call repeated.
+        captured: list[tuple[Any, Any]] = []
+        original_process = trainer.forward_process
+
+        def capturing(
+            *call_args,
+            _original=original_process,
+            _captured=captured,
+            **call_kwargs,
+        ):
+            # Bound as default arguments, not captured from the loop: ruff's
+            # B023 flags the closure form, and a late-bound list would collect
+            # into whichever trial's list happened to be last.
+            output = _original(*call_args, **call_kwargs)
+            _captured.append(
+                (
+                    output.objective_inputs.get("diffusion_mask"),
+                    output.objective_inputs.get("labels"),
+                )
+            )
+            return output
+
+        if original_process is not None:
+            trainer.forward_process = capturing
+        try:
+            # Warmup first, exactly as the timed loop does, so the stream is at
+            # the same offset before the counted steps begin.
+            for _ in range(WARMUP):
+                one_step(model, trainer, clean, optimizer)
+            captured.clear()
             for _ in range(STEPS):
-                noised = process(dict(clean))
-                mask = noised.objective_inputs.get("diffusion_mask")
-                labels = noised.objective_inputs.get("labels")
-                if mask is None:
-                    continue
-                # Denominator is MASKABLE tokens, not B x L: every token is
-                # eligible in this fixture, but the definition is pinned so a
-                # fixture with padding or completion-only supervision cannot
-                # silently change what the ratio means.
-                if labels is not None:
-                    maskable = (labels != -100).sum()
-                else:
-                    maskable = torch.tensor(mask.numel(), device=mask.device)
-                maskable = maskable.clamp_min(1)
-                draws.append(float(mask.sum() / maskable))
+                one_step(model, trainer, clean, optimizer)
+        finally:
+            trainer.forward_process = original_process
+
+        for mask, labels in captured:
+            if mask is None:
+                continue
+            # Denominator is MASKABLE tokens, not B x L: every token is
+            # eligible in this fixture, but the definition is pinned so a
+            # fixture with padding or completion-only supervision cannot
+            # silently change what the ratio means.
+            if labels is not None:
+                maskable = int((labels != -100).sum())
+            else:
+                maskable = int(mask.numel())
+            if maskable == 0:
+                # Typed, never a zero-division or a fabricated value.
+                mask_invalid = (
+                    "a diagnostic step produced zero maskable tokens, so the "
+                    "mask fraction has no denominator"
+                )
+                break
+            draws.append(float(int(mask.sum()) / maskable))
         mask_by_trial.append(draws)
-        del model, trainer, clean, optimizer
+        del model, trainer, clean, optimizer, captured, original_process
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        if model_probe() is not None:
+            mask_invalid = (
+                "a diagnostic replay's model outlived its trial, so the next "
+                "cell would start with its allocation resident"
+            )
+        if mask_invalid is not None:
+            break
+    if mask_invalid is not None:
+        return invalid(vocab_size, layers, batch_size, mask_invalid)
     mask_fractions = [value for trial in mask_by_trial for value in trial]
 
     def per_step(name: str) -> float:
@@ -649,6 +700,15 @@ def profile_cell_for(args, *, vocab_size: int, layers: int, batch_size: int):
                 "betas": list(BETAS),
                 "eps": EPS,
                 "weight_decay": WEIGHT_DECAY,
+                "amsgrad": AMSGRAD,
+                # Implementation-selection flags are not passed, so torch
+                # resolves them; recorded as resolved-by-default with the
+                # version, since which kernel runs affects the step time this
+                # profile attributes.
+                "foreach": "default-resolved",
+                "fused": "default-resolved",
+                "capturable": "default-resolved",
+                "torch_version": torch.__version__,
             },
             "peak_allocated_per_trial": peak_allocated,
             "per_trial_call_counts": [
