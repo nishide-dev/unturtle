@@ -136,7 +136,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def provenance(args: argparse.Namespace) -> dict[str, Any]:
+def provenance(args: argparse.Namespace, fixture: dict[str, Any]) -> dict[str, Any]:
     """Run identity, recorded at run time and never hand-edited."""
     import torch
 
@@ -175,6 +175,10 @@ def provenance(args: argparse.Namespace) -> dict[str, Any]:
         "fixture": {
             "checkpoint": f"{CHECKPOINT}@{CHECKPOINT_REVISION}",
             "dataset": f"{DATASET}@{DATASET_REVISION}",
+            # The encoder identity belongs on SUCCESSFUL runs too, not only on
+            # OOM records: an artifact whose frozen inputs are not all named is
+            # not reproducible from itself.
+            "encoder": (f"{fixture['encoder_name']}@{fixture['encoder_revision']}"),
             "model_init": "fresh-init from config.yml (no checkpoint weights)",
             "precision": "fp32 master params; bf16 autocast over the objective",
             "unattributed_includes": "grad clipping and the EMA update",
@@ -465,7 +469,7 @@ def main() -> None:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    payload = {"run": provenance(args), "cells": records}
+    payload = {"run": provenance(args, fixture), "cells": records}
     (out / "elf_training_profile.json").write_text(json.dumps(payload, indent=2) + "\n")
     print(f"wrote {len(records)} cells to {out / 'elf_training_profile.json'}")
 

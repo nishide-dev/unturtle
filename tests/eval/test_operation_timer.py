@@ -422,3 +422,20 @@ class TestElfArtifactIntegrity:
         producer = self._producer()
         with pytest.raises(ValueError), producer.oom_phase("build"):
             raise ValueError("unrelated")
+
+    def test_successful_run_provenance_names_the_encoder(self):
+        """The encoder identity must reach SUCCESSFUL runs, not only OOM
+        records: an artifact whose frozen inputs are not all named cannot be
+        reproduced from itself."""
+        import argparse
+
+        producer = self._producer()
+        fixture = {
+            "encoder_name": "t5-small",
+            "encoder_revision": producer.T5_REVISION,
+        }
+        run = producer.provenance(argparse.Namespace(device="cpu"), fixture)
+        encoder = run["fixture"]["encoder"]
+        assert encoder == f"t5-small@{producer.T5_REVISION}"
+        # An exact 40-character commit, not a bare name.
+        assert len(encoder.split("@")[1]) == 40
