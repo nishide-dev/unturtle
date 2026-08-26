@@ -431,7 +431,303 @@ def check_sparse(args) -> dict[str, Any]:
     }
 
 
-CHECKS = {"sparse": check_sparse}
+def _load_noising_benchmark():
+    """Reuse the #62 benchmark's builders rather than re-deriving them."""
+    import importlib.util
+
+    path = (
+        pathlib.Path(__file__).resolve().parents[1] / "collator_vs_process_noising.py"
+    )
+    spec = importlib.util.spec_from_file_location("_noising_bench", path)
+    if spec is None or spec.loader is None:  # pragma: no cover - defensive
+        raise RuntimeError(f"cannot load the noising benchmark at {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def check_noising(args) -> dict[str, Any]:
+    """Reproduce the ABSENCE of a noising effect — an equivalence test.
+
+    The established finding is "no measurable difference", so the criterion is
+    equivalence within a frozen margin, NOT a reproduction of the historical
+    "4 of 5 trials slower" pattern. That was one sample of a sign that does not
+    hold; requiring it would demand the harness reproduce noise.
+
+    Always uses `NOISING_TRIALS`, never the CLI `--trials`: an equivalence claim
+    over a near-zero effect needs its own replication, and a CLI default must
+    not be able to weaken it.
+    """
+    import argparse as _argparse
+
+    import torch
+
+    bench = _load_noising_benchmark()
+    bench_args = _argparse.Namespace(
+        device=args.device,
+        vocab_size=32000,
+        hidden_size=512,
+        layers=2,
+        batch_size=4,
+        seq_len=512,
+        warmup=args.warmup,
+        steps=args.steps,
+        trials=NOISING_TRIALS,
+    )
+    tokenizer = bench._tokenizer()
+    features = bench._features(bench_args)
+
+    def measure_arm(label, *, warmup, steps, device):
+        """Build, measure, release — one shot, nothing outlives the call."""
+        from unturtle.diffusion import (
+            DiffusionTrainer,
+            DiffusionTrainingArguments,
+            MaskedDiffusionDataCollator,
+        )
+
+        model = bench._model(bench_args)
+        collator = MaskedDiffusionDataCollator(
+            tokenizer=tokenizer,
+            mask_token_id=tokenizer.mask_token_id,
+            # "collator" noises in the collator; "process" defers to the
+            # device-side process, which is the path under test.
+            noise=(label == "collator"),
+        )
+        trainer = DiffusionTrainer(
+            model=model,
+            args=DiffusionTrainingArguments(
+                output_dir=str(bench._output_dir()),
+                per_device_train_batch_size=bench_args.batch_size,
+                max_steps=1,
+                use_cpu=(device == "cpu"),
+                bf16=False,
+                fp16=False,
+                remove_unused_columns=False,
+                report_to=[],
+            ),
+            train_dataset=features,
+            processing_class=tokenizer,
+            data_collator=collator,
+        )
+        probe = weakref.ref(model)
+        seconds = bench._time_path(trainer, model, collator, features, bench_args)
+        del trainer, collator
+        model = None
+        gc.collect()
+        if device.startswith("cuda") and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        return {
+            "median_seconds": statistics.median(seconds),
+            "model_released": probe() is None,
+        }
+
+    per_arm = interleaved_trials(
+        measure_arm,
+        ("collator", "process"),
+        trials=NOISING_TRIALS,
+        warmup=args.warmup,
+        steps=args.steps,
+        device=args.device,
+    )
+    unreleased = [
+        f"{label}/trial{m['trial']}"
+        for label, arm in per_arm.items()
+        for m in arm
+        if not m.get("model_released")
+    ]
+    if unreleased:
+        return {
+            "check": "noising",
+            "status": "measurement_invalid",
+            "reason": f"arm model(s) outlived their measurement call: {unreleased}",
+            "expectation": EXPECTATIONS["noising"],
+        }
+
+    deltas = []
+    for collator_arm, process_arm in zip(
+        per_arm["collator"], per_arm["process"], strict=True
+    ):
+        if not collator_arm["median_seconds"]:
+            raise ValueError("zero collator baseline; a delta cannot be formed")
+        deltas.append(
+            (process_arm["median_seconds"] - collator_arm["median_seconds"])
+            / collator_arm["median_seconds"]
+        )
+    result = equivalence(deltas, margin=NOISING_EQUIVALENCE_MARGIN)
+    if result["median_within_margin"] and not result["all_trials_within_margin"]:
+        status = "unstable / NOT_REPRODUCED"
+    elif result["equivalent"]:
+        status = "reproduced"
+    else:
+        status = "NOT_REPRODUCED"
+    return {
+        "check": "noising",
+        "status": status,
+        "expectation": EXPECTATIONS["noising"],
+        "trials": NOISING_TRIALS,
+        "equivalence": result,
+        "per_arm": per_arm,
+    }
+
+
+def check_hybrid(args) -> dict[str, Any]:
+    """Reproduce the sub-crossover SLOWDOWN of the hybrid fast path.
+
+    The gated finding is that below `hybrid_fast_min_seq_len` the two-call
+    split is a net loss — full forward 0.90x at L=1024 against 1.50x at 2048.
+    The slowdown is the load-bearing half: a harness that only measured above
+    the crossover would miss the reason the path is gated at all.
+
+    Measured on a FULL model forward, not the attention kernel alone, because
+    the extra kernel launch, `cat` and output transpose the split adds are
+    exactly what the isolated kernel does not show.
+    """
+    import torch
+
+    from unturtle.models.conversion.a2d.tiny_a2d.modeling_llama import (
+        TinyA2DLlamaConfig,
+        TinyA2DLlamaLMHeadModel,
+    )
+
+    if not (args.device.startswith("cuda") and torch.cuda.is_available()):
+        return {
+            "check": "hybrid",
+            "status": "unsupported",
+            "reason": "the crossover is a CUDA kernel-launch effect",
+            "expectation": EXPECTATIONS["hybrid"],
+        }
+
+    cells: dict[str, Any] = {}
+    for seq_len in (1024, 2048):
+
+        def measure_arm(label, *, warmup, steps, device, seq_len=seq_len):
+            """One shot: build, measure, release."""
+            torch.manual_seed(7)
+            model = (
+                TinyA2DLlamaLMHeadModel(
+                    TinyA2DLlamaConfig(
+                        vocab_size=32000,
+                        hidden_size=512,
+                        intermediate_size=1024,
+                        num_hidden_layers=8,
+                        num_attention_heads=8,
+                        num_key_value_heads=8,
+                        max_position_embeddings=seq_len * 2,
+                        hybrid_attention=True,
+                        # The gate is a declared config field, so the arms differ
+                        # only in where the threshold sits: 0 forces the fast path,
+                        # a huge value disables it. Correctness is identical either
+                        # way — the dense mask is always built.
+                        hybrid_fast_min_seq_len=0 if label == "fast" else 10**9,
+                    )
+                )
+                .to(device=device, dtype=torch.bfloat16)
+                .eval()
+            )
+            probe = weakref.ref(model)
+            input_ids = torch.randint(1, 32000, (1, seq_len), device=device)
+            attention_mask = torch.ones(1, seq_len, dtype=torch.long, device=device)
+            # `prompt_lengths` is REQUIRED for the hybrid path to engage at
+            # all: `maybe_build_hybrid_mask` returns None when it is absent
+            # (_hybrid.py, "a converted model without prompt_lengths has no
+            # prompt to preserve"). Omitting it made both arms run the same
+            # bidirectional path, and the ~1.05x that produced was noise
+            # between two identical configurations — which the gate correctly
+            # refused to accept as a reproduction.
+            prompt_lengths = torch.full(
+                (1,), seq_len // 2, dtype=torch.long, device=device
+            )
+
+            def step(model=model):
+                with torch.no_grad():
+                    model(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        prompt_lengths=prompt_lengths,
+                    )
+
+            seconds = timed_steps(step, warmup=warmup, steps=steps, device=device)
+            del step
+            model = None
+            gc.collect()
+            torch.cuda.empty_cache()
+            return {
+                "median_seconds": statistics.median(seconds),
+                "model_released": probe() is None,
+            }
+
+        per_arm = interleaved_trials(
+            measure_arm,
+            ("dense", "fast"),
+            trials=args.trials,
+            warmup=args.warmup,
+            steps=args.steps,
+            device=args.device,
+        )
+        unreleased = [
+            f"L{seq_len}/{label}/trial{m['trial']}"
+            for label, arm in per_arm.items()
+            for m in arm
+            if not m.get("model_released")
+        ]
+        if unreleased:
+            return {
+                "check": "hybrid",
+                "status": "measurement_invalid",
+                "reason": f"arm model(s) outlived their call: {unreleased}",
+                "expectation": EXPECTATIONS["hybrid"],
+            }
+        # Speedup, matching the ledger's convention: >1 means the fast path
+        # wins, <1 means it loses.
+        speedups = [
+            dense["median_seconds"] / fast["median_seconds"]
+            for dense, fast in zip(per_arm["dense"], per_arm["fast"], strict=True)
+        ]
+        cells[f"L{seq_len}"] = {
+            "per_arm": per_arm,
+            "speedups": speedups,
+            "median_speedup": statistics.median(speedups),
+            "trials_below_one": sum(1 for value in speedups if value < 1.0),
+        }
+
+    low, high = cells["L1024"], cells["L2048"]
+    # The shape: a LOSS below the crossover and a gain above it. Requiring the
+    # majority of trials on each side keeps a single noisy trial from deciding.
+    #
+    # Both halves are asserted deliberately. The sub-crossover slowdown alone
+    # would be satisfied by a fast path that simply never wins, which is not
+    # the gated finding — the finding is a CROSSOVER, and a harness that only
+    # checked the loss side could not tell the two apart.
+    reproduced = (
+        low["median_speedup"] < 1.0
+        and low["trials_below_one"] * 2 > len(low["speedups"])
+        and high["median_speedup"] > 1.0
+    )
+    halves = {
+        "sub_crossover_loss": low["median_speedup"] < 1.0
+        and low["trials_below_one"] * 2 > len(low["speedups"]),
+        "above_crossover_gain": high["median_speedup"] > 1.0,
+    }
+    return {
+        "check": "hybrid",
+        "status": "reproduced" if reproduced else "NOT_REPRODUCED",
+        "expectation": EXPECTATIONS["hybrid"],
+        "trials": args.trials,
+        "halves_reproduced": halves,
+        "observed_shape": (
+            f"L=1024 median speedup {low['median_speedup']:.2f}x "
+            f"({low['trials_below_one']}/{len(low['speedups'])} trials below 1.0); "
+            f"L=2048 median speedup {high['median_speedup']:.2f}x"
+        ),
+        "cells": cells,
+    }
+
+
+CHECKS = {
+    "sparse": check_sparse,
+    "noising": check_noising,
+    "hybrid": check_hybrid,
+}
 
 
 def main() -> None:
