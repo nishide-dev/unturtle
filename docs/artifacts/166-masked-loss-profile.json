@@ -1,0 +1,2100 @@
+{
+  "run": {
+    "head_sha": "83e43e97ade1cd8dc5ac225f876b6633ef37686a",
+    "worktree_clean": true,
+    "worktree_dirty_paths": [],
+    "command": "benchmarks/kernels/masked_loss_profile.py --device cuda:0 --out /home/nishide.21066/.claude/jobs/1492d35a/tmp/masked-artifact",
+    "args": {
+      "device": "cuda:0",
+      "out": "/home/nishide.21066/.claude/jobs/1492d35a/tmp/masked-artifact"
+    },
+    "gpu_name": "NVIDIA RTX 6000 Ada Generation",
+    "torch_version": "2.10.0+cu128",
+    "cuda_version": "12.8",
+    "frozen_constants": {
+      "TRIALS": 3,
+      "STEPS": 8,
+      "WARMUP": 3,
+      "HIDDEN_SIZE": 512,
+      "SEQ_LEN": 512,
+      "HEADS": 8,
+      "CANONICAL_LAYERS": 2,
+      "SENSITIVITY_LAYERS": 8
+    },
+    "fixture": {
+      "family": "tiny-a2d-llama",
+      "shape": "#77 controlled fixture: hidden 512, 8 heads, fp32",
+      "path": "dense default only; sparse_lm_head=False",
+      "dtype": "float32",
+      "unattributed_includes": "model-forward residual (embeddings, MLP, norms) and any default trainer work outside the frozen taxonomy"
+    },
+    "verdict_source": "wall_off_trials median (instrumentation-off)"
+  },
+  "cells": [
+    {
+      "family": "masked",
+      "cell": "dense_training_step_v32000_l2",
+      "batch_size": 1,
+      "sequence_length": 512,
+      "dtype": "float32",
+      "hardware": "NVIDIA RTX 6000 Ada Generation",
+      "wall_seconds_instrumented_off": 0.008113835981930606,
+      "wall_seconds_instrumented_on": 0.008199246731237508,
+      "instrumentation_overhead_seconds": 8.541074930690229e-05,
+      "wall_off_trials": {
+        "median_seconds": 0.008113835981930606,
+        "min_seconds": 0.00807264210016001,
+        "max_seconds": 0.00834546735859476,
+        "trials": 3,
+        "single_trial": false
+      },
+      "wall_on_trials": {
+        "median_seconds": 0.008199246731237508,
+        "min_seconds": 0.008161003643181175,
+        "max_seconds": 0.008303703521960415,
+        "trials": 3,
+        "single_trial": false
+      },
+      "covered_seconds": 0.0072159119728021325,
+      "unattributed_seconds": 0.000983334758435376,
+      "verdict_source": "wall_seconds_instrumented_off",
+      "warmup_seconds": 0.02959329599980265,
+      "peak_allocated_bytes": 777322496,
+      "peak_reserved_bytes": 895483904,
+      "operations": [
+        {
+          "name": "attention",
+          "inclusive_seconds": 0.0006319680027663708,
+          "exclusive_seconds": null,
+          "call_count": 2,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "backward",
+          "inclusive_seconds": 0.001943208009004593,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "lm_head_projection",
+          "inclusive_seconds": 0.000529463991522789,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "loss",
+          "inclusive_seconds": 5.772400042042136e-05,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "noising",
+          "inclusive_seconds": 0.00018558399938046932,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "optimizer_step",
+          "inclusive_seconds": 0.003867963969707489,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        }
+      ],
+      "status": "ok",
+      "invalid_reasons": [],
+      "extra": {
+        "vocab_size": 32000,
+        "layers": 2,
+        "steps_per_trial": 8,
+        "warmup_steps": 3,
+        "trials": 3,
+        "model_forward_inclusive_seconds": 0.0020733920037746428,
+        "model_forward_residual_seconds": 0.0009139800034463404,
+        "model_forward_residual_per_trial": [
+          0.0009358079582452774,
+          0.0009139800034463404,
+          0.0009059840179979801
+        ],
+        "sampling_contract": "timesteps are sampled from the frozen MaskedDiffusionProcess distribution (linear alpha schedule, t ~ U(0,1)); this producer pins no mask ratio",
+        "realized_mask_fraction": {
+          "source": "separate_diagnostic_replay",
+          "raw_by_trial": [
+            [
+              0.677734375,
+              0.806640625,
+              0.501953125,
+              0.583984375,
+              0.40625,
+              0.3984375,
+              0.47265625,
+              0.927734375
+            ],
+            [
+              0.6171875,
+              0.1015625,
+              0.513671875,
+              0.71875,
+              0.546875,
+              0.35546875,
+              0.017578125,
+              0.58984375
+            ],
+            [
+              0.115234375,
+              0.845703125,
+              0.11328125,
+              0.529296875,
+              0.99609375,
+              0.498046875,
+              0.59765625,
+              0.060546875
+            ]
+          ],
+          "observations": 24,
+          "median": 0.521484375,
+          "mean": 0.4996744791666667,
+          "min": 0.017578125,
+          "max": 0.99609375,
+          "denominator": "maskable_tokens",
+          "trial_seeds": [
+            700,
+            701,
+            702
+          ],
+          "used_for": "diagnostic only; feeds no wall, event or memory figure"
+        },
+        "realized_mask_fraction_interpretation": "What THIS artifact's paired execution realized under its fixed seed schedule, not an estimate of the process's population mask rate. At B=1 each step's fraction reflects close to a single timestep draw, so 24 observations retain seed-dependent bias; larger batches average within the batch and narrow the spread, which is why every cell stores its own raw distribution. Report it as 'this execution was median X, range Y-Z', never as 'the default regime is X% masking'.",
+        "peak_representative": "max over trials (fixed before measuring)",
+        "rng_state_fingerprints": {
+          "700": {
+            "off": "cfe5c45f57198708",
+            "on": "cfe5c45f57198708"
+          },
+          "701": {
+            "on": "5387ebd89df3db59",
+            "off": "5387ebd89df3db59"
+          },
+          "702": {
+            "off": "73a972645ea17a25",
+            "on": "73a972645ea17a25"
+          }
+        },
+        "replay_rng_fingerprints": {
+          "700": "cfe5c45f57198708",
+          "701": "5387ebd89df3db59",
+          "702": "73a972645ea17a25"
+        },
+        "replay_state_fingerprints": {
+          "700": "44340565a011b887",
+          "701": "6eb466e751da189d",
+          "702": "6188d5634a1806bd"
+        },
+        "weight_input_fingerprints": {
+          "700": {
+            "off": "44340565a011b887",
+            "on": "44340565a011b887"
+          },
+          "701": {
+            "on": "6eb466e751da189d",
+            "off": "6eb466e751da189d"
+          },
+          "702": {
+            "off": "6188d5634a1806bd",
+            "on": "6188d5634a1806bd"
+          }
+        },
+        "optimizer": {
+          "class": "AdamW",
+          "qualified_class": "torch.optim.AdamW",
+          "resolved_defaults": {
+            "lr": 0.0001,
+            "betas": [
+              0.9,
+              0.999
+            ],
+            "eps": 1e-08,
+            "weight_decay": 0.01,
+            "amsgrad": false,
+            "foreach": null,
+            "fused": null,
+            "capturable": false,
+            "maximize": false,
+            "differentiable": false
+          },
+          "param_groups": [
+            {
+              "lr": 0.0001,
+              "betas": [
+                0.9,
+                0.999
+              ],
+              "eps": 1e-08,
+              "weight_decay": 0.01,
+              "amsgrad": false,
+              "foreach": null,
+              "fused": null,
+              "capturable": false,
+              "maximize": false,
+              "differentiable": false
+            }
+          ],
+          "torch_version": "2.10.0+cu128"
+        },
+        "peak_allocated_per_trial": [
+          777322496,
+          777322496,
+          777322496
+        ],
+        "peak_reserved_per_trial": [
+          895483904,
+          895483904,
+          895483904
+        ],
+        "per_trial_call_counts": [
+          {
+            "attention": 16,
+            "backward": 8,
+            "lm_head_projection": 8,
+            "loss": 8,
+            "noising": 8,
+            "optimizer_step": 8
+          },
+          {
+            "attention": 16,
+            "backward": 8,
+            "lm_head_projection": 8,
+            "loss": 8,
+            "noising": 8,
+            "optimizer_step": 8
+          },
+          {
+            "attention": 16,
+            "backward": 8,
+            "lm_head_projection": 8,
+            "loss": 8,
+            "noising": 8,
+            "optimizer_step": 8
+          }
+        ]
+      }
+    },
+    {
+      "family": "masked",
+      "cell": "dense_training_step_v32000_l2",
+      "batch_size": 8,
+      "sequence_length": 512,
+      "dtype": "float32",
+      "hardware": "NVIDIA RTX 6000 Ada Generation",
+      "wall_seconds_instrumented_off": 0.024351404266781174,
+      "wall_seconds_instrumented_on": 0.02463690123113338,
+      "instrumentation_overhead_seconds": 0.0002854969643522054,
+      "wall_off_trials": {
+        "median_seconds": 0.024351404266781174,
+        "min_seconds": 0.02390047287917696,
+        "max_seconds": 0.024859637662302703,
+        "trials": 3,
+        "single_trial": false
+      },
+      "wall_on_trials": {
+        "median_seconds": 0.02463690123113338,
+        "min_seconds": 0.02455135424679611,
+        "max_seconds": 0.02492150136095006,
+        "trials": 3,
+        "single_trial": false
+      },
+      "covered_seconds": 0.022864403784275053,
+      "unattributed_seconds": 0.001772497446858326,
+      "verdict_source": "wall_seconds_instrumented_off",
+      "warmup_seconds": 0.070335388998501,
+      "peak_allocated_bytes": 1407697408,
+      "peak_reserved_bytes": 1449132032,
+      "operations": [
+        {
+          "name": "attention",
+          "inclusive_seconds": 0.0013849999904632568,
+          "exclusive_seconds": null,
+          "call_count": 2,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "backward",
+          "inclusive_seconds": 0.01306242775917053,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "lm_head_projection",
+          "inclusive_seconds": 0.0036876560151577,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "loss",
+          "inclusive_seconds": 0.0006782080009579659,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "noising",
+          "inclusive_seconds": 0.00021632000058889389,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "optimizer_step",
+          "inclusive_seconds": 0.0038347920179367064,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        }
+      ],
+      "status": "ok",
+      "invalid_reasons": [],
+      "extra": {
+        "vocab_size": 32000,
+        "layers": 2,
+        "steps_per_trial": 8,
+        "warmup_steps": 3,
+        "trials": 3,
+        "model_forward_inclusive_seconds": 0.0067641200423240655,
+        "model_forward_residual_seconds": 0.001675708025693893,
+        "model_forward_residual_per_trial": [
+          0.0016732480525970452,
+          0.0016871639862656588,
+          0.001675708025693893
+        ],
+        "sampling_contract": "timesteps are sampled from the frozen MaskedDiffusionProcess distribution (linear alpha schedule, t ~ U(0,1)); this producer pins no mask ratio",
+        "realized_mask_fraction": {
+          "source": "separate_diagnostic_replay",
+          "raw_by_trial": [
+            [
+              0.5419921875,
+              0.523681640625,
+              0.548828125,
+              0.4111328125,
+              0.328857421875,
+              0.529296875,
+              0.45703125,
+              0.532470703125
+            ],
+            [
+              0.3974609375,
+              0.53076171875,
+              0.567138671875,
+              0.642333984375,
+              0.417236328125,
+              0.467041015625,
+              0.1962890625,
+              0.423583984375
+            ],
+            [
+              0.54541015625,
+              0.433837890625,
+              0.550537109375,
+              0.502197265625,
+              0.6279296875,
+              0.358642578125,
+              0.578369140625,
+              0.375732421875
+            ]
+          ],
+          "observations": 24,
+          "median": 0.512939453125,
+          "mean": 0.4786580403645833,
+          "min": 0.1962890625,
+          "max": 0.642333984375,
+          "denominator": "maskable_tokens",
+          "trial_seeds": [
+            700,
+            701,
+            702
+          ],
+          "used_for": "diagnostic only; feeds no wall, event or memory figure"
+        },
+        "realized_mask_fraction_interpretation": "What THIS artifact's paired execution realized under its fixed seed schedule, not an estimate of the process's population mask rate. At B=1 each step's fraction reflects close to a single timestep draw, so 24 observations retain seed-dependent bias; larger batches average within the batch and narrow the spread, which is why every cell stores its own raw distribution. Report it as 'this execution was median X, range Y-Z', never as 'the default regime is X% masking'.",
+        "peak_representative": "max over trials (fixed before measuring)",
+        "rng_state_fingerprints": {
+          "700": {
+            "off": "cfe5c45f57198708",
+            "on": "cfe5c45f57198708"
+          },
+          "701": {
+            "on": "5387ebd89df3db59",
+            "off": "5387ebd89df3db59"
+          },
+          "702": {
+            "off": "73a972645ea17a25",
+            "on": "73a972645ea17a25"
+          }
+        },
+        "replay_rng_fingerprints": {
+          "700": "cfe5c45f57198708",
+          "701": "5387ebd89df3db59",
+          "702": "73a972645ea17a25"
+        },
+        "replay_state_fingerprints": {
+          "700": "e4911e2fcc067372",
+          "701": "86b815ca8802552b",
+          "702": "6e170fd4373beeec"
+        },
+        "weight_input_fingerprints": {
+          "700": {
+            "off": "e4911e2fcc067372",
+            "on": "e4911e2fcc067372"
+          },
+          "701": {
+            "on": "86b815ca8802552b",
+            "off": "86b815ca8802552b"
+          },
+          "702": {
+            "off": "6e170fd4373beeec",
+            "on": "6e170fd4373beeec"
+          }
+        },
+        "optimizer": {
+          "class": "AdamW",
+          "qualified_class": "torch.optim.AdamW",
+          "resolved_defaults": {
+            "lr": 0.0001,
+            "betas": [
+              0.9,
+              0.999
+            ],
+            "eps": 1e-08,
+            "weight_decay": 0.01,
+            "amsgrad": false,
+            "foreach": null,
+            "fused": null,
+            "capturable": false,
+            "maximize": false,
+            "differentiable": false
+          },
+          "param_groups": [
+            {
+              "lr": 0.0001,
+              "betas": [
+                0.9,
+                0.999
+              ],
+              "eps": 1e-08,
+              "weight_decay": 0.01,
+              "amsgrad": false,
+              "foreach": null,
+              "fused": null,
+              "capturable": false,
+              "maximize": false,
+              "differentiable": false
+            }
+          ],
+          "torch_version": "2.10.0+cu128"
+        },
+        "peak_allocated_per_trial": [
+          1407697408,
+          1407697408,
+          1407697408
+        ],
+        "peak_reserved_per_trial": [
+          1449132032,
+          1449132032,
+          1449132032
+        ],
+        "per_trial_call_counts": [
+          {
+            "attention": 16,
+            "backward": 8,
+            "lm_head_projection": 8,
+            "loss": 8,
+            "noising": 8,
+            "optimizer_step": 8
+          },
+          {
+            "attention": 16,
+            "backward": 8,
+            "lm_head_projection": 8,
+            "loss": 8,
+            "noising": 8,
+            "optimizer_step": 8
+          },
+          {
+            "attention": 16,
+            "backward": 8,
+            "lm_head_projection": 8,
+            "loss": 8,
+            "noising": 8,
+            "optimizer_step": 8
+          }
+        ]
+      }
+    },
+    {
+      "family": "masked",
+      "cell": "dense_training_step_v32000_l2",
+      "batch_size": 32,
+      "sequence_length": 512,
+      "dtype": "float32",
+      "hardware": "NVIDIA RTX 6000 Ada Generation",
+      "wall_seconds_instrumented_off": 0.10274759585445281,
+      "wall_seconds_instrumented_on": 0.10252539099019486,
+      "instrumentation_overhead_seconds": -0.0002222048642579466,
+      "wall_off_trials": {
+        "median_seconds": 0.10274759585445281,
+        "min_seconds": 0.1026792583434144,
+        "max_seconds": 0.10288398989359848,
+        "trials": 3,
+        "single_trial": false
+      },
+      "wall_on_trials": {
+        "median_seconds": 0.10252539099019486,
+        "min_seconds": 0.1015924657258438,
+        "max_seconds": 0.10342687886441126,
+        "trials": 3,
+        "single_trial": false
+      },
+      "covered_seconds": 0.09676566723920406,
+      "unattributed_seconds": 0.005759723750990806,
+      "verdict_source": "wall_seconds_instrumented_off",
+      "warmup_seconds": 0.2922730341088027,
+      "peak_allocated_bytes": 4013785600,
+      "peak_reserved_bytes": 4072669184,
+      "operations": [
+        {
+          "name": "attention",
+          "inclusive_seconds": 0.005844239979982377,
+          "exclusive_seconds": null,
+          "call_count": 2,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "backward",
+          "inclusive_seconds": 0.0680449275970459,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "lm_head_projection",
+          "inclusive_seconds": 0.0163741637468338,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "loss",
+          "inclusive_seconds": 0.0024313639402389524,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "noising",
+          "inclusive_seconds": 0.0002401799950748682,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "optimizer_step",
+          "inclusive_seconds": 0.0038307919800281524,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        }
+      ],
+      "status": "ok",
+      "invalid_reasons": [],
+      "extra": {
+        "vocab_size": 32000,
+        "layers": 2,
+        "steps_per_trial": 8,
+        "warmup_steps": 3,
+        "trials": 3,
+        "model_forward_inclusive_seconds": 0.027739064216613766,
+        "model_forward_residual_seconds": 0.005530583828687669,
+        "model_forward_residual_per_trial": [
+          0.005520900100469586,
+          0.005530583828687669,
+          0.0055371685028076136
+        ],
+        "sampling_contract": "timesteps are sampled from the frozen MaskedDiffusionProcess distribution (linear alpha schedule, t ~ U(0,1)); this producer pins no mask ratio",
+        "realized_mask_fraction": {
+          "source": "separate_diagnostic_replay",
+          "raw_by_trial": [
+            [
+              0.57196044921875,
+              0.5833740234375,
+              0.422119140625,
+              0.4998779296875,
+              0.42987060546875,
+              0.51873779296875,
+              0.47821044921875,
+              0.506103515625
+            ],
+            [
+              0.44183349609375,
+              0.55718994140625,
+              0.56475830078125,
+              0.57781982421875,
+              0.47564697265625,
+              0.559326171875,
+              0.39215087890625,
+              0.5380859375
+            ],
+            [
+              0.5157470703125,
+              0.45135498046875,
+              0.56329345703125,
+              0.447265625,
+              0.50006103515625,
+              0.3956298828125,
+              0.4881591796875,
+              0.44256591796875
+            ]
+          ],
+          "observations": 24,
+          "median": 0.499969482421875,
+          "mean": 0.4967142740885417,
+          "min": 0.39215087890625,
+          "max": 0.5833740234375,
+          "denominator": "maskable_tokens",
+          "trial_seeds": [
+            700,
+            701,
+            702
+          ],
+          "used_for": "diagnostic only; feeds no wall, event or memory figure"
+        },
+        "realized_mask_fraction_interpretation": "What THIS artifact's paired execution realized under its fixed seed schedule, not an estimate of the process's population mask rate. At B=1 each step's fraction reflects close to a single timestep draw, so 24 observations retain seed-dependent bias; larger batches average within the batch and narrow the spread, which is why every cell stores its own raw distribution. Report it as 'this execution was median X, range Y-Z', never as 'the default regime is X% masking'.",
+        "peak_representative": "max over trials (fixed before measuring)",
+        "rng_state_fingerprints": {
+          "700": {
+            "off": "cfe5c45f57198708",
+            "on": "cfe5c45f57198708"
+          },
+          "701": {
+            "on": "5387ebd89df3db59",
+            "off": "5387ebd89df3db59"
+          },
+          "702": {
+            "off": "73a972645ea17a25",
+            "on": "73a972645ea17a25"
+          }
+        },
+        "replay_rng_fingerprints": {
+          "700": "cfe5c45f57198708",
+          "701": "5387ebd89df3db59",
+          "702": "73a972645ea17a25"
+        },
+        "replay_state_fingerprints": {
+          "700": "85e934ae9be96848",
+          "701": "2e906da91a8c2f3a",
+          "702": "e1d4f77296a1e1d6"
+        },
+        "weight_input_fingerprints": {
+          "700": {
+            "off": "85e934ae9be96848",
+            "on": "85e934ae9be96848"
+          },
+          "701": {
+            "on": "2e906da91a8c2f3a",
+            "off": "2e906da91a8c2f3a"
+          },
+          "702": {
+            "off": "e1d4f77296a1e1d6",
+            "on": "e1d4f77296a1e1d6"
+          }
+        },
+        "optimizer": {
+          "class": "AdamW",
+          "qualified_class": "torch.optim.AdamW",
+          "resolved_defaults": {
+            "lr": 0.0001,
+            "betas": [
+              0.9,
+              0.999
+            ],
+            "eps": 1e-08,
+            "weight_decay": 0.01,
+            "amsgrad": false,
+            "foreach": null,
+            "fused": null,
+            "capturable": false,
+            "maximize": false,
+            "differentiable": false
+          },
+          "param_groups": [
+            {
+              "lr": 0.0001,
+              "betas": [
+                0.9,
+                0.999
+              ],
+              "eps": 1e-08,
+              "weight_decay": 0.01,
+              "amsgrad": false,
+              "foreach": null,
+              "fused": null,
+              "capturable": false,
+              "maximize": false,
+              "differentiable": false
+            }
+          ],
+          "torch_version": "2.10.0+cu128"
+        },
+        "peak_allocated_per_trial": [
+          4013785600,
+          4013785600,
+          4013785600
+        ],
+        "peak_reserved_per_trial": [
+          4072669184,
+          4072669184,
+          4072669184
+        ],
+        "per_trial_call_counts": [
+          {
+            "attention": 16,
+            "backward": 8,
+            "lm_head_projection": 8,
+            "loss": 8,
+            "noising": 8,
+            "optimizer_step": 8
+          },
+          {
+            "attention": 16,
+            "backward": 8,
+            "lm_head_projection": 8,
+            "loss": 8,
+            "noising": 8,
+            "optimizer_step": 8
+          },
+          {
+            "attention": 16,
+            "backward": 8,
+            "lm_head_projection": 8,
+            "loss": 8,
+            "noising": 8,
+            "optimizer_step": 8
+          }
+        ]
+      }
+    },
+    {
+      "family": "masked",
+      "cell": "dense_training_step_v128256_l2",
+      "batch_size": 1,
+      "sequence_length": 512,
+      "dtype": "float32",
+      "hardware": "NVIDIA RTX 6000 Ada Generation",
+      "wall_seconds_instrumented_off": 0.022676606487948447,
+      "wall_seconds_instrumented_on": 0.02288709010463208,
+      "instrumentation_overhead_seconds": 0.00021048361668363214,
+      "wall_off_trials": {
+        "median_seconds": 0.022676606487948447,
+        "min_seconds": 0.022565951614524238,
+        "max_seconds": 0.022684817129629664,
+        "trials": 3,
+        "single_trial": false
+      },
+      "wall_on_trials": {
+        "median_seconds": 0.02288709010463208,
+        "min_seconds": 0.02288512788072694,
+        "max_seconds": 0.023018396779661998,
+        "trials": 3,
+        "single_trial": false
+      },
+      "covered_seconds": 0.021762692004442214,
+      "unattributed_seconds": 0.0011243981001898655,
+      "verdict_source": "wall_seconds_instrumented_off",
+      "warmup_seconds": 0.07081893004942685,
+      "peak_allocated_bytes": 2748645376,
+      "peak_reserved_bytes": 3013607424,
+      "operations": [
+        {
+          "name": "attention",
+          "inclusive_seconds": 0.0006987159997224808,
+          "exclusive_seconds": null,
+          "call_count": 2,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "backward",
+          "inclusive_seconds": 0.004787091970443726,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "lm_head_projection",
+          "inclusive_seconds": 0.0019320680201053617,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "loss",
+          "inclusive_seconds": 0.00041596000269055367,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "noising",
+          "inclusive_seconds": 0.00021685599908232686,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "optimizer_step",
+          "inclusive_seconds": 0.013712000012397765,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        }
+      ],
+      "status": "ok",
+      "invalid_reasons": [],
+      "extra": {
+        "vocab_size": 128256,
+        "layers": 2,
+        "steps_per_trial": 8,
+        "warmup_steps": 3,
+        "trials": 3,
+        "model_forward_inclusive_seconds": 0.0036871239840984347,
+        "model_forward_residual_seconds": 0.0010546080134809018,
+        "model_forward_residual_per_trial": [
+          0.0010546080134809018,
+          0.0010655959658324723,
+          0.0010370040088891986
+        ],
+        "sampling_contract": "timesteps are sampled from the frozen MaskedDiffusionProcess distribution (linear alpha schedule, t ~ U(0,1)); this producer pins no mask ratio",
+        "realized_mask_fraction": {
+          "source": "separate_diagnostic_replay",
+          "raw_by_trial": [
+            [
+              0.677734375,
+              0.806640625,
+              0.501953125,
+              0.583984375,
+              0.40625,
+              0.3984375,
+              0.47265625,
+              0.927734375
+            ],
+            [
+              0.6171875,
+              0.1015625,
+              0.513671875,
+              0.71875,
+              0.546875,
+              0.35546875,
+              0.017578125,
+              0.58984375
+            ],
+            [
+              0.115234375,
+              0.845703125,
+              0.11328125,
+              0.529296875,
+              0.99609375,
+              0.498046875,
+              0.59765625,
+              0.060546875
+            ]
+          ],
+          "observations": 24,
+          "median": 0.521484375,
+          "mean": 0.4996744791666667,
+          "min": 0.017578125,
+          "max": 0.99609375,
+          "denominator": "maskable_tokens",
+          "trial_seeds": [
+            700,
+            701,
+            702
+          ],
+          "used_for": "diagnostic only; feeds no wall, event or memory figure"
+        },
+        "realized_mask_fraction_interpretation": "What THIS artifact's paired execution realized under its fixed seed schedule, not an estimate of the process's population mask rate. At B=1 each step's fraction reflects close to a single timestep draw, so 24 observations retain seed-dependent bias; larger batches average within the batch and narrow the spread, which is why every cell stores its own raw distribution. Report it as 'this execution was median X, range Y-Z', never as 'the default regime is X% masking'.",
+        "peak_representative": "max over trials (fixed before measuring)",
+        "rng_state_fingerprints": {
+          "700": {
+            "off": "cfe5c45f57198708",
+            "on": "cfe5c45f57198708"
+          },
+          "701": {
+            "on": "5387ebd89df3db59",
+            "off": "5387ebd89df3db59"
+          },
+          "702": {
+            "off": "73a972645ea17a25",
+            "on": "73a972645ea17a25"
+          }
+        },
+        "replay_rng_fingerprints": {
+          "700": "cfe5c45f57198708",
+          "701": "5387ebd89df3db59",
+          "702": "73a972645ea17a25"
+        },
+        "replay_state_fingerprints": {
+          "700": "b1573e71ec358158",
+          "701": "9075941ffc31c512",
+          "702": "ff7980da62faf146"
+        },
+        "weight_input_fingerprints": {
+          "700": {
+            "off": "b1573e71ec358158",
+            "on": "b1573e71ec358158"
+          },
+          "701": {
+            "on": "9075941ffc31c512",
+            "off": "9075941ffc31c512"
+          },
+          "702": {
+            "off": "ff7980da62faf146",
+            "on": "ff7980da62faf146"
+          }
+        },
+        "optimizer": {
+          "class": "AdamW",
+          "qualified_class": "torch.optim.AdamW",
+          "resolved_defaults": {
+            "lr": 0.0001,
+            "betas": [
+              0.9,
+              0.999
+            ],
+            "eps": 1e-08,
+            "weight_decay": 0.01,
+            "amsgrad": false,
+            "foreach": null,
+            "fused": null,
+            "capturable": false,
+            "maximize": false,
+            "differentiable": false
+          },
+          "param_groups": [
+            {
+              "lr": 0.0001,
+              "betas": [
+                0.9,
+                0.999
+              ],
+              "eps": 1e-08,
+              "weight_decay": 0.01,
+              "amsgrad": false,
+              "foreach": null,
+              "fused": null,
+              "capturable": false,
+              "maximize": false,
+              "differentiable": false
+            }
+          ],
+          "torch_version": "2.10.0+cu128"
+        },
+        "peak_allocated_per_trial": [
+          2748645376,
+          2748645376,
+          2748645376
+        ],
+        "peak_reserved_per_trial": [
+          3013607424,
+          3013607424,
+          3013607424
+        ],
+        "per_trial_call_counts": [
+          {
+            "attention": 16,
+            "backward": 8,
+            "lm_head_projection": 8,
+            "loss": 8,
+            "noising": 8,
+            "optimizer_step": 8
+          },
+          {
+            "attention": 16,
+            "backward": 8,
+            "lm_head_projection": 8,
+            "loss": 8,
+            "noising": 8,
+            "optimizer_step": 8
+          },
+          {
+            "attention": 16,
+            "backward": 8,
+            "lm_head_projection": 8,
+            "loss": 8,
+            "noising": 8,
+            "optimizer_step": 8
+          }
+        ]
+      }
+    },
+    {
+      "family": "masked",
+      "cell": "dense_training_step_v128256_l2",
+      "batch_size": 8,
+      "sequence_length": 512,
+      "dtype": "float32",
+      "hardware": "NVIDIA RTX 6000 Ada Generation",
+      "wall_seconds_instrumented_off": 0.08831100953102577,
+      "wall_seconds_instrumented_on": 0.08820805611321703,
+      "instrumentation_overhead_seconds": -0.00010295341780874878,
+      "wall_off_trials": {
+        "median_seconds": 0.08831100953102577,
+        "min_seconds": 0.08776998639223166,
+        "max_seconds": 0.0896621862630127,
+        "trials": 3,
+        "single_trial": false
+      },
+      "wall_on_trials": {
+        "median_seconds": 0.08820805611321703,
+        "min_seconds": 0.08788540311797988,
+        "max_seconds": 0.08966096473159268,
+        "trials": 3,
+        "single_trial": false
+      },
+      "covered_seconds": 0.08616869168169797,
+      "unattributed_seconds": 0.0020393644315190584,
+      "verdict_source": "wall_seconds_instrumented_off",
+      "warmup_seconds": 0.2552355040097609,
+      "peak_allocated_bytes": 4364681728,
+      "peak_reserved_bytes": 4406116352,
+      "operations": [
+        {
+          "name": "attention",
+          "inclusive_seconds": 0.0017370920032262803,
+          "exclusive_seconds": null,
+          "call_count": 2,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "backward",
+          "inclusive_seconds": 0.050010111808776854,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "lm_head_projection",
+          "inclusive_seconds": 0.01793646001815796,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "loss",
+          "inclusive_seconds": 0.002468907982110977,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "noising",
+          "inclusive_seconds": 0.00022091999836266042,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "optimizer_step",
+          "inclusive_seconds": 0.013795199871063231,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        }
+      ],
+      "status": "ok",
+      "invalid_reasons": [],
+      "extra": {
+        "vocab_size": 128256,
+        "layers": 2,
+        "steps_per_trial": 8,
+        "warmup_steps": 3,
+        "trials": 3,
+        "model_forward_inclusive_seconds": 0.02159604001045227,
+        "model_forward_residual_seconds": 0.0019294399917125712,
+        "model_forward_residual_per_trial": [
+          0.0019213678985834128,
+          0.0019294399917125712,
+          0.001939967997372151
+        ],
+        "sampling_contract": "timesteps are sampled from the frozen MaskedDiffusionProcess distribution (linear alpha schedule, t ~ U(0,1)); this producer pins no mask ratio",
+        "realized_mask_fraction": {
+          "source": "separate_diagnostic_replay",
+          "raw_by_trial": [
+            [
+              0.5419921875,
+              0.523681640625,
+              0.548828125,
+              0.4111328125,
+              0.328857421875,
+              0.529296875,
+              0.45703125,
+              0.532470703125
+            ],
+            [
+              0.3974609375,
+              0.53076171875,
+              0.567138671875,
+              0.642333984375,
+              0.417236328125,
+              0.467041015625,
+              0.1962890625,
+              0.423583984375
+            ],
+            [
+              0.54541015625,
+              0.433837890625,
+              0.550537109375,
+              0.502197265625,
+              0.6279296875,
+              0.358642578125,
+              0.578369140625,
+              0.375732421875
+            ]
+          ],
+          "observations": 24,
+          "median": 0.512939453125,
+          "mean": 0.4786580403645833,
+          "min": 0.1962890625,
+          "max": 0.642333984375,
+          "denominator": "maskable_tokens",
+          "trial_seeds": [
+            700,
+            701,
+            702
+          ],
+          "used_for": "diagnostic only; feeds no wall, event or memory figure"
+        },
+        "realized_mask_fraction_interpretation": "What THIS artifact's paired execution realized under its fixed seed schedule, not an estimate of the process's population mask rate. At B=1 each step's fraction reflects close to a single timestep draw, so 24 observations retain seed-dependent bias; larger batches average within the batch and narrow the spread, which is why every cell stores its own raw distribution. Report it as 'this execution was median X, range Y-Z', never as 'the default regime is X% masking'.",
+        "peak_representative": "max over trials (fixed before measuring)",
+        "rng_state_fingerprints": {
+          "700": {
+            "off": "cfe5c45f57198708",
+            "on": "cfe5c45f57198708"
+          },
+          "701": {
+            "on": "5387ebd89df3db59",
+            "off": "5387ebd89df3db59"
+          },
+          "702": {
+            "off": "73a972645ea17a25",
+            "on": "73a972645ea17a25"
+          }
+        },
+        "replay_rng_fingerprints": {
+          "700": "cfe5c45f57198708",
+          "701": "5387ebd89df3db59",
+          "702": "73a972645ea17a25"
+        },
+        "replay_state_fingerprints": {
+          "700": "6792b4ccd086fe32",
+          "701": "7547317785525588",
+          "702": "46324f7dfb2453ad"
+        },
+        "weight_input_fingerprints": {
+          "700": {
+            "off": "6792b4ccd086fe32",
+            "on": "6792b4ccd086fe32"
+          },
+          "701": {
+            "on": "7547317785525588",
+            "off": "7547317785525588"
+          },
+          "702": {
+            "off": "46324f7dfb2453ad",
+            "on": "46324f7dfb2453ad"
+          }
+        },
+        "optimizer": {
+          "class": "AdamW",
+          "qualified_class": "torch.optim.AdamW",
+          "resolved_defaults": {
+            "lr": 0.0001,
+            "betas": [
+              0.9,
+              0.999
+            ],
+            "eps": 1e-08,
+            "weight_decay": 0.01,
+            "amsgrad": false,
+            "foreach": null,
+            "fused": null,
+            "capturable": false,
+            "maximize": false,
+            "differentiable": false
+          },
+          "param_groups": [
+            {
+              "lr": 0.0001,
+              "betas": [
+                0.9,
+                0.999
+              ],
+              "eps": 1e-08,
+              "weight_decay": 0.01,
+              "amsgrad": false,
+              "foreach": null,
+              "fused": null,
+              "capturable": false,
+              "maximize": false,
+              "differentiable": false
+            }
+          ],
+          "torch_version": "2.10.0+cu128"
+        },
+        "peak_allocated_per_trial": [
+          4364681728,
+          4364681728,
+          4364681728
+        ],
+        "peak_reserved_per_trial": [
+          4406116352,
+          4406116352,
+          4406116352
+        ],
+        "per_trial_call_counts": [
+          {
+            "attention": 16,
+            "backward": 8,
+            "lm_head_projection": 8,
+            "loss": 8,
+            "noising": 8,
+            "optimizer_step": 8
+          },
+          {
+            "attention": 16,
+            "backward": 8,
+            "lm_head_projection": 8,
+            "loss": 8,
+            "noising": 8,
+            "optimizer_step": 8
+          },
+          {
+            "attention": 16,
+            "backward": 8,
+            "lm_head_projection": 8,
+            "loss": 8,
+            "noising": 8,
+            "optimizer_step": 8
+          }
+        ]
+      }
+    },
+    {
+      "family": "masked",
+      "cell": "dense_training_step_v128256_l2",
+      "batch_size": 32,
+      "sequence_length": 512,
+      "dtype": "float32",
+      "hardware": "NVIDIA RTX 6000 Ada Generation",
+      "wall_seconds_instrumented_off": 0.31492801023705397,
+      "wall_seconds_instrumented_on": 0.3160853317385772,
+      "instrumentation_overhead_seconds": 0.0011573215015232563,
+      "wall_off_trials": {
+        "median_seconds": 0.31492801023705397,
+        "min_seconds": 0.312161542737158,
+        "max_seconds": 0.31819726526737213,
+        "trials": 3,
+        "single_trial": false
+      },
+      "wall_on_trials": {
+        "median_seconds": 0.3160853317385772,
+        "min_seconds": 0.3119571679708315,
+        "max_seconds": 0.32036018402141053,
+        "trials": 3,
+        "single_trial": false
+      },
+      "covered_seconds": 0.310378167770803,
+      "unattributed_seconds": 0.005707163967774209,
+      "verdict_source": "wall_seconds_instrumented_off",
+      "warmup_seconds": 0.9533775869058445,
+      "peak_allocated_bytes": 11701944832,
+      "peak_reserved_bytes": 11769217024,
+      "operations": [
+        {
+          "name": "attention",
+          "inclusive_seconds": 0.005534463942050934,
+          "exclusive_seconds": null,
+          "call_count": 2,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "backward",
+          "inclusive_seconds": 0.19701568031311037,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "lm_head_projection",
+          "inclusive_seconds": 0.08415471553802491,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "loss",
+          "inclusive_seconds": 0.009595391988754273,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "noising",
+          "inclusive_seconds": 0.0003251880034804344,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "optimizer_step",
+          "inclusive_seconds": 0.01375272798538208,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        }
+      ],
+      "status": "ok",
+      "invalid_reasons": [],
+      "extra": {
+        "vocab_size": 128256,
+        "layers": 2,
+        "steps_per_trial": 8,
+        "warmup_steps": 3,
+        "trials": 3,
+        "model_forward_inclusive_seconds": 0.0952707986831665,
+        "model_forward_residual_seconds": 0.00560214513540265,
+        "model_forward_residual_per_trial": [
+          0.005680598884820934,
+          0.005599439144134508,
+          0.00560214513540265
+        ],
+        "sampling_contract": "timesteps are sampled from the frozen MaskedDiffusionProcess distribution (linear alpha schedule, t ~ U(0,1)); this producer pins no mask ratio",
+        "realized_mask_fraction": {
+          "source": "separate_diagnostic_replay",
+          "raw_by_trial": [
+            [
+              0.57196044921875,
+              0.5833740234375,
+              0.422119140625,
+              0.4998779296875,
+              0.42987060546875,
+              0.51873779296875,
+              0.47821044921875,
+              0.506103515625
+            ],
+            [
+              0.44183349609375,
+              0.55718994140625,
+              0.56475830078125,
+              0.57781982421875,
+              0.47564697265625,
+              0.559326171875,
+              0.39215087890625,
+              0.5380859375
+            ],
+            [
+              0.5157470703125,
+              0.45135498046875,
+              0.56329345703125,
+              0.447265625,
+              0.50006103515625,
+              0.3956298828125,
+              0.4881591796875,
+              0.44256591796875
+            ]
+          ],
+          "observations": 24,
+          "median": 0.499969482421875,
+          "mean": 0.4967142740885417,
+          "min": 0.39215087890625,
+          "max": 0.5833740234375,
+          "denominator": "maskable_tokens",
+          "trial_seeds": [
+            700,
+            701,
+            702
+          ],
+          "used_for": "diagnostic only; feeds no wall, event or memory figure"
+        },
+        "realized_mask_fraction_interpretation": "What THIS artifact's paired execution realized under its fixed seed schedule, not an estimate of the process's population mask rate. At B=1 each step's fraction reflects close to a single timestep draw, so 24 observations retain seed-dependent bias; larger batches average within the batch and narrow the spread, which is why every cell stores its own raw distribution. Report it as 'this execution was median X, range Y-Z', never as 'the default regime is X% masking'.",
+        "peak_representative": "max over trials (fixed before measuring)",
+        "rng_state_fingerprints": {
+          "700": {
+            "off": "cfe5c45f57198708",
+            "on": "cfe5c45f57198708"
+          },
+          "701": {
+            "on": "5387ebd89df3db59",
+            "off": "5387ebd89df3db59"
+          },
+          "702": {
+            "off": "73a972645ea17a25",
+            "on": "73a972645ea17a25"
+          }
+        },
+        "replay_rng_fingerprints": {
+          "700": "cfe5c45f57198708",
+          "701": "5387ebd89df3db59",
+          "702": "73a972645ea17a25"
+        },
+        "replay_state_fingerprints": {
+          "700": "58f0584e2df3cdf3",
+          "701": "8e1570cf193cf646",
+          "702": "4b7db6c93f41ffa1"
+        },
+        "weight_input_fingerprints": {
+          "700": {
+            "off": "58f0584e2df3cdf3",
+            "on": "58f0584e2df3cdf3"
+          },
+          "701": {
+            "on": "8e1570cf193cf646",
+            "off": "8e1570cf193cf646"
+          },
+          "702": {
+            "off": "4b7db6c93f41ffa1",
+            "on": "4b7db6c93f41ffa1"
+          }
+        },
+        "optimizer": {
+          "class": "AdamW",
+          "qualified_class": "torch.optim.AdamW",
+          "resolved_defaults": {
+            "lr": 0.0001,
+            "betas": [
+              0.9,
+              0.999
+            ],
+            "eps": 1e-08,
+            "weight_decay": 0.01,
+            "amsgrad": false,
+            "foreach": null,
+            "fused": null,
+            "capturable": false,
+            "maximize": false,
+            "differentiable": false
+          },
+          "param_groups": [
+            {
+              "lr": 0.0001,
+              "betas": [
+                0.9,
+                0.999
+              ],
+              "eps": 1e-08,
+              "weight_decay": 0.01,
+              "amsgrad": false,
+              "foreach": null,
+              "fused": null,
+              "capturable": false,
+              "maximize": false,
+              "differentiable": false
+            }
+          ],
+          "torch_version": "2.10.0+cu128"
+        },
+        "peak_allocated_per_trial": [
+          11701944832,
+          11701944832,
+          11701944832
+        ],
+        "peak_reserved_per_trial": [
+          11769217024,
+          11769217024,
+          11769217024
+        ],
+        "per_trial_call_counts": [
+          {
+            "attention": 16,
+            "backward": 8,
+            "lm_head_projection": 8,
+            "loss": 8,
+            "noising": 8,
+            "optimizer_step": 8
+          },
+          {
+            "attention": 16,
+            "backward": 8,
+            "lm_head_projection": 8,
+            "loss": 8,
+            "noising": 8,
+            "optimizer_step": 8
+          },
+          {
+            "attention": 16,
+            "backward": 8,
+            "lm_head_projection": 8,
+            "loss": 8,
+            "noising": 8,
+            "optimizer_step": 8
+          }
+        ]
+      }
+    },
+    {
+      "family": "masked",
+      "cell": "dense_training_step_v32000_l8",
+      "batch_size": 8,
+      "sequence_length": 512,
+      "dtype": "float32",
+      "hardware": "NVIDIA RTX 6000 Ada Generation",
+      "wall_seconds_instrumented_off": 0.05683319138188381,
+      "wall_seconds_instrumented_on": 0.05707552196690813,
+      "instrumentation_overhead_seconds": 0.0002423305850243196,
+      "wall_off_trials": {
+        "median_seconds": 0.05683319138188381,
+        "min_seconds": 0.056565050515928306,
+        "max_seconds": 0.057547087606508285,
+        "trials": 3,
+        "single_trial": false
+      },
+      "wall_on_trials": {
+        "median_seconds": 0.05707552196690813,
+        "min_seconds": 0.05599924434500281,
+        "max_seconds": 0.05708647027495317,
+        "trials": 3,
+        "single_trial": false
+      },
+      "covered_seconds": 0.05111514798738062,
+      "unattributed_seconds": 0.005960373979527506,
+      "verdict_source": "wall_seconds_instrumented_off",
+      "warmup_seconds": 0.15956895390991122,
+      "peak_allocated_bytes": 2503467520,
+      "peak_reserved_bytes": 2602565632,
+      "operations": [
+        {
+          "name": "attention",
+          "inclusive_seconds": 0.006267471991479396,
+          "exclusive_seconds": null,
+          "call_count": 8,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "backward",
+          "inclusive_seconds": 0.034311131954193115,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "lm_head_projection",
+          "inclusive_seconds": 0.004166504055261612,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "loss",
+          "inclusive_seconds": 0.0006817760020494462,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "noising",
+          "inclusive_seconds": 0.0002188240010291338,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "optimizer_step",
+          "inclusive_seconds": 0.00546943998336792,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        }
+      ],
+      "status": "ok",
+      "invalid_reasons": [],
+      "extra": {
+        "vocab_size": 32000,
+        "layers": 8,
+        "steps_per_trial": 8,
+        "warmup_steps": 3,
+        "trials": 3,
+        "model_forward_inclusive_seconds": 0.016271963953971864,
+        "model_forward_residual_seconds": 0.005790092028677466,
+        "model_forward_residual_per_trial": [
+          0.005718083836138249,
+          0.005790092028677466,
+          0.005824975959956646
+        ],
+        "sampling_contract": "timesteps are sampled from the frozen MaskedDiffusionProcess distribution (linear alpha schedule, t ~ U(0,1)); this producer pins no mask ratio",
+        "realized_mask_fraction": {
+          "source": "separate_diagnostic_replay",
+          "raw_by_trial": [
+            [
+              0.5419921875,
+              0.523681640625,
+              0.548828125,
+              0.4111328125,
+              0.328857421875,
+              0.529296875,
+              0.45703125,
+              0.532470703125
+            ],
+            [
+              0.3974609375,
+              0.53076171875,
+              0.567138671875,
+              0.642333984375,
+              0.417236328125,
+              0.467041015625,
+              0.1962890625,
+              0.423583984375
+            ],
+            [
+              0.54541015625,
+              0.433837890625,
+              0.550537109375,
+              0.502197265625,
+              0.6279296875,
+              0.358642578125,
+              0.578369140625,
+              0.375732421875
+            ]
+          ],
+          "observations": 24,
+          "median": 0.512939453125,
+          "mean": 0.4786580403645833,
+          "min": 0.1962890625,
+          "max": 0.642333984375,
+          "denominator": "maskable_tokens",
+          "trial_seeds": [
+            700,
+            701,
+            702
+          ],
+          "used_for": "diagnostic only; feeds no wall, event or memory figure"
+        },
+        "realized_mask_fraction_interpretation": "What THIS artifact's paired execution realized under its fixed seed schedule, not an estimate of the process's population mask rate. At B=1 each step's fraction reflects close to a single timestep draw, so 24 observations retain seed-dependent bias; larger batches average within the batch and narrow the spread, which is why every cell stores its own raw distribution. Report it as 'this execution was median X, range Y-Z', never as 'the default regime is X% masking'.",
+        "peak_representative": "max over trials (fixed before measuring)",
+        "rng_state_fingerprints": {
+          "700": {
+            "off": "cfe5c45f57198708",
+            "on": "cfe5c45f57198708"
+          },
+          "701": {
+            "on": "5387ebd89df3db59",
+            "off": "5387ebd89df3db59"
+          },
+          "702": {
+            "off": "73a972645ea17a25",
+            "on": "73a972645ea17a25"
+          }
+        },
+        "replay_rng_fingerprints": {
+          "700": "cfe5c45f57198708",
+          "701": "5387ebd89df3db59",
+          "702": "73a972645ea17a25"
+        },
+        "replay_state_fingerprints": {
+          "700": "e79e55e40a4c229d",
+          "701": "278de6c08e5af3d1",
+          "702": "94bb07af4bcdbb3d"
+        },
+        "weight_input_fingerprints": {
+          "700": {
+            "off": "e79e55e40a4c229d",
+            "on": "e79e55e40a4c229d"
+          },
+          "701": {
+            "on": "278de6c08e5af3d1",
+            "off": "278de6c08e5af3d1"
+          },
+          "702": {
+            "off": "94bb07af4bcdbb3d",
+            "on": "94bb07af4bcdbb3d"
+          }
+        },
+        "optimizer": {
+          "class": "AdamW",
+          "qualified_class": "torch.optim.AdamW",
+          "resolved_defaults": {
+            "lr": 0.0001,
+            "betas": [
+              0.9,
+              0.999
+            ],
+            "eps": 1e-08,
+            "weight_decay": 0.01,
+            "amsgrad": false,
+            "foreach": null,
+            "fused": null,
+            "capturable": false,
+            "maximize": false,
+            "differentiable": false
+          },
+          "param_groups": [
+            {
+              "lr": 0.0001,
+              "betas": [
+                0.9,
+                0.999
+              ],
+              "eps": 1e-08,
+              "weight_decay": 0.01,
+              "amsgrad": false,
+              "foreach": null,
+              "fused": null,
+              "capturable": false,
+              "maximize": false,
+              "differentiable": false
+            }
+          ],
+          "torch_version": "2.10.0+cu128"
+        },
+        "peak_allocated_per_trial": [
+          2503467520,
+          2503467520,
+          2503467520
+        ],
+        "peak_reserved_per_trial": [
+          2602565632,
+          2602565632,
+          2602565632
+        ],
+        "per_trial_call_counts": [
+          {
+            "attention": 64,
+            "backward": 8,
+            "lm_head_projection": 8,
+            "loss": 8,
+            "noising": 8,
+            "optimizer_step": 8
+          },
+          {
+            "attention": 64,
+            "backward": 8,
+            "lm_head_projection": 8,
+            "loss": 8,
+            "noising": 8,
+            "optimizer_step": 8
+          },
+          {
+            "attention": 64,
+            "backward": 8,
+            "lm_head_projection": 8,
+            "loss": 8,
+            "noising": 8,
+            "optimizer_step": 8
+          }
+        ]
+      }
+    },
+    {
+      "family": "masked",
+      "cell": "dense_training_step_v128256_l8",
+      "batch_size": 8,
+      "sequence_length": 512,
+      "dtype": "float32",
+      "hardware": "NVIDIA RTX 6000 Ada Generation",
+      "wall_seconds_instrumented_off": 0.12303823075490072,
+      "wall_seconds_instrumented_on": 0.12526696172426455,
+      "instrumentation_overhead_seconds": 0.0022287309693638235,
+      "wall_off_trials": {
+        "median_seconds": 0.12303823075490072,
+        "min_seconds": 0.1229868337395601,
+        "max_seconds": 0.12511392263695598,
+        "trials": 3,
+        "single_trial": false
+      },
+      "wall_on_trials": {
+        "median_seconds": 0.12526696172426455,
+        "min_seconds": 0.12290487586869858,
+        "max_seconds": 0.12527222590870224,
+        "trials": 3,
+        "single_trial": false
+      },
+      "covered_seconds": 0.1193099795654416,
+      "unattributed_seconds": 0.0059569821588229405,
+      "verdict_source": "wall_seconds_instrumented_off",
+      "warmup_seconds": 0.3558583479607478,
+      "peak_allocated_bytes": 5460451840,
+      "peak_reserved_bytes": 5559549952,
+      "operations": [
+        {
+          "name": "attention",
+          "inclusive_seconds": 0.006217092029750348,
+          "exclusive_seconds": null,
+          "call_count": 8,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "backward",
+          "inclusive_seconds": 0.0769237756729126,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "lm_head_projection",
+          "inclusive_seconds": 0.01803942394256592,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "loss",
+          "inclusive_seconds": 0.0024709199965000156,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "noising",
+          "inclusive_seconds": 0.0002563840001821518,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        },
+        {
+          "name": "optimizer_step",
+          "inclusive_seconds": 0.015402383923530577,
+          "exclusive_seconds": null,
+          "call_count": 1,
+          "parent": null,
+          "coverage_eligible": true
+        }
+      ],
+      "status": "ok",
+      "invalid_reasons": [],
+      "extra": {
+        "vocab_size": 128256,
+        "layers": 8,
+        "steps_per_trial": 8,
+        "warmup_steps": 3,
+        "trials": 3,
+        "model_forward_inclusive_seconds": 0.030024160146713257,
+        "model_forward_residual_seconds": 0.005767644174396989,
+        "model_forward_residual_per_trial": [
+          0.005802375800907613,
+          0.005767644174396989,
+          0.005734939783811573
+        ],
+        "sampling_contract": "timesteps are sampled from the frozen MaskedDiffusionProcess distribution (linear alpha schedule, t ~ U(0,1)); this producer pins no mask ratio",
+        "realized_mask_fraction": {
+          "source": "separate_diagnostic_replay",
+          "raw_by_trial": [
+            [
+              0.5419921875,
+              0.523681640625,
+              0.548828125,
+              0.4111328125,
+              0.328857421875,
+              0.529296875,
+              0.45703125,
+              0.532470703125
+            ],
+            [
+              0.3974609375,
+              0.53076171875,
+              0.567138671875,
+              0.642333984375,
+              0.417236328125,
+              0.467041015625,
+              0.1962890625,
+              0.423583984375
+            ],
+            [
+              0.54541015625,
+              0.433837890625,
+              0.550537109375,
+              0.502197265625,
+              0.6279296875,
+              0.358642578125,
+              0.578369140625,
+              0.375732421875
+            ]
+          ],
+          "observations": 24,
+          "median": 0.512939453125,
+          "mean": 0.4786580403645833,
+          "min": 0.1962890625,
+          "max": 0.642333984375,
+          "denominator": "maskable_tokens",
+          "trial_seeds": [
+            700,
+            701,
+            702
+          ],
+          "used_for": "diagnostic only; feeds no wall, event or memory figure"
+        },
+        "realized_mask_fraction_interpretation": "What THIS artifact's paired execution realized under its fixed seed schedule, not an estimate of the process's population mask rate. At B=1 each step's fraction reflects close to a single timestep draw, so 24 observations retain seed-dependent bias; larger batches average within the batch and narrow the spread, which is why every cell stores its own raw distribution. Report it as 'this execution was median X, range Y-Z', never as 'the default regime is X% masking'.",
+        "peak_representative": "max over trials (fixed before measuring)",
+        "rng_state_fingerprints": {
+          "700": {
+            "off": "cfe5c45f57198708",
+            "on": "cfe5c45f57198708"
+          },
+          "701": {
+            "on": "5387ebd89df3db59",
+            "off": "5387ebd89df3db59"
+          },
+          "702": {
+            "off": "73a972645ea17a25",
+            "on": "73a972645ea17a25"
+          }
+        },
+        "replay_rng_fingerprints": {
+          "700": "cfe5c45f57198708",
+          "701": "5387ebd89df3db59",
+          "702": "73a972645ea17a25"
+        },
+        "replay_state_fingerprints": {
+          "700": "59b0f60a13e14b62",
+          "701": "570cc5eb6798f5e3",
+          "702": "27355129d02a6279"
+        },
+        "weight_input_fingerprints": {
+          "700": {
+            "off": "59b0f60a13e14b62",
+            "on": "59b0f60a13e14b62"
+          },
+          "701": {
+            "on": "570cc5eb6798f5e3",
+            "off": "570cc5eb6798f5e3"
+          },
+          "702": {
+            "off": "27355129d02a6279",
+            "on": "27355129d02a6279"
+          }
+        },
+        "optimizer": {
+          "class": "AdamW",
+          "qualified_class": "torch.optim.AdamW",
+          "resolved_defaults": {
+            "lr": 0.0001,
+            "betas": [
+              0.9,
+              0.999
+            ],
+            "eps": 1e-08,
+            "weight_decay": 0.01,
+            "amsgrad": false,
+            "foreach": null,
+            "fused": null,
+            "capturable": false,
+            "maximize": false,
+            "differentiable": false
+          },
+          "param_groups": [
+            {
+              "lr": 0.0001,
+              "betas": [
+                0.9,
+                0.999
+              ],
+              "eps": 1e-08,
+              "weight_decay": 0.01,
+              "amsgrad": false,
+              "foreach": null,
+              "fused": null,
+              "capturable": false,
+              "maximize": false,
+              "differentiable": false
+            }
+          ],
+          "torch_version": "2.10.0+cu128"
+        },
+        "peak_allocated_per_trial": [
+          5460451840,
+          5460451840,
+          5460451840
+        ],
+        "peak_reserved_per_trial": [
+          5559549952,
+          5559549952,
+          5559549952
+        ],
+        "per_trial_call_counts": [
+          {
+            "attention": 64,
+            "backward": 8,
+            "lm_head_projection": 8,
+            "loss": 8,
+            "noising": 8,
+            "optimizer_step": 8
+          },
+          {
+            "attention": 64,
+            "backward": 8,
+            "lm_head_projection": 8,
+            "loss": 8,
+            "noising": 8,
+            "optimizer_step": 8
+          },
+          {
+            "attention": 64,
+            "backward": 8,
+            "lm_head_projection": 8,
+            "loss": 8,
+            "noising": 8,
+            "optimizer_step": 8
+          }
+        ]
+      }
+    }
+  ],
+  "reading_note": "Ledger row 1 asked for the dense masked LOSS's share of step time. It is the smallest measured operation in every cell: 0.7-3.0 percent, never above 9.6 ms. The Unsloth Triton CE it wraps is not where this step's time goes. What the loss row's neighbour costs instead is the LM-HEAD PROJECTION that feeds it: 6.5 to 26.7 percent, and 84.2 ms at V=128256/B=32, driven by the [B, L, V] logits GEMM rather than the cross-entropy over it. Separating `lm_head_projection` from `loss` is what made that visible; a single fused 'loss' event would have reported up to 29.7 percent and pointed at the wrong operation.\n\nBackward dominates once batch leaves 1 (53.6-66.2 percent), and `optimizer_step` repeats the ELF pattern exactly: its absolute cost is batch-invariant (3.83/3.84/3.83 ms at 32K; 13.71/13.80/13.75 ms at 128256), so its share collapses from 47.7 to 3.7 percent as batch grows. Reading only B=1 would name the optimizer the hot path and be wrong for any realistic batch -- the same trap the ELF cell set.\n\nVocabulary is the decisive axis for the LM head, and NOT monotonically in batch: the 128256-over-32000 step ratio is 2.8x at B=1, 3.6x at B=8 and 3.1x at B=32.\n\nThe 8-layer sensitivity cell earns its place. Quadrupling depth raises the step only 2.3x (24.35 -> 56.83 ms at 32K/B=8) because the LM head and loss are depth-invariant, so a 2-layer fixture OVERSTATES the LM head's share: 15.1 percent at 2 layers falls to 7.3 percent at 8. Any share quoted from this artifact must name its depth.\n\nStage-1 profile only. No target is selected; Stage 2 owns that."
+}
