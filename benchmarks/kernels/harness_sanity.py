@@ -50,6 +50,18 @@ import time
 import weakref
 from typing import Any
 
+#: Equivalence band for the noising gate. The established finding is the
+#: ABSENCE of an effect, which needs an equivalence test, not a dispersion
+#: test: `+50%, -50%, +50%` has a median inside its own spread with mixed
+#: signs, so a dispersion criterion would pass measurement chaos as agreement.
+#: The original run spanned -0.61%..+1.12%, so 2% clears known noise while
+#: still being tight enough to mean "not material".
+NOISING_EQUIVALENCE_MARGIN = 0.02
+
+#: Trials for the noising gate. More than the other cells because an
+#: equivalence claim over a near-zero effect needs the replication.
+NOISING_TRIALS = 5
+
 # Ledger expectations. Directional only — see the module docstring.
 EXPECTATIONS = {
     "sparse": {
@@ -68,10 +80,11 @@ EXPECTATIONS = {
         # reproduce noise, and would fail on a correct run that happened to
         # land 3 of 5.
         "criterion": (
-            "the paired effect must NOT clear the material-effect bar: the "
-            "median delta stays within trial dispersion, and per-trial signs "
-            "are not consistent. Reproducing the historical 4-of-5 direction "
-            "is explicitly NOT required."
+            "EQUIVALENCE, not dispersion: |median delta| <= "
+            "NOISING_EQUIVALENCE_MARGIN and every per-trial delta within the "
+            "same margin, over 5 interleaved paired trials. A large deviation "
+            "types the cell `unstable / NOT_REPRODUCED`. Reproducing the "
+            "historical 4-of-5 direction is explicitly NOT required."
         ),
     },
     "hybrid": {
@@ -154,6 +167,30 @@ def interleaved_trials(
             measurement["ran_first"] = label == order[0]
             results[label].append(measurement)
     return results
+
+
+def equivalence(deltas: list[float], *, margin: float) -> dict[str, Any]:
+    """Is the paired effect small enough to call "no measurable difference"?
+
+    An absence finding cannot be checked with a dispersion test. `+50%, -50%,
+    +50%` has its median inside its own spread and mixed signs, so a
+    dispersion criterion would accept wild measurement as evidence of
+    equivalence. This requires the median AND every individual trial to sit
+    inside the margin, so noise fails instead of passing.
+    """
+    if not deltas:
+        raise ValueError("no per-trial deltas; nothing to check equivalence over")
+    median = statistics.median(deltas)
+    worst = max(abs(delta) for delta in deltas)
+    return {
+        "per_trial": deltas,
+        "median": median,
+        "worst_abs": worst,
+        "margin": margin,
+        "median_within_margin": abs(median) <= margin,
+        "all_trials_within_margin": worst <= margin,
+        "equivalent": abs(median) <= margin and worst <= margin,
+    }
 
 
 def sign_consistency(deltas: list[float], *, expect_negative: bool) -> dict[str, Any]:
@@ -319,6 +356,29 @@ def check_sparse(args) -> dict[str, Any]:
             "activation": sign_consistency(
                 activation_deltas, expect_negative=(mask_ratio < 0.4)
             ),
+        }
+
+    # The release invariant GATES, it does not merely get recorded. If arm
+    # lifetimes regress to 12/12 leaked, a shape that happens to still look
+    # right must not pass — the same hole as measuring low-mask memory without
+    # asserting on it.
+    unreleased = [
+        f"{mask}/{label}/trial{m['trial']}"
+        for mask, cell in cells.items()
+        for label, arm in cell["per_arm"].items()
+        for m in arm
+        if not m.get("model_released")
+    ]
+    if unreleased:
+        return {
+            "check": "sparse",
+            "status": "measurement_invalid",
+            "reason": (
+                "arm model(s) outlived their measurement call, so a later arm "
+                f"may carry an earlier arm's allocation: {unreleased}"
+            ),
+            "expectation": EXPECTATIONS["sparse"],
+            "cells": cells,
         }
 
     low, high = cells["mask_0.15"], cells["mask_0.75"]

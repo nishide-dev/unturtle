@@ -381,3 +381,42 @@ class TestOneShotArmLifecycle:
         measure_arm_one_shot(probes)
         gc.collect()
         assert probes[0]() is None, "one-shot arm must not outlive its call"
+
+
+class TestFiniteValidation:
+    """NaN and inf must not pass as measurements.
+
+    Every comparison against NaN is False, so without this check the coverage
+    and remainder tests pass vacuously and a NaN cell reports `status: ok`.
+    """
+
+    def test_nan_wall_trials_are_measurement_invalid(self):
+        from unturtle.eval.profile_harness import profile_cell
+
+        record = profile_cell(_cell([_event()], off_trials=(float("nan"),) * 3))
+        assert record["status"] == "measurement_invalid"
+        assert any("not finite" in r for r in record["invalid_reasons"])
+
+    def test_negative_wall_trials_are_measurement_invalid(self):
+        from unturtle.eval.profile_harness import profile_cell
+
+        record = profile_cell(_cell([_event()], on_trials=(-1.0, 2.0, 3.0)))
+        assert record["status"] == "measurement_invalid"
+        assert any("negative" in r for r in record["invalid_reasons"])
+
+    def test_non_finite_event_time_is_measurement_invalid(self):
+        from unturtle.eval.profile_harness import profile_cell
+
+        record = profile_cell(_cell([_event(inclusive_seconds=float("-inf"))]))
+        assert record["status"] == "measurement_invalid"
+
+    def test_negative_call_count_is_measurement_invalid(self):
+        from unturtle.eval.profile_harness import profile_cell
+
+        record = profile_cell(_cell([_event(call_count=-5)]))
+        assert record["status"] == "measurement_invalid"
+
+    def test_a_clean_cell_is_still_ok(self):
+        from unturtle.eval.profile_harness import profile_cell
+
+        assert profile_cell(_cell([_event(inclusive_seconds=4.0)]))["status"] == "ok"

@@ -184,6 +184,48 @@ class ProfileCell:
     extra: dict[str, Any] = field(default_factory=dict)
 
 
+def _validate_finite(cell: ProfileCell) -> list[str]:
+    """Reject non-finite and negative measurements.
+
+    Without this a `nan` wall time silently produces `status: ok`: every
+    comparison against NaN is False, so the coverage and remainder checks pass
+    vacuously. A `-inf` event time does the same to `covered_seconds`. These are
+    measurement failures, and a harness must say so rather than publish them.
+    """
+    import math
+
+    problems: list[str] = []
+    for name, trials in (
+        ("wall_off_trials", cell.wall_off_trials),
+        ("wall_on_trials", cell.wall_on_trials),
+    ):
+        for index, value in enumerate(trials):
+            if not math.isfinite(value):
+                problems.append(f"{name}[{index}] is not finite ({value!r})")
+            elif value < 0:
+                problems.append(f"{name}[{index}] is negative ({value!r})")
+    for event in cell.events:
+        for field_name, value in (
+            ("inclusive_seconds", event.inclusive_seconds),
+            ("exclusive_seconds", event.exclusive_seconds),
+        ):
+            if value is None:
+                continue
+            if not math.isfinite(value):
+                problems.append(
+                    f"event {event.name!r} {field_name} is not finite ({value!r})"
+                )
+            elif value < 0:
+                problems.append(
+                    f"event {event.name!r} {field_name} is negative ({value!r})"
+                )
+        if event.call_count < 0:
+            problems.append(
+                f"event {event.name!r} call_count is negative ({event.call_count})"
+            )
+    return problems
+
+
 def profile_cell(cell: ProfileCell) -> dict[str, Any]:
     """The record for one cell, with coverage typed rather than trusted.
 
@@ -193,22 +235,36 @@ def profile_cell(cell: ProfileCell) -> dict[str, Any]:
     clamping would conceal exactly the double-counting this arithmetic guards,
     so it types the cell ``profile_invalid`` instead.
     """
-    covered = coverage_seconds(cell.events)
     status = "ok"
     reasons: list[str] = []
+
+    finite_problems = _validate_finite(cell)
+    if finite_problems:
+        status = "measurement_invalid"
+        reasons.extend(finite_problems)
+
+    covered = coverage_seconds(cell.events)
 
     for name, trials in (
         ("wall_off_trials", cell.wall_off_trials),
         ("wall_on_trials", cell.wall_on_trials),
     ):
         if not trials:
-            status = "profile_invalid"
+            status = (
+                "measurement_invalid"
+                if status == "measurement_invalid"
+                else "profile_invalid"
+            )
             reasons.append(
                 f"{name} is empty: the verdict and the instrumented time are "
                 "derived from replicated trials, never accepted as scalars"
             )
         elif len(trials) == 1:
-            status = "profile_invalid"
+            status = (
+                "measurement_invalid"
+                if status == "measurement_invalid"
+                else "profile_invalid"
+            )
             reasons.append(
                 f"{name} has a single trial: the protocol requires replicated, "
                 "interleaved trials before any performance statement"
@@ -220,14 +276,22 @@ def profile_cell(cell: ProfileCell) -> dict[str, Any]:
     wall_on = on_stats["median_seconds"] if on_stats else float("nan")
     unattributed = wall_on - covered
     if on_stats is not None and covered > wall_on + COVERAGE_TOLERANCE:
-        status = "profile_invalid"
+        status = (
+            "measurement_invalid"
+            if status == "measurement_invalid"
+            else "profile_invalid"
+        )
         reasons.append(
             f"covered_seconds ({covered:.6f}) exceeds instrumented wall time "
             f"({wall_on:.6f}) beyond tolerance: the exclusivity declaration "
             "is wrong"
         )
     if on_stats is not None and unattributed < -COVERAGE_TOLERANCE:
-        status = "profile_invalid"
+        status = (
+            "measurement_invalid"
+            if status == "measurement_invalid"
+            else "profile_invalid"
+        )
         reasons.append(
             f"unattributed_seconds is negative ({unattributed:.6f}); reported "
             "as-is rather than clamped, because clamping hides the bookkeeping "
