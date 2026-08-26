@@ -1,0 +1,285 @@
+{
+  "run": {
+    "head_sha": "0f64fd9cd76f78b5575709c7fe097517217f953b",
+    "command": "benchmarks/kernels/harness_sanity.py --check all --device cuda:0 --steps 20 --warmup 5 --out benchmarks/results/pd_harness_sanity",
+    "args": {
+      "check": "all",
+      "device": "cuda:0",
+      "trials": 3,
+      "steps": 20,
+      "warmup": 5,
+      "hybrid_prompt_divisor": 4,
+      "out": "benchmarks/results/pd_harness_sanity"
+    },
+    "gpu_name": "NVIDIA RTX 6000 Ada Generation",
+    "torch_version": "2.10.0+cu128",
+    "cuda_version": "12.8",
+    "frozen_constants": {
+      "NOISING_EQUIVALENCE_MARGIN": 0.02,
+      "NOISING_TRIALS": 5,
+      "HYBRID_TRIALS": 5
+    },
+    "verdict_source": "instrumentation-off wall clock; diagnostic engagement passes are untimed and reverted before timing",
+    "cells": [
+      {
+        "check": "sparse",
+        "status": "reproduced"
+      },
+      {
+        "check": "noising",
+        "status": "reproduced"
+      },
+      {
+        "check": "hybrid",
+        "status": "reproduced"
+      }
+    ]
+  },
+  "cells": [
+    {
+      "check": "sparse",
+      "status": "reproduced",
+      "expectation": {
+        "ledger": "row 2 (#77, benchmarks/sparse_lm_head_training.py)",
+        "shape": "step-time win at mask 0.15; memory penalty at mask 0.75",
+        "reference_numbers": "32K vocab: -32.6% step at 0.15; +21.4% peak at 0.75"
+      },
+      "trials": 3,
+      "axes": {
+        "low_mask_step_time_win": {
+          "median": -0.3258632045754255,
+          "spread": 0.03797025070788912,
+          "trials_agreeing": "3/3",
+          "majority_agrees": true,
+          "exceeds_spread": true
+        },
+        "low_mask_activation_win": {
+          "median": -0.4092949630949076,
+          "spread": 0.017206024990307545,
+          "trials_agreeing": "3/3",
+          "majority_agrees": true,
+          "exceeds_spread": true
+        },
+        "high_mask_activation_penalty": {
+          "median": 0.34138021800506974,
+          "spread": 0.0,
+          "trials_agreeing": "3/3",
+          "majority_agrees": true,
+          "exceeds_spread": true
+        }
+      },
+      "cells": {
+        "mask_0.15": {
+          "step_time": {
+            "per_trial": [
+              -0.3258632045754255,
+              -0.31486830324116344,
+              -0.35283855394905256
+            ],
+            "median": -0.3258632045754255,
+            "spread": 0.03797025070788912,
+            "trials_agreeing": 3,
+            "trials": 3,
+            "majority_agrees": true,
+            "exceeds_spread": true
+          },
+          "activation": {
+            "per_trial": [
+              -0.42650098808521514,
+              -0.4092949630949076,
+              -0.4092949630949076
+            ],
+            "median": -0.4092949630949076,
+            "spread": 0.017206024990307545,
+            "trials_agreeing": 3,
+            "trials": 3,
+            "majority_agrees": true,
+            "exceeds_spread": true
+          },
+          "per_arm_medians": {
+            "dense": [
+              0.005925632547587156,
+              0.005740952503401786,
+              0.006024849019013345
+            ],
+            "sparse": [
+              0.003994686936493963,
+              0.003933308529667556,
+              0.0038990500033833086
+            ]
+          }
+        },
+        "mask_0.75": {
+          "step_time": {
+            "per_trial": [
+              0.018691564092368846,
+              0.018079143513415042,
+              0.012297108428091686
+            ],
+            "median": 0.018079143513415042,
+            "spread": 0.00639445566427716,
+            "trials_agreeing": 0,
+            "trials": 3,
+            "majority_agrees": false,
+            "exceeds_spread": true
+          },
+          "activation": {
+            "per_trial": [
+              0.34138021800506974,
+              0.34138021800506974,
+              0.34138021800506974
+            ],
+            "median": 0.34138021800506974,
+            "spread": 0.0,
+            "trials_agreeing": 3,
+            "trials": 3,
+            "majority_agrees": true,
+            "exceeds_spread": true
+          },
+          "per_arm_medians": {
+            "dense": [
+              0.0061906250193715096,
+              0.0060813435120508075,
+              0.006069433526135981
+            ],
+            "sparse": [
+              0.006306337483692914,
+              0.0061912889941595495,
+              0.00614407000830397
+            ]
+          }
+        }
+      }
+    },
+    {
+      "check": "noising",
+      "status": "reproduced",
+      "expectation": {
+        "ledger": "row 3 (#62, benchmarks/collator_vs_process_noising.py)",
+        "shape": "NO measurable difference between collator and device paths",
+        "reference_numbers": "median +0.42%, range -0.61%..+1.12%, 4 of 5 slower",
+        "criterion": "EQUIVALENCE, not dispersion: |median delta| <= NOISING_EQUIVALENCE_MARGIN and every per-trial delta within the same margin, over 5 interleaved paired trials. A large deviation types the cell `unstable / NOT_REPRODUCED`. Reproducing the historical 4-of-5 direction is explicitly NOT required."
+      },
+      "trials": 5,
+      "equivalence": {
+        "per_trial": [
+          0.0037415139226282795,
+          0.0029706659940606068,
+          -0.00929642525510643,
+          -0.0012488523752713697,
+          0.0015859505002035854
+        ],
+        "median": 0.0015859505002035854,
+        "worst_abs": 0.00929642525510643,
+        "margin": 0.02,
+        "median_within_margin": true,
+        "all_trials_within_margin": true,
+        "equivalent": true
+      },
+      "per_arm_medians": {
+        "collator": [
+          0.012664937996305525,
+          0.01260998850921169,
+          0.012902757036499679,
+          0.012612000980880111,
+          0.012956563557963818
+        ],
+        "process": [
+          0.012712324038147926,
+          0.0126474485732615,
+          0.012782807520125061,
+          0.012596250453498214,
+          0.01297711202641949
+        ]
+      }
+    },
+    {
+      "check": "hybrid",
+      "status": "reproduced",
+      "expectation": {
+        "ledger": "row 4 (#63/#99, _hybrid.py:179)",
+        "shape": "full-forward slowdown below the 2048 crossover",
+        "reference_numbers": "0.90x at L=1024; 1.50x at L=2048; 1.92x at L=4096"
+      },
+      "config": {
+        "hidden_size": 512,
+        "heads": 8,
+        "layers": 8,
+        "dtype": "bfloat16",
+        "batch_size": 4,
+        "prompt_ratio": "L/4"
+      },
+      "trials": 5,
+      "verdict_source": "instrumentation-off wall clock (diagnostic pass is untimed)",
+      "halves_reproduced": {
+        "sub_crossover_loss": true,
+        "above_crossover_gain": true
+      },
+      "observed_shape": "L=1024 median speedup 0.94x (5/5 trials below 1.0); L=2048 median speedup 1.39x",
+      "cells": {
+        "L1024": {
+          "split_kernel_calls": {
+            "dense": 0,
+            "fast": 8
+          },
+          "speedups": [
+            0.9407021429819815,
+            0.9267652801014117,
+            0.9438207777631643,
+            0.9857040502523594,
+            0.9267448511997632
+          ],
+          "median_speedup": 0.9407021429819815,
+          "trials_below_one": 5,
+          "per_arm_medians": {
+            "dense": [
+              0.005455738457385451,
+              0.005167981027625501,
+              0.0053876235033385456,
+              0.00526642648037523,
+              0.005299197509884834
+            ],
+            "fast": [
+              0.005799644975923002,
+              0.005576364521402866,
+              0.005708312033675611,
+              0.005342806980479509,
+              0.00571807601954788
+            ]
+          }
+        },
+        "L2048": {
+          "split_kernel_calls": {
+            "dense": 0,
+            "fast": 8
+          },
+          "speedups": [
+            1.3842480794382483,
+            1.398006533467081,
+            1.3954900269223556,
+            1.3934351636438533,
+            1.3792083509913864
+          ],
+          "median_speedup": 1.3934351636438533,
+          "trials_below_one": 0,
+          "per_arm_medians": {
+            "dense": [
+              0.01197959849378094,
+              0.012091392069123685,
+              0.012166963482741266,
+              0.01221162750152871,
+              0.012145505985245109
+            ],
+            "fast": [
+              0.008654228004161268,
+              0.00864902400644496,
+              0.0087187749450095,
+              0.008763685473240912,
+              0.008806143014226109
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

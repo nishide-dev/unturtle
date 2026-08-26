@@ -59,6 +59,11 @@ from typing import Any
 #: still being tight enough to mean "not material".
 NOISING_EQUIVALENCE_MARGIN = 0.02
 
+#: Trials for the canonical hybrid gate. Fixed rather than taken from
+#: `--trials`, whose default of 3 would silently make `--check all` weaker than
+#: the reported 5-trial gate.
+HYBRID_TRIALS = 5
+
 #: Trials for the noising gate. More than the other cells because an
 #: equivalence claim over a near-zero effect needs the replication.
 NOISING_TRIALS = 5
@@ -650,8 +655,8 @@ def check_hybrid(args) -> dict[str, Any]:
 
     for seq_len in (1024, 2048):
 
-        def measure_arm(label, *, warmup, steps, device, seq_len=seq_len):
-            """One shot: build, patch, measure, release."""
+        def build(label, *, device, seq_len=seq_len):
+            """The model both passes use, patched exactly as FastDiffusionModel does."""
             torch.manual_seed(7)
             model = (
                 TinyA2DLlamaLMHeadModel(
@@ -673,45 +678,75 @@ def check_hybrid(args) -> dict[str, Any]:
                 .to(device=device, dtype=torch.bfloat16)
                 .eval()
             )
-            # Install the patched attention on BOTH arms, exactly as
-            # `FastDiffusionModel` does. Without it neither arm can take the
-            # mask-free split and the two forwards are identical.
-            #
-            # The stubs are a prerequisite, not a detail: the fast forward
-            # calls `self.apply_qkv(self, ...)` unconditionally, and a bare
-            # model has no such attribute — installing only the forward raises
-            # AttributeError on the first step.
+            # Prerequisite, not a detail: the fast forward calls
+            # `self.apply_qkv(self, ...)` unconditionally and a bare model
+            # raises AttributeError on the first step.
             _install_apply_stubs(model)
-            engaged = {"count": 0}
             for layer in model.model.layers:
-                bound = types.MethodType(TinyA2DAttention_fast_forward, layer.self_attn)
+                layer.self_attn.forward = types.MethodType(
+                    TinyA2DAttention_fast_forward, layer.self_attn
+                )
+            return model
 
-                def counting(*call_args, _bound=bound, **call_kwargs):
-                    if call_kwargs.get("hybrid_prompt_lengths") is not None:
-                        engaged["count"] += 1
-                    return _bound(*call_args, **call_kwargs)
-
-                layer.self_attn.forward = counting
-
-            probe = weakref.ref(model)
+        def inputs(*, device, seq_len=seq_len):
             input_ids = torch.randint(1, 32000, (batch_size, seq_len), device=device)
-            attention_mask = torch.ones(
-                batch_size, seq_len, dtype=torch.long, device=device
-            )
-            prompt_lengths = torch.full(
-                (batch_size,),
-                seq_len // prompt_divisor,
-                dtype=torch.long,
-                device=device,
-            )
+            return {
+                "input_ids": input_ids,
+                "attention_mask": torch.ones(
+                    batch_size, seq_len, dtype=torch.long, device=device
+                ),
+                "prompt_lengths": torch.full(
+                    (batch_size,),
+                    seq_len // prompt_divisor,
+                    dtype=torch.long,
+                    device=device,
+                ),
+            }
+
+        def diagnose(label, *, device, seq_len=seq_len):
+            """UNTIMED: prove the split kernel actually ran, then restore.
+
+            Counts `hybrid_prefix_attention`, the real mask-free split — not
+            the arrival of the `hybrid_prompt_lengths` kwarg. The split sits
+            behind three further guards inside the patched forward (no packed
+            metadata, no cache, keys no longer than queries), so a kwarg that
+            arrives is not a kernel that ran.
+
+            Instrumentation is reverted before any timing: the protocol's
+            verdict is the instrumentation-OFF wall clock, and leaving a
+            counting wrapper installed would time one arm with an extra Python
+            frame and a dict increment per layer.
+            """
+            from unturtle.models.conversion.a2d.tiny_a2d import _fast_forward
+
+            model = build(label, device=device)
+            calls = {"count": 0}
+            original = _fast_forward.hybrid_prefix_attention
+
+            def spy(*call_args, **call_kwargs):
+                calls["count"] += 1
+                return original(*call_args, **call_kwargs)
+
+            _fast_forward.hybrid_prefix_attention = spy
+            try:
+                with torch.no_grad():
+                    model(**inputs(device=device))
+            finally:
+                _fast_forward.hybrid_prefix_attention = original
+            del model
+            gc.collect()
+            torch.cuda.empty_cache()
+            return calls["count"]
+
+        def measure_arm(label, *, warmup, steps, device, seq_len=seq_len):
+            """One shot, NO instrumentation: build, time, release."""
+            model = build(label, device=device)
+            probe = weakref.ref(model)
+            call = inputs(device=device)
 
             def step(model=model):
                 with torch.no_grad():
-                    model(
-                        input_ids=input_ids,
-                        attention_mask=attention_mask,
-                        prompt_lengths=prompt_lengths,
-                    )
+                    model(**call)
 
             seconds = timed_steps(step, warmup=warmup, steps=steps, device=device)
             del step
@@ -721,28 +756,39 @@ def check_hybrid(args) -> dict[str, Any]:
             return {
                 "median_seconds": statistics.median(seconds),
                 "model_released": probe() is None,
-                "hybrid_branch_calls": engaged["count"],
-                "expected_branch_calls": (
-                    layers * (warmup + steps) if label == "fast" else 0
+            }
+
+        # Untimed engagement proof, once per arm, before timing.
+        diagnostics = {
+            label: diagnose(label, device=args.device) for label in ("dense", "fast")
+        }
+        expected = {"fast": layers, "dense": 0}
+        if diagnostics != expected:
+            return {
+                "check": "hybrid",
+                "status": "measurement_invalid",
+                "reason": (
+                    "the mask-free split did not run as the arms require: "
+                    f"observed hybrid_prefix_attention calls {diagnostics}, "
+                    f"expected {expected} (one forward x {layers} layers)"
                 ),
+                "expectation": EXPECTATIONS["hybrid"],
+                "seq_len": seq_len,
             }
 
         per_arm = interleaved_trials(
             measure_arm,
             ("dense", "fast"),
-            trials=args.trials,
+            trials=HYBRID_TRIALS,
             warmup=args.warmup,
             steps=args.steps,
             device=args.device,
         )
         problems = [
-            f"L{seq_len}/{label}/trial{m['trial']}: released={m['model_released']} "
-            f"branch_calls={m['hybrid_branch_calls']} "
-            f"expected={m['expected_branch_calls']}"
+            f"L{seq_len}/{label}/trial{m['trial']}: released={m['model_released']}"
             for label, arm in per_arm.items()
             for m in arm
             if not m.get("model_released")
-            or m["hybrid_branch_calls"] != m["expected_branch_calls"]
         ]
         if problems:
             return {
@@ -760,6 +806,7 @@ def check_hybrid(args) -> dict[str, Any]:
         ]
         cells[f"L{seq_len}"] = {
             "per_arm": per_arm,
+            "split_kernel_calls": diagnostics,
             "speedups": speedups,
             "median_speedup": statistics.median(speedups),
             "trials_below_one": sum(1 for value in speedups if value < 1.0),
@@ -784,7 +831,8 @@ def check_hybrid(args) -> dict[str, Any]:
             "batch_size": batch_size,
             "prompt_ratio": f"L/{prompt_divisor}",
         },
-        "trials": args.trials,
+        "trials": HYBRID_TRIALS,
+        "verdict_source": "instrumentation-off wall clock (diagnostic pass is untimed)",
         "halves_reproduced": halves,
         "observed_shape": (
             f"L=1024 median speedup {low['median_speedup']:.2f}x "
@@ -800,6 +848,49 @@ CHECKS = {
     "noising": check_noising,
     "hybrid": check_hybrid,
 }
+
+
+def _provenance(args, records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Everything needed to read the artifact without the shell history.
+
+    Hardware, batch, length and dtype are frozen-protocol requirements, and the
+    verdict's source is recorded explicitly so nobody has to infer whether the
+    numbers came from an instrumented pass.
+    """
+    import subprocess
+    import sys
+
+    import torch
+
+    try:
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except Exception:  # pragma: no cover - provenance must not fail a run
+        head = "unknown"
+    return {
+        "head_sha": head,
+        "command": " ".join(sys.argv),
+        "args": vars(args),
+        "gpu_name": (
+            torch.cuda.get_device_name(0) if torch.cuda.is_available() else None
+        ),
+        "torch_version": torch.__version__,
+        "cuda_version": torch.version.cuda,
+        "frozen_constants": {
+            "NOISING_EQUIVALENCE_MARGIN": NOISING_EQUIVALENCE_MARGIN,
+            "NOISING_TRIALS": NOISING_TRIALS,
+            "HYBRID_TRIALS": HYBRID_TRIALS,
+        },
+        "verdict_source": (
+            "instrumentation-off wall clock; diagnostic engagement passes are "
+            "untimed and reverted before timing"
+        ),
+        "cells": [{"check": r["check"], "status": r["status"]} for r in records],
+    }
 
 
 def main() -> None:
@@ -827,7 +918,11 @@ def main() -> None:
     (out / "harness_sanity.jsonl").write_text(
         "".join(json.dumps(r) + "\n" for r in records)
     )
+    (out / "harness_sanity_run.json").write_text(
+        json.dumps(_provenance(args, records), indent=2)
+    )
     print(f"wrote {len(records)} gate cells to {out / 'harness_sanity.jsonl'}")
+    print(f"wrote run provenance to {out / 'harness_sanity_run.json'}")
 
 
 if __name__ == "__main__":
