@@ -64,6 +64,13 @@ NOISING_EQUIVALENCE_MARGIN = 0.02
 #: the reported 5-trial gate.
 HYBRID_TRIALS = 5
 
+#: Timed steps per hybrid trial, fixed for the same reason as the noising gate:
+#: at the CLI default of 10 steps the sub-crossover cell reads 1.00x with only
+#: 2 of 5 trials below 1.0, while at 20 it reads 0.90-0.94x with 5 of 5 below.
+#: A gate whose verdict depends on the caller remembering a flag is not a gate.
+HYBRID_STEPS = 20
+HYBRID_WARMUP = 5
+
 #: Trials for the noising gate. More than the other cells because an
 #: equivalence claim over a near-zero effect needs the replication.
 NOISING_TRIALS = 5
@@ -790,8 +797,8 @@ def check_hybrid(args) -> dict[str, Any]:
             measure_arm,
             ("dense", "fast"),
             trials=HYBRID_TRIALS,
-            warmup=args.warmup,
-            steps=args.steps,
+            warmup=HYBRID_WARMUP,
+            steps=HYBRID_STEPS,
             device=args.device,
         )
         problems = [
@@ -842,6 +849,7 @@ def check_hybrid(args) -> dict[str, Any]:
             "prompt_ratio": f"L/{prompt_divisor}",
         },
         "trials": HYBRID_TRIALS,
+        "steps_per_trial": HYBRID_STEPS,
         "verdict_source": "instrumentation-off wall clock (diagnostic pass is untimed)",
         "halves_reproduced": halves,
         "observed_shape": (
@@ -911,6 +919,7 @@ def _provenance(args, records: list[dict[str, Any]]) -> dict[str, Any]:
             "NOISING_TRIALS": NOISING_TRIALS,
             "NOISING_STEPS": NOISING_STEPS,
             "HYBRID_TRIALS": HYBRID_TRIALS,
+            "HYBRID_STEPS": HYBRID_STEPS,
         },
         "verdict_source": (
             "instrumentation-off wall clock; diagnostic engagement passes are "
