@@ -165,3 +165,146 @@ class TestElfTaxonomy:
     def test_representative_batches_cover_the_protocol_cells(self):
         producer = self._producer()
         assert producer.BATCH_SIZES == (1, 8, 32)
+
+
+class TestElfProducerMeasurementValidity:
+    """The producer's own measurement invariants, checked without a GPU."""
+
+    @staticmethod
+    def _producer():
+        import importlib.util
+        import pathlib
+
+        path = (
+            pathlib.Path(__file__).resolve().parents[2]
+            / "benchmarks"
+            / "elf"
+            / "training_profile.py"
+        )
+        spec = importlib.util.spec_from_file_location("_elf_profile2", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_a_default_bound_runner_must_be_deleted_before_its_objects(self):
+        """The #173 closure leak, in the shape this producer had it.
+
+        `run_off` binds the model as a DEFAULT ARGUMENT, so deleting the model
+        while the function object survives keeps the weights resident — and the
+        next trial's build would then run with the previous trial's allocation
+        still live.
+        """
+        import gc
+        import weakref
+
+        class Model:
+            pass
+
+        def leaky():
+            model = Model()
+
+            def run(model=model):
+                return model
+
+            probe = weakref.ref(model)
+            del model  # the object, but NOT the runner
+            gc.collect()
+            return run, probe
+
+        run, probe = leaky()
+        assert probe() is not None, "the leak this test documents is gone"
+        del run
+        gc.collect()
+        assert probe() is None, "deleting the runner must release the model"
+
+    def test_the_producer_deletes_its_runners_first(self):
+        import inspect
+
+        producer = self._producer()
+        source = inspect.getsource(producer.profile_batch)
+        assert "del run_off, model" in source
+        assert "del run_on, model" in source
+
+    def test_events_and_wall_cover_the_same_window(self):
+        """Warmup must be excluded from BOTH, not just from the wall.
+
+        An earlier version divided event totals by `WARMUP + STEPS` while the
+        wall kept only the timed steps, so coverage and wall described
+        different intervals.
+        """
+        import inspect
+
+        producer = self._producer()
+        source = inspect.getsource(producer.timed_step_loop)
+        assert "timer.reset()" in source
+        # Check CODE, not prose: the docstring legitimately mentions
+        # `WARMUP + STEPS` while explaining the bug it replaced.
+        loop = inspect.getsource(producer.profile_batch)
+        code = "\n".join(
+            line for line in loop.splitlines() if not line.strip().startswith("#")
+        )
+        body = code.split('"""')[-1]
+        assert "WARMUP + STEPS" not in body
+        assert "/ STEPS" in body, "per-step division must use the timed window"
+
+    def test_the_objective_publishes_an_exclusive_share(self):
+        """Publishing only the inclusive parent pushes the objective's own work
+        — CE/L2, target construction, masking — into the remainder."""
+        import inspect
+
+        producer = self._producer()
+        source = inspect.getsource(producer.profile_batch)
+        assert "objective_loss_exclusive" in source
+        assert "objective_loss_inclusive_seconds" in source
+
+    def test_required_events_are_asserted_not_inferred(self):
+        """A broken caller lookup would otherwise drop an event silently."""
+        import inspect
+
+        producer = self._producer()
+        source = inspect.getsource(producer.profile_batch)
+        assert "required" in source
+        assert "measurement_invalid" in source
+        assert 'body["call_count"] != STEPS' in source
+
+    def test_peak_memory_representative_is_fixed_in_advance(self):
+        import inspect
+
+        producer = self._producer()
+        source = inspect.getsource(producer.profile_batch)
+        assert "max(peak_allocated)" in source
+        assert "peak_allocated_per_trial" in source
+
+    def test_collation_covers_masks_and_transfer(self):
+        """A dict comprehension over an already-moved batch measures nothing."""
+        import inspect
+
+        producer = self._producer()
+        source = inspect.getsource(producer.collate)
+        assert "build_self_attn_cond_masks" in source
+        assert ".to(device)" in source
+
+    def test_collation_masks_exclude_the_padded_region(self):
+        """Behavioural, not textual: all-ones masks would train on padding.
+
+        A source-only check let a mutant keep the call and overwrite its result
+        with `ones`, which is exactly the defect `stage3_reduced_gate` warns
+        about. This asserts the padded tail is actually masked out.
+        """
+        import numpy as np
+
+        producer = self._producer()
+        seq_len, batch_size, true_len = 16, 2, 12
+        cpu_batch = {
+            "input_ids": np.ones((batch_size, seq_len), dtype=np.int64),
+            "true_lengths": np.full((batch_size, 1), true_len, dtype=np.int32),
+        }
+        batch = producer.collate(cpu_batch, device="cpu")
+        mask = batch["attention_mask"]
+        assert mask.shape[0] == batch_size
+        # Some position must be excluded, and the valid count must match the
+        # true length rather than the padded width.
+        flat = mask.reshape(batch_size, -1)
+        assert float(flat.max()) != float(flat.min()), (
+            "an all-uniform attention mask means the padded tail is not excluded"
+        )

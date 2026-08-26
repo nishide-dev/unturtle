@@ -51,6 +51,8 @@ import pathlib
 import statistics
 import subprocess
 import sys
+import weakref
+from contextlib import contextmanager
 from typing import Any
 
 from unturtle.eval.operation_timer import OperationTimer, caller_scope
@@ -79,6 +81,7 @@ CALL_SITE_EVENTS = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float32"])
     parser.add_argument("--seq-len", type=int, default=256)
     parser.add_argument(
         "--batch-sizes",
@@ -177,7 +180,7 @@ def build(args: argparse.Namespace, batch_size: int):
         bottleneck_dim=64,
         num_self_cond_cfg_tokens=config.num_self_cond_cfg_tokens,
         vocab_size=config.vocab_size,
-    ).to(args.device)
+    ).to(device=args.device, dtype=getattr(torch, args.dtype))
 
     class EncoderShim(torch.nn.Module):
         """Stands in for the frozen T5 encoder at smoke scale.
@@ -195,30 +198,48 @@ def build(args: argparse.Namespace, batch_size: int):
                 device=input_ids.device,
             )
 
-    # Masks are derived with the ORACLE's collation semantics rather than set
-    # to all-ones: `stage3_reduced_gate.make_batch` records that all-ones masks
-    # would train on padding. Rows get a realistic sub-full true length so the
-    # padded region is excluded, and `cond_seq_mask` is the uncond-OWT case.
+    # CPU rows only: mask construction and the H2D copy belong to the timed
+    # `data_collation` event, so `build()` must not pre-move anything.
     import numpy as np
-    from unturtle_elf._reference.encoder_utils import build_self_attn_cond_masks
 
-    true_lengths = np.full((batch_size, 1), int(seq_len * 0.85), dtype=np.int32)
-    positions = np.arange(seq_len)[None, :]
-    is_cond = positions < np.zeros((batch_size, 1), dtype=np.int32)
-    is_valid = positions < true_lengths
-    encoder_attn, attn, cond = build_self_attn_cond_masks(is_cond, is_valid, xp=np)
-    batch = {
-        "input_ids": torch.randint(
-            1, config.vocab_size, (batch_size, seq_len), device=args.device
-        ),
-        "attention_mask": torch.from_numpy(attn).to(args.device),
-        "encoder_attention_mask": torch.from_numpy(encoder_attn).to(args.device),
-        "cond_seq_mask": torch.from_numpy(cond).to(args.device),
+    rows = np.random.default_rng(7).integers(
+        1, config.vocab_size, size=(batch_size, seq_len), dtype=np.int64
+    )
+    cpu_batch = {
+        "input_ids": rows,
+        "true_lengths": np.full((batch_size, 1), int(seq_len * 0.85), dtype=np.int32),
     }
     from unturtle_elf.training import build_muon_optimizer
 
     optimizer = build_muon_optimizer(model, lr=1e-4)
-    return model, EncoderShim().to(args.device), optimizer, batch, config
+    return model, EncoderShim().to(args.device), optimizer, cpu_batch, config
+
+
+def collate(cpu_batch: dict[str, Any], *, device: str) -> dict[str, Any]:
+    """Oracle mask construction and host-to-device transfer.
+
+    Runs every step inside the `data_collation` scope so padding, mask
+    derivation and the H2D copy are all charged to it. Masks follow
+    `stage3_reduced_gate.make_batch`: derived from true lengths, never all-ones,
+    which would train on padding.
+    """
+    import numpy as np
+    import torch
+    from unturtle_elf._reference.encoder_utils import build_self_attn_cond_masks
+
+    ids = cpu_batch["input_ids"]
+    lengths = cpu_batch["true_lengths"]
+    batch_size, seq_len = ids.shape
+    positions = np.arange(seq_len)[None, :]
+    is_cond = positions < np.zeros((batch_size, 1), dtype=np.int32)
+    is_valid = positions < lengths
+    encoder_attn, attn, cond = build_self_attn_cond_masks(is_cond, is_valid, xp=np)
+    return {
+        "input_ids": torch.from_numpy(ids).long().to(device),
+        "attention_mask": torch.from_numpy(attn).to(device),
+        "encoder_attention_mask": torch.from_numpy(encoder_attn).to(device),
+        "cond_seq_mask": torch.from_numpy(cond).to(device),
+    }
 
 
 def instrument_encoder(encoder, timer: OperationTimer):
@@ -298,164 +319,225 @@ def main() -> None:
 
 
 def profile_batch(args: argparse.Namespace, batch_size: int) -> dict[str, Any]:
-    """One (batch) cell: instrumentation-off trials, then an attributed pass."""
+    """One (batch) cell: instrumentation-off trials, then an attributed pass.
+
+    Both passes measure the SAME window. Warmup is run, its time recorded
+    separately, the timer reset, and only the timed steps accumulate — an
+    earlier version divided event totals by `WARMUP + STEPS` while the wall
+    kept only `STEPS`, so coverage and wall described different intervals.
+    """
     import torch
-    from unturtle_elf.training import elf_training_loss
 
-    def one_step(model, encoder, optimizer, batch, config, timer=None):
-        generator = torch.Generator(device="cpu").manual_seed(0)
-        scope = timer.measure if timer is not None else None
-        if scope is not None:
-            with scope("data_collation"):
-                prepared = {key: value for key, value in batch.items()}
-        else:
-            prepared = {key: value for key, value in batch.items()}
-        if scope is not None:
-            # `objective_loss` CONTAINS the encoder and the three model
-            # forwards, so it is a parent event and must not be
-            # coverage_eligible alongside them — that is the nested
-            # double-count the harness refuses.
-            with scope("objective_loss"):
-                loss, _metrics, _aux = elf_training_loss(
-                    model,
-                    encoder,
-                    prepared,
-                    config,
-                    dropout_generator=generator,
-                )
-        else:
-            loss, _metrics, _aux = elf_training_loss(
-                model,
-                encoder,
-                prepared,
-                config,
-                dropout_generator=generator,
-            )
-        if scope is not None:
-            with scope("backward"):
-                loss.backward()
-            with scope("optimizer_step"):
-                optimizer.step()
-                optimizer.zero_grad(set_to_none=True)
-        else:
-            loss.backward()
-            optimizer.step()
-            optimizer.zero_grad(set_to_none=True)
-        return loss
-
-    # --- instrumentation-OFF trials: the verdict ---
-    off_trials: list[float] = []
-    peak_allocated = None
-    peak_reserved = None
-    for _ in range(TRIALS):
-        model, encoder, optimizer, batch, config = build(args, batch_size)
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-            torch.cuda.reset_peak_memory_stats()
-
-        # Bound as default arguments, not captured: ruff's B023 flags the
-        # closure form, and a late-bound lambda inside a trial loop would time
-        # whichever objects the last iteration happened to leave behind.
-        def run_off(
-            model=model,
-            encoder=encoder,
-            optimizer=optimizer,
-            batch=batch,
-            config=config,
-        ):
-            return one_step(model, encoder, optimizer, batch, config)
-
-        seconds = timed_step_loop(run_off, device=args.device)
-        off_trials.append(statistics.median(seconds))
-        if torch.cuda.is_available():
-            peak_allocated = torch.cuda.max_memory_allocated()
-            peak_reserved = torch.cuda.max_memory_reserved()
-        del model, encoder, optimizer, batch, config
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-    # --- instrumentation-ON trials: attribution only ---
-    on_trials: list[float] = []
-    operations: dict[str, dict[str, Any]] = {}
-    for _ in range(TRIALS):
-        model, encoder, optimizer, batch, config = build(args, batch_size)
-        timer = OperationTimer(device=args.device)
-        original = instrument(model, timer)
-        encoder_original = instrument_encoder(encoder, timer)
-        try:
-
-            def run_on(
-                model=model,
-                encoder=encoder,
-                optimizer=optimizer,
-                batch=batch,
-                config=config,
-                timer=timer,
-            ):
-                return one_step(model, encoder, optimizer, batch, config, timer=timer)
-
-            seconds = timed_step_loop(run_on, device=args.device)
-        finally:
-            model.__class__.__call__ = original
-            encoder.__class__.forward = encoder_original
-        on_trials.append(statistics.median(seconds))
-        for name, body in timer.result().items():
-            slot = operations.setdefault(
-                name, {"inclusive_seconds": [], "call_count": []}
-            )
-            slot["inclusive_seconds"].append(body["inclusive_seconds"])
-            slot["call_count"].append(body["call_count"])
-        del model, encoder, optimizer, batch, config, timer
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-    # Per-step medians across trials. Every event is a sibling of the others —
-    # `trained_forward` does not contain the auxiliary forwards, and backward
-    # and optimizer_step are disjoint — so all are coverage_eligible.
-    total_steps = WARMUP + STEPS
-    # `objective_loss` is the PARENT of the encoder and the three forwards, so
-    # exactly one level of that path may be coverage_eligible. The children are
-    # eligible because the question Stage 0 asks is about them individually;
-    # the parent is retained for diagnosis. `backward`, `optimizer_step` and
-    # `data_collation` are siblings and eligible.
-    children = {
+    required = {
+        "data_collation",
         "t5_encoding",
         "sc_shared_uncond_forward",
         "sc_conditional_forward",
         "trained_forward",
+        "objective_loss",
+        "backward",
+        "optimizer_step",
     }
+
+    off_trials: list[float] = []
+    warmup_trials: list[float] = []
+    peak_allocated: list[int] = []
+    peak_reserved: list[int] = []
+    released: list[bool] = []
+
+    for _ in range(TRIALS):
+        model, encoder, optimizer, cpu_batch, config = build(args, batch_size)
+        model_probe = weakref.ref(model)
+        encoder_probe = weakref.ref(encoder)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.reset_peak_memory_stats()
+
+        def run_off(
+            model=model,
+            encoder=encoder,
+            optimizer=optimizer,
+            cpu_batch=cpu_batch,
+            config=config,
+        ):
+            return one_step(model, encoder, optimizer, cpu_batch, config, args)
+
+        warmup_seconds, timed = timed_step_loop(run_off, device=args.device)
+        off_trials.append(sum(timed) / len(timed))
+        warmup_trials.append(warmup_seconds)
+        if torch.cuda.is_available():
+            peak_allocated.append(torch.cuda.max_memory_allocated())
+            peak_reserved.append(torch.cuda.max_memory_reserved())
+        # `run_off` binds the model and encoder as DEFAULT ARGUMENTS, so it must
+        # be deleted BEFORE them or the bindings keep the previous trial's
+        # weights resident while the next `build()` runs (#173's closure leak).
+        del run_off, model, encoder, optimizer, cpu_batch, config
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        released.append(model_probe() is None and encoder_probe() is None)
+
+    on_trials: list[float] = []
+    per_trial_ops: list[dict[str, dict[str, Any]]] = []
+
+    for _ in range(TRIALS):
+        model, encoder, optimizer, cpu_batch, config = build(args, batch_size)
+        model_probe = weakref.ref(model)
+        encoder_probe = weakref.ref(encoder)
+        timer = OperationTimer(device=args.device)
+        original = instrument(model, timer)
+        encoder_original = instrument_encoder(encoder, timer)
+
+        def run_on(
+            model=model,
+            encoder=encoder,
+            optimizer=optimizer,
+            cpu_batch=cpu_batch,
+            config=config,
+            timer=timer,
+        ):
+            return one_step(
+                model, encoder, optimizer, cpu_batch, config, args, timer=timer
+            )
+
+        try:
+            warmup_seconds, timed = timed_step_loop(
+                run_on, device=args.device, timer=timer
+            )
+        finally:
+            model.__class__.__call__ = original
+            encoder.__class__.forward = encoder_original
+        on_trials.append(sum(timed) / len(timed))
+        per_trial_ops.append(timer.result())
+        del run_on, model, encoder, optimizer, cpu_batch, config, timer
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        released.append(model_probe() is None and encoder_probe() is None)
+
+    if not all(released):
+        return {
+            "family": "elf",
+            "cell": "training_step",
+            "batch_size": batch_size,
+            "status": "measurement_invalid",
+            "reason": (
+                "a trial's model or encoder outlived its measurement call, so a "
+                "later trial may carry an earlier trial's allocation: "
+                f"{released}"
+            ),
+        }
+
+    # Required events and their per-step call counts are ASSERTED, not inferred
+    # from whichever timer names happened to appear: a broken caller lookup
+    # would otherwise silently drop an event and still produce an artifact.
+    for index, ops in enumerate(per_trial_ops):
+        missing = sorted(required - set(ops))
+        if missing:
+            return {
+                "family": "elf",
+                "cell": "training_step",
+                "batch_size": batch_size,
+                "status": "measurement_invalid",
+                "reason": (
+                    f"instrumented trial {index} recorded no {missing}; call-site "
+                    "attribution is broken and the taxonomy is incomplete"
+                ),
+                "observed_events": sorted(ops),
+            }
+        for name, body in ops.items():
+            if body["call_count"] != STEPS:
+                return {
+                    "family": "elf",
+                    "cell": "training_step",
+                    "batch_size": batch_size,
+                    "status": "measurement_invalid",
+                    "reason": (
+                        f"trial {index} event {name!r} ran {body['call_count']} "
+                        f"times over {STEPS} timed steps; the taxonomy expects "
+                        "exactly one call per step"
+                    ),
+                }
+
+    def per_step(name: str) -> float:
+        return statistics.median(
+            ops[name]["inclusive_seconds"] / STEPS for ops in per_trial_ops
+        )
+
+    # `objective_loss` is measured INCLUSIVE of the encoder and the three
+    # forwards, so its own share is the difference. Publishing only the
+    # inclusive parent would push the objective's real work — CE/L2, target
+    # construction, masking, normalization — into the unattributed remainder.
+    contained = (
+        "t5_encoding",
+        "sc_shared_uncond_forward",
+        "sc_conditional_forward",
+        "trained_forward",
+    )
+    objective_exclusive = statistics.median(
+        (
+            ops["objective_loss"]["inclusive_seconds"]
+            - sum(ops[name]["inclusive_seconds"] for name in contained)
+        )
+        / STEPS
+        for ops in per_trial_ops
+    )
+
+    # Every published event is a mutually exclusive sibling: the four contained
+    # operations, the objective's own exclusive remainder, and the three outside
+    # it. No parent is published as eligible, so coverage cannot double count.
     events = [
         OperationEvent(
             name=name,
-            inclusive_seconds=statistics.median(body["inclusive_seconds"])
-            / total_steps,
-            call_count=int(statistics.median(body["call_count"]) // total_steps),
-            parent="objective_loss" if name in children else None,
-            coverage_eligible=name != "objective_loss",
+            inclusive_seconds=per_step(name),
+            call_count=STEPS // STEPS,
+            parent=None,
+            coverage_eligible=True,
         )
-        for name, body in sorted(operations.items())
+        for name in ("data_collation", "backward", "optimizer_step", *contained)
     ]
+    events.append(
+        OperationEvent(
+            name="objective_loss_exclusive",
+            inclusive_seconds=objective_exclusive,
+            call_count=1,
+            parent=None,
+            coverage_eligible=True,
+        )
+    )
+
     cell = ProfileCell(
         family="elf",
         cell="training_step",
         batch_size=batch_size,
         sequence_length=args.seq_len,
-        dtype="float32",
+        dtype=args.dtype,
         wall_off_trials=off_trials,
         wall_on_trials=on_trials,
         events=events,
-        peak_allocated_bytes=peak_allocated,
-        peak_reserved_bytes=peak_reserved,
+        # max, fixed in advance: a capacity question wants the worst trial, and
+        # choosing between max and median after seeing the numbers would be a
+        # post-hoc pick.
+        peak_allocated_bytes=max(peak_allocated) if peak_allocated else None,
+        peak_reserved_bytes=max(peak_reserved) if peak_reserved else None,
+        warmup_seconds=statistics.median(warmup_trials),
         hardware=(
             torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"
         ),
         extra={
             "steps_per_trial": STEPS,
-            "warmup": WARMUP,
+            "warmup_steps": WARMUP,
+            "trials": TRIALS,
             "self_cond_prob": 0.5,
             "num_self_cond_cfg_tokens": 4,
+            "peak_representative": "max over trials (fixed before measuring)",
+            "peak_allocated_per_trial": peak_allocated,
+            "peak_reserved_per_trial": peak_reserved,
+            "objective_loss_inclusive_seconds": per_step("objective_loss"),
+            "per_trial_call_counts": [
+                {name: body["call_count"] for name, body in sorted(ops.items())}
+                for ops in per_trial_ops
+            ],
             "non_quality_bearing": (
                 "step-shape profile only; reads no generation output and does "
                 "not reinterpret Stage-3 results"
@@ -465,25 +547,76 @@ def profile_batch(args: argparse.Namespace, batch_size: int) -> dict[str, Any]:
     return profile_cell(cell)
 
 
-def timed_step_loop(step, *, device: str) -> list[float]:
-    """Sync-bracketed steady-state timings with warmup excluded."""
+def one_step(model, encoder, optimizer, cpu_batch, config, args, timer=None):
+    """One training step, with collation and transfer inside the timed scope.
+
+    `data_collation` covers the oracle's mask construction and the host-to-device
+    transfer, performed every step from CPU rows. An earlier version pre-moved
+    the batch in `build()` and timed a dictionary comprehension, which measured
+    nothing.
+    """
+    import torch
+    from unturtle_elf.training import elf_training_loss
+
+    scope = timer.measure if timer is not None else _null_scope
+
+    with scope("data_collation"):
+        batch = collate(cpu_batch, device=args.device)
+
+    with scope("objective_loss"):
+        loss, _metrics, _aux = elf_training_loss(
+            model,
+            encoder,
+            batch,
+            config,
+            dropout_generator=torch.Generator(device="cpu").manual_seed(0),
+        )
+    with scope("backward"):
+        loss.backward()
+    with scope("optimizer_step"):
+        optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
+    return loss
+
+
+@contextmanager
+def _null_scope(_name: str):
+    yield
+
+
+def timed_step_loop(step, *, device: str, timer=None) -> tuple[float, list[float]]:
+    """Run warmup, then the timed window. Returns (warmup_seconds, timings).
+
+    The timer is reset after warmup so events cover exactly the same steps the
+    returned wall times do.
+    """
     import time
 
     import torch
 
     cuda = device.startswith("cuda") and torch.cuda.is_available()
-    seconds: list[float] = []
-    for index in range(WARMUP + STEPS):
+
+    def sync():
         if cuda:
             torch.cuda.synchronize()
+
+    sync()
+    warmup_start = time.perf_counter()
+    for _ in range(WARMUP):
+        step()
+    sync()
+    warmup_seconds = time.perf_counter() - warmup_start
+    if timer is not None:
+        timer.reset()
+
+    seconds: list[float] = []
+    for _ in range(STEPS):
+        sync()
         start = time.perf_counter()
         step()
-        if cuda:
-            torch.cuda.synchronize()
-        elapsed = time.perf_counter() - start
-        if index >= WARMUP:
-            seconds.append(elapsed)
-    return seconds
+        sync()
+        seconds.append(time.perf_counter() - start)
+    return warmup_seconds, seconds
 
 
 if __name__ == "__main__":
