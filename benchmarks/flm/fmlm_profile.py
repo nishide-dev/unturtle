@@ -60,6 +60,7 @@ import gc
 import hashlib
 import json
 import math
+import os
 import pathlib
 import statistics
 import subprocess
@@ -104,9 +105,11 @@ EVENT_TAXONOMY = {
         "run `lut(x.cpu().numpy())` — a device-to-host copy that SYNCHRONIZES "
         "the stream, a scipy CubicSpline evaluation on the host, then a copy "
         "back. Three such round trips per step (_tau_to_t twice, _t_to_tau "
-        "once). Independently reproduced: 32 iterations of a busy stream cost "
-        "~379 ms more with the round trip than without, against ~515 ms "
-        "attributed to this event at steps=32 batch=1."
+        "once). Independently reproduced as a repeated device-host-device "
+        "synchronization plus host spline cost of the same order as this "
+        "event's attributed time. No run-specific figure is quoted here: a "
+        "taxonomy description must not carry measurements from a run other "
+        "than the one that produced the artifact around it."
     ),
     "flow_map_forward": (
         "begins before model(...); includes the double-time model call, its "
@@ -154,6 +157,76 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--out", required=True)
     return parser.parse_args()
+
+
+def device_occupancy(device: str) -> dict[str, Any]:
+    """Free/total memory and the CUDA processes resident on THIS device.
+
+    Uses `nvidia-smi` compute-app data rather than process-name matching:
+    `pgrep` cannot tell whether a process holds GPU memory, nor which device it
+    holds it on. Compute apps are reported for every device, so rows are scoped
+    by the target device's UUID.
+    """
+    import torch
+
+    index = int(device.split(":")[1])
+    free_bytes, total_bytes = torch.cuda.mem_get_info(index)
+
+    def query(fields: str, extra: str = "") -> list[str]:
+        command = ["nvidia-smi", f"--query-{fields}", "--format=csv,noheader,nounits"]
+        if extra:
+            command.append(extra)
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        return [line for line in result.stdout.strip().splitlines() if line.strip()]
+
+    uuid = None
+    for row in query("gpu=index,uuid"):
+        parts = [field.strip() for field in row.split(",")]
+        if parts and parts[0] == str(index):
+            uuid = parts[1]
+            break
+    if uuid is None:
+        raise SystemExit(f"cannot resolve the UUID of {device} from nvidia-smi")
+
+    processes = []
+    for row in query("compute-apps=pid,used_memory,gpu_uuid"):
+        pid, used_mib, row_uuid = (field.strip() for field in row.split(","))
+        if row_uuid == uuid:
+            processes.append({"pid": int(pid), "used_mib": int(used_mib)})
+    return {
+        "device": device,
+        "uuid": uuid,
+        "free_bytes": free_bytes,
+        "total_bytes": total_bytes,
+        "free_fraction": free_bytes / total_bytes if total_bytes else 0.0,
+        "compute_processes": processes,
+        "foreign_process_count": len(
+            [entry for entry in processes if entry["pid"] != os.getpid()]
+        ),
+        "source": "nvidia-smi compute-apps scoped by gpu_uuid",
+    }
+
+
+def require_idle_device(device: str) -> dict[str, Any]:
+    """Refuse to measure on a device another CUDA process is using.
+
+    A typed `oom` is DATA in this protocol, so it has to be attributable to the
+    cell. The previous 32x32 OOM was recorded on a device where three foreign
+    processes held ~19.8 GiB of 47.37 GiB, leaving 1.77 GiB free — that says
+    nothing about whether the cell intrinsically exceeds the device.
+    """
+    occupancy = device_occupancy(device)
+    foreign = [
+        entry for entry in occupancy["compute_processes"] if entry["pid"] != os.getpid()
+    ]
+    if foreign:
+        raise SystemExit(
+            f"{device} is shared: {len(foreign)} unrelated CUDA process(es) "
+            f"hold GPU memory ({foreign}). Latency, peak memory and any typed "
+            "OOM would be attributable to another workload, not to this cell. "
+            "Re-run on an exclusive or verified-idle device."
+        )
+    return occupancy
 
 
 def require_supported_device(device: str) -> None:
@@ -608,10 +681,12 @@ def classify_failure(error: BaseException) -> str | None:
     if isinstance(error, torch.cuda.OutOfMemoryError):
         return "cuda_out_of_memory"
     text = str(error).lower()
-    if isinstance(error, RuntimeError) and "out of memory" in text:
-        cuda_specific = ("cuda out of memory", "cuda error", "tried to allocate")
-        if any(phrase in text for phrase in cuda_specific):
-            return "cuda_out_of_memory"
+    # "tried to allocate" is NOT CUDA-specific — a host allocator says it too,
+    # and `time_schedule` deliberately enters NumPy/SciPy host code every step.
+    # Require the word "cuda" itself; `torch.cuda.OutOfMemoryError` above stays
+    # the primary typed path.
+    if isinstance(error, RuntimeError) and "out of memory" in text and "cuda" in text:
+        return "cuda_out_of_memory"
     return None
 
 
@@ -637,6 +712,9 @@ def profile_cell(model, steps: int, batch: int) -> dict[str, Any]:
     }
     stage = "preflight"
     try:
+        # Re-checked PER CELL, not once at startup: a foreign process can arrive
+        # mid-run, and every later cell would then be silently contaminated.
+        cell["device_occupancy_before"] = require_idle_device(DEVICE_UNDER_TEST[0])
         interference = non_interference_preflight(model, steps, batch)
         cell["non_interference"] = interference
         if interference["status"] != "ok":
@@ -868,6 +946,15 @@ def provenance(args: argparse.Namespace) -> dict[str, Any]:
         "worktree_dirty_paths": [line[3:] for line in dirty.splitlines()],
         "command": " ".join(sys.argv),
         "environment": environment(),
+        # Recorded so a reader can see the device was idle when the run began;
+        # each cell additionally carries its own `device_occupancy_before`.
+        "device_occupancy_at_start": device_occupancy(args.device),
+        "exclusivity_contract": (
+            "the run is refused if any unrelated CUDA process holds memory on "
+            "the target device, checked before every cell via nvidia-smi "
+            "compute-app data scoped by gpu_uuid. A typed `oom` is therefore "
+            "attributable to the cell rather than to a co-resident workload"
+        ),
         "execution_scope": {
             "request_concurrency": 1,
             "execution_mode": "single_threaded_sequential",
@@ -914,9 +1001,15 @@ def provenance(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+#: Set once by `main` so `profile_cell` can re-check occupancy without taking
+#: the device as a parameter on every internal call.
+DEVICE_UNDER_TEST: list[str] = ["cuda:0"]
+
+
 def main() -> None:
     args = parse_args()
     require_supported_device(args.device)
+    DEVICE_UNDER_TEST[0] = args.device
     out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 

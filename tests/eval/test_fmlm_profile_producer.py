@@ -1108,6 +1108,112 @@ class TestPerTrialPeakMemory:
         assert "peak" not in _code_only(inspect.getsource(producer._run_on_trial))
 
 
+class TestDeviceExclusivity:
+    """A typed `oom` is DATA in this protocol, so it must be attributable to the
+    cell. The previous 32x32 OOM was recorded while three foreign processes held
+    ~19.8 GiB of 47.37 GiB, leaving 1.77 GiB free — that says nothing about
+    whether the cell intrinsically exceeds the device."""
+
+    def test_a_shared_device_is_refused(self):
+        producer = _producer()
+        import os
+
+        foreign = {
+            "device": "cuda:0",
+            "compute_processes": [
+                {"pid": os.getpid(), "used_mib": 100},
+                {"pid": os.getpid() + 99999, "used_mib": 14096},
+            ],
+        }
+        producer.device_occupancy = lambda _device: foreign
+        with pytest.raises(SystemExit, match="is shared"):
+            producer.require_idle_device("cuda:0")
+
+    def test_an_idle_device_passes_and_returns_the_occupancy(self):
+        """The producer's OWN process holds memory on the device it measures, so
+        counting self as foreign would refuse every legitimate run."""
+        producer = _producer()
+        import os
+
+        idle = {
+            "device": "cuda:0",
+            "compute_processes": [{"pid": os.getpid(), "used_mib": 4096}],
+        }
+        producer.device_occupancy = lambda _device: idle
+        assert producer.require_idle_device("cuda:0") is idle
+
+    def test_the_producers_own_process_is_not_counted_as_foreign(self):
+        producer = _producer()
+        import os
+
+        # Self only, with a large allocation: must still pass.
+        producer.device_occupancy = lambda _device: {
+            "device": "cuda:0",
+            "compute_processes": [{"pid": os.getpid(), "used_mib": 40000}],
+        }
+        producer.require_idle_device("cuda:0")
+        # Empty is also fine (measured before any allocation).
+        producer.device_occupancy = lambda _device: {
+            "device": "cuda:0",
+            "compute_processes": [],
+        }
+        producer.require_idle_device("cuda:0")
+
+    def test_the_foreign_count_excludes_self(self):
+        producer = _producer()
+        occupancy = producer.device_occupancy("cuda:0")
+        own = [
+            entry
+            for entry in occupancy["compute_processes"]
+            if entry["pid"] == __import__("os").getpid()
+        ]
+        assert occupancy["foreign_process_count"] == len(
+            occupancy["compute_processes"]
+        ) - len(own)
+
+    def test_occupancy_uses_nvml_process_data_not_process_names(self):
+        """`pgrep` cannot tell whether a process holds GPU memory, nor on which
+        device."""
+        producer = _producer()
+        source = inspect.getsource(producer.device_occupancy)
+        assert "compute-apps" in source
+        assert "gpu_uuid" in source
+        # The docstring explains why `pgrep` is unsuitable, so the check has to
+        # look at executable code rather than prose.
+        code = _code_only(source)
+        assert "pgrep" not in code
+        assert "process_name" not in code
+        assert "mem_get_info" in code
+
+    def test_occupancy_is_scoped_to_the_target_device(self):
+        """`nvidia-smi` lists compute apps for EVERY device, so unscoped rows
+        would fail a run because another GPU is busy."""
+        producer = _producer()
+        source = inspect.getsource(producer.device_occupancy)
+        assert "row_uuid == uuid" in source
+
+    def test_occupancy_records_free_and_total_memory(self):
+        producer = _producer()
+        occupancy = producer.device_occupancy("cuda:0")
+        assert occupancy["total_bytes"] > 0
+        assert 0 <= occupancy["free_bytes"] <= occupancy["total_bytes"]
+        assert occupancy["source"].startswith("nvidia-smi")
+
+    def test_occupancy_is_rechecked_before_every_cell(self):
+        """A foreign process can arrive mid-run; a startup-only check would
+        leave every later cell silently contaminated."""
+        producer = _producer()
+        source = inspect.getsource(producer.profile_cell)
+        assert 'cell["device_occupancy_before"] = require_idle_device(' in source
+
+    def test_the_artifact_records_the_exclusivity_contract(self):
+        producer = _producer()
+        source = inspect.getsource(producer.provenance)
+        assert '"device_occupancy_at_start"' in source
+        assert '"exclusivity_contract"' in source
+        assert "attributable to the cell" in source
+
+
 class TestOomClassification:
     def test_a_cuda_specific_message_classifies(self):
         producer = _producer()
@@ -1130,6 +1236,41 @@ class TestOomClassification:
             "std::bad_alloc: out of memory",
         ):
             assert producer.classify_failure(RuntimeError(message)) is None, message
+
+    def test_a_cpu_allocator_message_is_not_a_cuda_oom(self):
+        """ "tried to allocate" is NOT CUDA-specific: the host allocator uses the
+        same phrasing, and this cell deliberately enters NumPy/SciPy host code
+        every step."""
+        producer = _producer()
+        for message in (
+            "CPU out of memory. Tried to allocate 6.14 GiB",
+            "DefaultCPUAllocator: not enough memory: you tried to allocate "
+            "6144000000 bytes. Out of memory",
+            "out of memory. Tried to allocate 2.00 GiB on host",
+        ):
+            assert producer.classify_failure(RuntimeError(message)) is None, message
+
+    def test_the_classifier_requires_the_word_cuda(self):
+        producer = _producer()
+        source = inspect.getsource(producer.classify_failure)
+        assert '"cuda" in text' in source
+        # The over-broad phrase list is gone from executable code (the docstring
+        # still names it as the rejected approach).
+        code = _code_only(source)
+        assert "cuda_specific" not in code
+        # And behaviorally: "cuda" present classifies, absent does not.
+        assert (
+            producer.classify_failure(
+                RuntimeError("CUDA out of memory. Tried to allocate 1 GiB")
+            )
+            == "cuda_out_of_memory"
+        )
+        assert (
+            producer.classify_failure(
+                RuntimeError("out of memory. Tried to allocate 1 GiB")
+            )
+            is None
+        )
 
     def test_the_torch_oom_type_always_classifies(self):
         producer = _producer()
@@ -1232,6 +1373,28 @@ class TestArtifactSemantics:
         assert "SYNCHRONIZES" in text
         assert "CubicSpline" in text
         assert "Three such round trips per step" in text
+
+    def test_no_taxonomy_description_quotes_a_measurement(self):
+        """A description must not carry numbers from a run other than the one
+        that produced the artifact around it. The `time_schedule` entry did
+        exactly that: it quoted "~515 ms attributed" from the invalidated
+        unpaired run, while the paired run attributes ~354 ms."""
+        import re
+
+        producer = _producer()
+        # Any millisecond/second/percent figure is a measurement, and
+        # measurements belong in the cells, not the taxonomy.
+        pattern = re.compile(r"\d+(?:\.\d+)?\s*(?:ms|milliseconds|s\b|%)")
+        for name, description in producer.EVENT_TAXONOMY.items():
+            found = pattern.findall(description)
+            assert not found, f"{name} quotes a measurement: {found}"
+
+    def test_the_time_schedule_description_stays_qualitative(self):
+        """The mechanism must still be named — it is what makes the number
+        believable — without pinning a figure to it."""
+        text = _producer().EVENT_TAXONOMY["time_schedule"]
+        assert "same order as this" in text
+        assert "run-specific figure" in text
 
     def test_grid_init_excludes_manual_seed(self):
         """The description must match the real boundary, not absorb adjacent
