@@ -229,14 +229,41 @@ def require_idle_device(device: str) -> dict[str, Any]:
     return occupancy
 
 
-def require_supported_device(device: str) -> None:
-    """`cuda:0` only — CUDA events, peak stats and the GPU name all target the
-    default device, so anything else is mis-recorded."""
-    if device == "cuda:0":
-        return
-    raise SystemExit(
-        f"--device {device!r} is not supported: this producer is cuda:0 only."
-    )
+def require_supported_device(device: str) -> str:
+    """Any single CUDA device, pinned as the CURRENT device.
+
+    Was `cuda:0` only, because `reset_peak_memory_stats()` /
+    `max_memory_allocated()` default to the CURRENT device and
+    `get_device_name(0)` was hardcoded — so a different device would have been
+    mis-recorded against device 0. Rather than keep that restriction, the device
+    is now made current for the process and the name is read from it. This
+    matters in practice: the exclusivity gate needs an IDLE device, and on a
+    shared cluster the one free GPU is not reliably index 0. All devices here are
+    the same model, so the measurement stays comparable.
+    """
+    import torch
+
+    if not device.startswith("cuda:"):
+        raise SystemExit(
+            f"--device {device!r} is not supported: a single CUDA device is "
+            "required (CUDA events, peak stats and the exclusivity gate all "
+            "refer to one device)"
+        )
+    try:
+        index = int(device.split(":")[1])
+    except ValueError:
+        raise SystemExit(
+            f"--device {device!r} is not supported: expected cuda:<index>"
+        ) from None
+    if index < 0 or index >= torch.cuda.device_count():
+        raise SystemExit(
+            f"--device {device!r} does not exist: this host has "
+            f"{torch.cuda.device_count()} CUDA device(s)"
+        )
+    # Every later `torch.cuda.*` call without an explicit device now refers to
+    # THIS device.
+    torch.cuda.set_device(index)
+    return device
 
 
 class Request:
@@ -915,7 +942,11 @@ def environment() -> dict[str, Any]:
     return {
         "torch": torch.__version__,
         "cuda": torch.version.cuda,
-        "gpu_name": torch.cuda.get_device_name(0)
+        # The device actually under test, not a hardcoded index 0.
+        "gpu_name": torch.cuda.get_device_name(torch.cuda.current_device())
+        if torch.cuda.is_available()
+        else None,
+        "device_index": torch.cuda.current_device()
         if torch.cuda.is_available()
         else None,
         "transformers": version("transformers"),

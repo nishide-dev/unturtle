@@ -105,14 +105,37 @@ class TestFrozenConfiguration:
         assert producer.WARMUP == 2
         assert producer.SHARE_TOLERANCE == 0.02
 
-    def test_the_device_gate_refuses_anything_but_cuda_zero(self):
-        """`environment()` hardcodes `get_device_name(0)` and the peak stats are
-        global, so another device would be mis-recorded against device 0."""
+    def test_the_device_gate_requires_a_single_cuda_device(self):
+        """Any single CUDA device is allowed, but it must be MADE CURRENT: the
+        peak-stat calls default to the current device, so measuring cuda:N while
+        device 0 is current would record device 0's numbers."""
+        import torch
+
         producer = _producer()
         producer.require_supported_device("cuda:0")
-        for device in ("cpu", "cuda:1", "cuda", "cuda:0 "):
-            with pytest.raises(SystemExit, match="cuda:0 only"):
+        assert torch.cuda.current_device() == 0
+        for device in ("cpu", "cuda", "cuda:x", ""):
+            with pytest.raises(SystemExit, match="not supported"):
                 producer.require_supported_device(device)
+
+    def test_a_nonexistent_device_index_is_refused(self):
+        producer = _producer()
+        with pytest.raises(SystemExit, match="does not exist"):
+            producer.require_supported_device("cuda:99")
+
+    def test_the_device_is_made_current_so_peak_stats_are_right(self):
+        producer = _producer()
+        source = inspect.getsource(producer.require_supported_device)
+        assert "torch.cuda.set_device(index)" in source
+
+    def test_the_gpu_name_comes_from_the_device_under_test(self):
+        """`get_device_name(0)` was hardcoded, so a run on another device would
+        have published device 0's name."""
+        producer = _producer()
+        source = inspect.getsource(producer.environment)
+        assert "get_device_name(torch.cuda.current_device())" in source
+        assert "get_device_name(0)" not in source
+        assert '"device_index"' in source
 
     def test_the_diagnostic_flags_stay_out_of_the_public_kwargs(self):
         """`request.kwargs` is the documented surface; a diagnostic flag there
