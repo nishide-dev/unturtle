@@ -59,6 +59,7 @@ import argparse
 import gc
 import hashlib
 import json
+import math
 import pathlib
 import statistics
 import subprocess
@@ -369,66 +370,131 @@ def random_call_preflight(model, steps: int, batch: int) -> dict[str, int]:
     return counts
 
 
-def timed_off(model, steps: int, batch: int) -> dict[str, Any]:
-    """The VERDICT pass: outer wall clock with no instrumentation at all."""
-    import time
-
-    import torch
-
-    request = Request(steps=steps, num_samples=batch)
-    for _ in range(WARMUP):
-        run_once(model, request)
+def _run_off_trial(model, request, torch, time) -> dict[str, Any]:
+    """One uninstrumented trial. Peak stats are reset PER TRIAL, before the
+    clock starts, so the artifact carries an array rather than one number
+    covering every trial."""
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
-
-    walls = []
-    for _ in range(TRIALS):
-        torch.cuda.synchronize()
-        start = time.perf_counter()
-        run_once(model, request)
-        torch.cuda.synchronize()
-        walls.append(time.perf_counter() - start)
+    begin = time.perf_counter()
+    run_once(model, request)
+    torch.cuda.synchronize()
     return {
-        "wall_seconds_median": statistics.median(walls),
-        "wall_seconds_trials": walls,
-        "peak_memory_bytes": torch.cuda.max_memory_allocated(),
+        "wall_seconds": time.perf_counter() - begin,
+        "peak_allocated_bytes": torch.cuda.max_memory_allocated(),
         "peak_reserved_bytes": torch.cuda.max_memory_reserved(),
     }
 
 
-def timed_on(model, steps: int, batch: int) -> dict[str, Any]:
-    """The ATTRIBUTION pass. Shares are computed against THIS pass's wall."""
+def _run_on_trial(model, request, torch, time) -> dict[str, Any]:
+    """One instrumented trial. The window-closing synchronize is INSIDE the
+    timed span, so the wall contains the queue drain."""
+    observer = CudaEventObserver(torch)
+    torch.cuda.synchronize()
+    begin = time.perf_counter()
+    run_once(model, request, observer)
+    torch.cuda.synchronize()
+    wall = time.perf_counter() - begin
+    return {
+        "wall_seconds": wall,
+        "event_seconds": observer.collect(),
+        "calls": dict(observer.calls),
+    }
+
+
+def warmup_arms(model, steps: int, batch: int) -> None:
+    """Warm BOTH arms before any timing, in its OWN failure stage.
+
+    Separate from the trials so an OOM here is not recorded as an
+    `off_trial`/`on_trial` failure with `timing_attempted: true` — no wall clock
+    has started yet.
+    """
+    import torch
+
+    request = Request(steps=steps, num_samples=batch)
+    for _ in range(WARMUP):
+        run_once(model, request)
+        run_once(model, request, CudaEventObserver(torch))
+    torch.cuda.synchronize()
+
+
+def paired_trials(model, steps: int, batch: int) -> list[dict[str, Any]]:
+    """PAIRED, INTERLEAVED trials with the order reversed each time.
+
+        trial 0: OFF -> ON
+        trial 1: ON  -> OFF
+        trial 2: OFF -> ON
+
+    Running every OFF trial and then every ON trial — which this producer did
+    first — loads thermal state, clock drift and allocator growth onto whichever
+    arm always runs second, in the same direction as the effect being measured.
+    Pairing inside a trial also makes the overhead a MEDIAN OF PER-TRIAL DELTAS
+    instead of a difference of medians, the error this cell already made twice.
+    """
     import time
 
     import torch
 
     request = Request(steps=steps, num_samples=batch)
-    for _ in range(WARMUP):
-        run_once(model, request, CudaEventObserver(torch))
-
-    trials = []
-    for _ in range(TRIALS):
-        observer = CudaEventObserver(torch)
-        torch.cuda.synchronize()
-        start = time.perf_counter()
-        run_once(model, request, observer)
-        # Generation is ASYNC: `run_once` returns while kernels are still in
-        # flight. Reading the wall here — before the queue drains — made the ON
-        # wall SHORTER than the CUDA-event total it is supposed to contain,
-        # producing negative instrumentation overhead in 3 of 5 cells and event
-        # shares summing over 100%. The single window-closing synchronize must
-        # happen INSIDE the timed span.
-        torch.cuda.synchronize()
-        wall = time.perf_counter() - start
-        seconds = observer.collect()
+    trials: list[dict[str, Any]] = []
+    for index in range(TRIALS):
+        order = ("off", "on") if index % 2 == 0 else ("on", "off")
+        measured: dict[str, dict[str, Any]] = {}
+        for arm in order:
+            if arm == "off":
+                measured["off"] = _run_off_trial(model, request, torch, time)
+            else:
+                measured["on"] = _run_on_trial(model, request, torch, time)
         trials.append(
             {
-                "wall_seconds": wall,
-                "event_seconds": seconds,
-                "calls": dict(observer.calls),
+                "trial": index,
+                "order": list(order),
+                "off_wall_seconds": measured["off"]["wall_seconds"],
+                "on_wall_seconds": measured["on"]["wall_seconds"],
+                # Both arms ran adjacently under the same conditions, so this
+                # delta is meaningful in a way a cross-trial difference is not.
+                "paired_overhead_seconds": (
+                    measured["on"]["wall_seconds"] - measured["off"]["wall_seconds"]
+                ),
+                "peak_allocated_bytes": measured["off"]["peak_allocated_bytes"],
+                "peak_reserved_bytes": measured["off"]["peak_reserved_bytes"],
+                "event_seconds": measured["on"]["event_seconds"],
+                "calls": measured["on"]["calls"],
             }
         )
-    return {"trials": trials}
+    return trials
+
+
+def overhead_estimate(trials: list[dict]) -> dict[str, Any]:
+    """Instrumentation overhead as the MEDIAN OF PER-TRIAL PAIRED DELTAS.
+
+    Each delta comes from an OFF and an ON run executed adjacently within one
+    trial, so the pair shares thermal state and allocator condition. A difference
+    of medians would pair an OFF trial with an unrelated ON trial — the same
+    error this cell already made twice, in the residual and in the shares.
+
+    A signed point estimate is still not publishable alone: with TRIALS=3 the OFF
+    walls spread by up to 16%, so a delta below that spread has a noise-determined
+    sign. `resolvable` reports whether the MAGNITUDE clears the spread, because a
+    large negative delta means the clock is wrong and must be flagged rather than
+    dismissed as a quiet non-result.
+    """
+    deltas = [trial["paired_overhead_seconds"] for trial in trials]
+    off_walls = [trial["off_wall_seconds"] for trial in trials]
+    median_delta = statistics.median(deltas) if deltas else 0.0
+    off_spread = (max(off_walls) - min(off_walls)) if off_walls else 0.0
+    return {
+        "paired_delta_trials": deltas,
+        "median_paired_delta": median_delta,
+        "off_trial_spread": off_spread,
+        "resolvable": abs(median_delta) > off_spread,
+        "basis": (
+            "median of per-trial (on_wall - off_wall), from OFF/ON pairs run "
+            "adjacently with the order reversed each trial, compared against the "
+            "OFF trial spread. `resolvable` is False when the magnitude is below "
+            "the spread, in which case the sign carries no information"
+        ),
+    }
 
 
 def gate_trial(steps: int, calls: dict[str, int]) -> list[str]:
@@ -442,6 +508,47 @@ def gate_trial(steps: int, calls: dict[str, int]) -> list[str]:
     for name in calls:
         if name not in expected:
             problems.append(f"{name}: not in the frozen taxonomy")
+    return problems
+
+
+def failure_record(
+    *,
+    stage: str,
+    reason_code: str | None,
+    timing_attempted: bool,
+    status: str | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    """The typed failure disposition, built in ONE place.
+
+    Every unmeasured field is null, never zero: a 0.0 latency or an empty event
+    list reads as "measured, nothing there". `status` defaults to
+    `measurement_invalid`; only a CLASSIFIED capacity failure is `oom`.
+    """
+    return {
+        "status": status
+        or ("oom" if reason_code == "cuda_out_of_memory" else "measurement_invalid"),
+        "failure_stage": stage,
+        "reason_code": reason_code,
+        "timing_attempted": timing_attempted,
+        "latency": None,
+        "events": None,
+        "peak_memory": None,
+        "attribution": None,
+        "trials": None,
+        **extra,
+    }
+
+
+def gate_trials(steps: int, trials: list[dict]) -> list[str]:
+    """Gate EVERY trial, not an aggregate: two trials can be individually wrong
+    while their totals look right."""
+    problems: list[str] = []
+    if not trials:
+        problems.append("no on-trials were recorded to gate")
+    for index, trial in enumerate(trials):
+        for problem in gate_trial(steps, trial["calls"]):
+            problems.append(f"on_trial[{index}]: {problem}")
     return problems
 
 
@@ -476,9 +583,9 @@ def assemble_events(steps: int, trials: list[dict]) -> list[dict[str, Any]]:
             # residual had one level up: the per-event medians can come from
             # different trials, so the shares summed OVER 100% in 3 of 5 cells.
             per_trial_shares = [
-                trial["event_seconds"].get(name, 0.0) / trial["wall_seconds"]
+                trial["event_seconds"].get(name, 0.0) / trial["on_wall_seconds"]
                 for trial in trials
-                if trial["wall_seconds"] > 0
+                if trial["on_wall_seconds"] > 0
             ]
             row["share_of_on_wall"] = (
                 statistics.median(per_trial_shares) if per_trial_shares else None
@@ -488,15 +595,23 @@ def assemble_events(steps: int, trials: list[dict]) -> list[dict[str, Any]]:
 
 
 def classify_failure(error: BaseException) -> str | None:
-    """OOM only. A shape or device error is a different defect and must not be
-    filed as a capacity limit (the #166 row-5 lesson)."""
+    """CUDA capacity only. A shape or device error is a different defect and
+    must not be filed as a capacity limit (the #166 row-5 lesson).
+
+    The message fallback requires CUDA-specific wording: `time_schedule` runs a
+    scipy spline on the HOST, so a plain "out of memory" RuntimeError here could
+    be a host or SciPy allocation failure, which is not this cell's capacity
+    story.
+    """
     import torch
 
     if isinstance(error, torch.cuda.OutOfMemoryError):
         return "cuda_out_of_memory"
     text = str(error).lower()
     if isinstance(error, RuntimeError) and "out of memory" in text:
-        return "cuda_out_of_memory"
+        cuda_specific = ("cuda out of memory", "cuda error", "tried to allocate")
+        if any(phrase in text for phrase in cuda_specific):
+            return "cuda_out_of_memory"
     return None
 
 
@@ -507,73 +622,6 @@ def cleanup() -> None:
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
-
-
-def failure_record(
-    *,
-    stage: str,
-    reason_code: str | None,
-    timing_attempted: bool,
-    status: str | None = None,
-    **extra: Any,
-) -> dict[str, Any]:
-    """The typed failure disposition, built in ONE place.
-
-    Every unmeasured field is null, never zero: a 0.0 latency or an empty event
-    list reads as "measured, nothing there". `status` defaults to
-    `measurement_invalid`; only a CLASSIFIED capacity failure is `oom`.
-    """
-    return {
-        "status": status
-        or ("oom" if reason_code == "cuda_out_of_memory" else "measurement_invalid"),
-        "failure_stage": stage,
-        "reason_code": reason_code,
-        "timing_attempted": timing_attempted,
-        "latency": None,
-        "events": None,
-        "peak_memory": None,
-        "attribution": None,
-        **extra,
-    }
-
-
-def overhead_estimate(off_walls: list[float], on_walls: list[float]) -> dict[str, Any]:
-    """The ON-OFF difference, reported against its own noise floor.
-
-    A signed point estimate is not publishable here: with TRIALS=3 the OFF
-    trials alone spread by up to 16%, and the measured difference lands inside
-    that, so its SIGN is an artifact of which trial happened to be the median.
-    Reporting `seconds` without `resolvable` invites reading noise as a real
-    instrumentation cost — or, worse, as instrumentation making the code faster.
-    """
-    off_median = statistics.median(off_walls)
-    on_median = statistics.median(on_walls)
-    difference = on_median - off_median
-    off_spread = (max(off_walls) - min(off_walls)) if off_walls else 0.0
-    return {
-        "seconds": difference,
-        "off_median_seconds": off_median,
-        "on_median_seconds": on_median,
-        "off_spread_seconds": off_spread,
-        "resolvable": abs(difference) > off_spread,
-        "basis": (
-            "on_wall_median - off_wall_median, compared against the OFF trial "
-            "spread; `resolvable` is False when the difference is smaller than "
-            "the spread, in which case the sign carries no information"
-        ),
-    }
-
-
-def gate_trials(steps: int, trials: list[dict]) -> list[str]:
-    """Gate EVERY trial, not an aggregate: two trials can be individually wrong
-    while their totals look right."""
-    problems: list[str] = []
-    if not trials:
-        problems.append("no on-trials were recorded to gate")
-    for index, trial in enumerate(trials):
-        for problem in gate_trial(steps, trial["calls"]):
-            problems.append(f"on_trial[{index}]: {problem}")
-    return problems
 
 
 def profile_cell(model, steps: int, batch: int) -> dict[str, Any]:
@@ -621,133 +669,152 @@ def profile_cell(model, steps: int, batch: int) -> dict[str, Any]:
                 timing_attempted=False,
             )
 
-        stage = "warmup"
+        stage = "off_warmup"
         cleanup()
-        stage = "off_trial"
-        off = timed_off(model, steps, batch)
-        stage = "on_trial"
-        on = timed_on(model, steps, batch)
+        stage = "warmup"
+        warmup_arms(model, steps, batch)
+        # Only past this point has a wall clock started.
+        stage = "paired_trials"
+        trials = paired_trials(model, steps, batch)
     except Exception as error:  # noqa: BLE001 - classified, then re-reported
         reason = classify_failure(error)
         cleanup()
         return cell | failure_record(
             stage=stage,
             reason_code=reason,
-            timing_attempted=stage in ("off_trial", "on_trial"),
+            # True ONLY once a trial's clock has started; a warmup OOM is not a
+            # timed failure.
+            timing_attempted=stage == "paired_trials",
             exception_class=type(error).__name__,
             exception_message=str(error)[:300],
         )
 
-    problems = gate_trials(steps, on["trials"])
+    problems = gate_trials(steps, trials)
     if problems:
         return cell | failure_record(
-            stage="on_trial",
+            stage="paired_trials",
             reason_code="per_trial_event_count_mismatch",
             timing_attempted=True,
             problems=problems,
         )
 
-    on_walls = [trial["wall_seconds"] for trial in on["trials"]]
-    events = assemble_events(steps, on["trials"])
-    on_median = statistics.median(on_walls)
+    off_walls = [trial["off_wall_seconds"] for trial in trials]
+    on_walls = [trial["on_wall_seconds"] for trial in trials]
+    events = assemble_events(steps, trials)
 
-    # Over-coverage gate on the SHARES, independent of the residual gate: the
-    # residual is computed from summed seconds, so it can look healthy while the
-    # per-event shares still exceed the wall.
-    # Per-trial coverage ratio, then the median. Summing per-event MEDIAN
-    # shares does not preserve any trial's total — medians of different events
-    # come from different trials — so that sum is not a coverage figure at all.
+    # EVERY trial is gated, not only the median. A median hides one broken trial
+    # entirely: coverage [1.05, 0.99, 0.98] and residuals [-3ms, +1ms, +2ms] both
+    # pass a median-only check while a trial is plainly wrong.
     coverage_per_trial = [
-        sum(trial["event_seconds"].values()) / trial["wall_seconds"]
-        for trial in on["trials"]
-        if trial["wall_seconds"] > 0
+        sum(trial["event_seconds"].values()) / trial["on_wall_seconds"]
+        if trial["on_wall_seconds"] > 0
+        else float("inf")
+        for trial in trials
     ]
-    share_total = statistics.median(coverage_per_trial) if coverage_per_trial else 0.0
-    if share_total > 1.0 + SHARE_TOLERANCE:
-        cleanup()
-        return cell | failure_record(
-            stage="on_trial",
-            reason_code="event_shares_exceed_wall",
-            timing_attempted=True,
-            status="profile_invalid",
-            problems=[
-                f"median per-trial event coverage is {share_total:.4f} of the ON wall",
-                f"per-trial coverage: {coverage_per_trial}",
-                "the event spans overlap or the wall excludes work the events cover",
-            ],
-        )
-
-    # Residual PER TRIAL, then the median of residuals. Summing medians and
-    # subtracting the median wall is the "residual as a difference of medians"
-    # error: median-of-sums != sum-of-medians, so the two can cross and produce
-    # a NEGATIVE unattributed time. Measured — three of five cells did exactly
-    # that before this was fixed.
-    attributed_per_trial = [
-        sum(trial["event_seconds"].values()) for trial in on["trials"]
-    ]
+    attributed_per_trial = [sum(trial["event_seconds"].values()) for trial in trials]
     residuals = [
         wall - attributed
         for wall, attributed in zip(on_walls, attributed_per_trial, strict=True)
     ]
-    attributed = statistics.median(attributed_per_trial)
-    unattributed = statistics.median(residuals)
-    if unattributed < 0:
-        # Over-coverage means the event spans overlap or the clock is wrong.
-        # Never clamped to zero: a clamped residual hides a broken measurement.
+
+    trial_problems: list[str] = []
+    for index, trial in enumerate(trials):
+        if trial["on_wall_seconds"] <= 0 or trial["off_wall_seconds"] <= 0:
+            trial_problems.append(f"trial[{index}]: non-positive wall clock")
+        if coverage_per_trial[index] > 1.0 + SHARE_TOLERANCE:
+            trial_problems.append(
+                f"trial[{index}]: coverage {coverage_per_trial[index]:.4f} exceeds "
+                f"1 + {SHARE_TOLERANCE}"
+            )
+        if residuals[index] < 0:
+            trial_problems.append(
+                f"trial[{index}]: residual {residuals[index]:.6f}s is negative"
+            )
+        for name, value in trial["event_seconds"].items():
+            if not math.isfinite(value) or value < 0:
+                trial_problems.append(f"trial[{index}]: {name} = {value!r}")
+    if trial_problems:
         cleanup()
         return cell | failure_record(
-            stage="on_trial",
-            reason_code="negative_unattributed_seconds",
+            stage="paired_trials",
+            reason_code="per_trial_coverage_or_residual_invalid",
+            timing_attempted=True,
+            status="profile_invalid",
+            problems=trial_problems
+            + [
+                f"coverage per trial: {coverage_per_trial}",
+                f"residual per trial: {residuals}",
+            ],
+        )
+
+    overhead = overhead_estimate(trials)
+    # A resolvable NEGATIVE overhead means instrumentation made the run faster,
+    # which cannot happen: the clock is wrong.
+    if overhead["resolvable"] and overhead["median_paired_delta"] < 0:
+        cleanup()
+        return cell | failure_record(
+            stage="paired_trials",
+            reason_code="resolvable_negative_overhead",
             timing_attempted=True,
             status="profile_invalid",
             problems=[
-                f"trial residuals (seconds): {residuals}",
-                "attributed CUDA-event time exceeds the wall clock, so the "
-                "event spans overlap or are mis-recorded",
+                f"median paired delta {overhead['median_paired_delta']:.6f}s is "
+                f"negative and exceeds the OFF spread "
+                f"{overhead['off_trial_spread']:.6f}s",
+                "instrumentation cannot accelerate the measured code",
             ],
         )
+
+    allocated = [trial["peak_allocated_bytes"] for trial in trials]
+    reserved = [trial["peak_reserved_bytes"] for trial in trials]
     cleanup()
     return cell | {
         "status": "ok",
         "timing_attempted": True,
         # THE VERDICT: the instrumentation-OFF outer wall clock.
         "latency": {
-            "verdict_seconds": off["wall_seconds_median"],
+            "verdict_seconds": statistics.median(off_walls),
             "verdict_basis": "instrumentation_off_outer_wall_clock",
-            "off_wall_trials": off["wall_seconds_trials"],
-            "on_wall_median": on_median,
+            "off_wall_trials": off_walls,
+            "on_wall_median": statistics.median(on_walls),
             "on_wall_trials": on_walls,
-            # The ON-OFF difference is reported WITH the noise floor that
-            # decides whether it means anything. At TRIALS=3 the OFF spread is
-            # 1.4-16.2% while the difference is -1.4% to +10.1%, so the sign is
-            # not resolvable and a bare signed number would read as a measured
-            # slowdown or speedup. `resolvable` is False whenever the magnitude
-            # sits inside the OFF spread.
-            "instrumentation_overhead": overhead_estimate(
-                off["wall_seconds_trials"], on_walls
-            ),
+            "instrumentation_overhead": overhead,
         },
+        "trials": [
+            {
+                "trial": trial["trial"],
+                "order": trial["order"],
+                "off_wall_seconds": trial["off_wall_seconds"],
+                "on_wall_seconds": trial["on_wall_seconds"],
+                "paired_overhead_seconds": trial["paired_overhead_seconds"],
+            }
+            for trial in trials
+        ],
         "peak_memory": {
-            "allocated_bytes": off["peak_memory_bytes"],
-            "reserved_bytes": off["peak_reserved_bytes"],
-            "basis": "instrumentation_off_pass",
+            "allocated_bytes_trials": allocated,
+            "reserved_bytes_trials": reserved,
+            "max_allocated_bytes": max(allocated),
+            "max_reserved_bytes": max(reserved),
+            "basis": "instrumentation_off_trials",
         },
         "events": events,
         "attribution": {
-            # Shares are ON-pass internal; the OFF wall never enters a
-            # denominator.
-            "denominator": "on_wall_median",
-            "attributed_seconds": attributed,
-            "unattributed_seconds": unattributed,
-            "coverage_ratio": share_total,
+            # Each event share is a per-trial ratio; the median is taken of the
+            # ratios, NOT of the numerator over the median denominator.
+            "denominator": "per_trial_on_wall_seconds",
+            "aggregation": "median_of_per_trial_ratios",
+            "attributed_seconds": statistics.median(attributed_per_trial),
+            "unattributed_seconds": statistics.median(residuals),
+            "unattributed_seconds_trials": residuals,
+            "unattributed_basis": "median of per-trial (wall - attributed)",
+            "coverage_ratio": statistics.median(coverage_per_trial),
+            "coverage_ratio_trials": coverage_per_trial,
             "coverage_basis": "median of per-trial (sum of event seconds / wall)",
             "coverage_note": (
                 "the per-event `share_of_on_wall` values are per-trial medians "
                 "and do NOT sum to this ratio: each event's median can come "
                 "from a different trial, so their sum is not a coverage figure"
             ),
-            "unattributed_basis": "median of per-trial (wall - attributed)",
-            "unattributed_trials": residuals,
             "unattributed_note": (
                 "fork_rng enter/exit, manual_seed, loop control, observer "
                 "dispatch, result assembly and executed-metadata construction "

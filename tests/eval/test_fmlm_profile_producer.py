@@ -33,6 +33,20 @@ pytest.importorskip("unturtle_flm", reason="FLM pack not installed")
 import torch  # noqa: E402
 
 
+def _estimate(producer, off_walls, on_walls):
+    """Build the paired-trial shape `overhead_estimate` now consumes."""
+    return producer.overhead_estimate(
+        [
+            {
+                "off_wall_seconds": off,
+                "on_wall_seconds": on,
+                "paired_overhead_seconds": on - off,
+            }
+            for off, on in zip(off_walls, on_walls, strict=True)
+        ]
+    )
+
+
 def _code_only(source: str) -> str:
     """Source with comments and string literals removed.
 
@@ -239,11 +253,17 @@ class TestStructuralZero:
         walls = (3.0, 4.0, 5.0)
         return producer, [
             {
-                "wall_seconds": wall,
+                "trial": index,
+                "order": ["off", "on"] if index % 2 == 0 else ["on", "off"],
+                "off_wall_seconds": wall,
+                "on_wall_seconds": wall,
+                "paired_overhead_seconds": 0.0,
+                "peak_allocated_bytes": 100,
+                "peak_reserved_bytes": 200,
                 "event_seconds": dict(seconds),
                 "calls": producer.expected_counts(steps),
             }
-            for wall in walls
+            for index, wall in enumerate(walls)
         ]
 
     def test_state_update_is_a_flagged_zero_at_one_step(self):
@@ -309,7 +329,7 @@ class TestStructuralZero:
                 "endpoint_decode": 0.02,
             },
         )
-        walls = [trial["wall_seconds"] for trial in trials]
+        walls = [trial["on_wall_seconds"] for trial in trials]
         assert min(walls) != max(walls), "the fixture must vary the wall"
         rows = {row["name"]: row for row in producer.assemble_events(32, trials)}
         # 0.5/4 = 0.125 for the median wall; 0.5/3 = 0.167 for the fastest.
@@ -323,7 +343,8 @@ class TestStructuralZero:
         # Event maxima deliberately land in different trials.
         trials = [
             {
-                "wall_seconds": 1.0,
+                "on_wall_seconds": 1.0,
+                "off_wall_seconds": 1.0,
                 "event_seconds": {
                     "grid_init": 0.5,
                     "time_schedule": 0.1,
@@ -334,7 +355,8 @@ class TestStructuralZero:
                 "calls": producer.expected_counts(32),
             },
             {
-                "wall_seconds": 1.0,
+                "on_wall_seconds": 1.0,
+                "off_wall_seconds": 1.0,
                 "event_seconds": {
                     "grid_init": 0.1,
                     "time_schedule": 0.5,
@@ -345,7 +367,8 @@ class TestStructuralZero:
                 "calls": producer.expected_counts(32),
             },
             {
-                "wall_seconds": 1.0,
+                "on_wall_seconds": 1.0,
+                "off_wall_seconds": 1.0,
                 "event_seconds": {
                     "grid_init": 0.1,
                     "time_schedule": 0.1,
@@ -364,7 +387,7 @@ class TestStructuralZero:
         for name in ("grid_init", "time_schedule", "flow_map_forward"):
             assert rows[name]["share_of_on_wall"] == pytest.approx(0.1), name
         by_trial = [
-            sum(trial["event_seconds"].values()) / trial["wall_seconds"]
+            sum(trial["event_seconds"].values()) / trial["on_wall_seconds"]
             for trial in trials
         ]
         assert all(ratio == pytest.approx(0.9) for ratio in by_trial)
@@ -379,7 +402,7 @@ class TestStructuralZero:
         for phrase in ("per-trial medians", "do NOT sum", "different trial"):
             assert phrase in note, phrase
         assert '"coverage_basis"' in source
-        assert '"coverage_ratio": share_total' in source
+        assert '"coverage_ratio_trials": coverage_per_trial' in source
 
     def test_the_over_coverage_gate_is_a_live_branch(self):
         """Disabling the comparison leaves every string intact, so the branch is
@@ -387,11 +410,11 @@ class TestStructuralZero:
         return `profile_invalid`."""
         producer = _producer()
         source = inspect.getsource(producer.profile_cell)
-        assert "if share_total > 1.0 + SHARE_TOLERANCE:" in source
-        guard = source.split("if share_total > 1.0 + SHARE_TOLERANCE:")[1]
+        assert "if coverage_per_trial[index] > 1.0 + SHARE_TOLERANCE:" in source
+        guard = source.split("if trial_problems:")[1]
         head = guard[: guard.index("problems=")]
         assert 'status="profile_invalid"' in head
-        assert 'reason_code="event_shares_exceed_wall"' in head
+        assert 'reason_code="per_trial_coverage_or_residual_invalid"' in head
         assert "cleanup()" in head
 
     def test_over_coverage_and_negative_residual_are_separate_gates(self):
@@ -399,9 +422,12 @@ class TestStructuralZero:
         the per-event coverage still exceeds the wall."""
         producer = _producer()
         source = inspect.getsource(producer.profile_cell)
-        assert source.index("event_shares_exceed_wall") < source.index(
-            "negative_unattributed_seconds"
-        )
+        # Coverage, residual, wall positivity and finiteness are each checked
+        # per trial in the same block; the resolvable-negative-overhead gate is
+        # separate.
+        assert "coverage_per_trial[index] > 1.0 + SHARE_TOLERANCE" in source
+        assert "residuals[index] < 0" in source
+        assert "resolvable_negative_overhead" in source
         assert source.count('status="profile_invalid"') == 2
 
     def test_coverage_is_gated_per_trial(self):
@@ -410,8 +436,12 @@ class TestStructuralZero:
         producer = _producer()
         source = inspect.getsource(producer.profile_cell)
         assert "coverage_per_trial" in source
-        assert "event_shares_exceed_wall" in source
-        assert 'sum(trial["event_seconds"].values()) / trial["wall_seconds"]' in source
+        assert "per_trial_coverage_or_residual_invalid" in source
+        assert (
+            'sum(trial["event_seconds"].values()) / trial["on_wall_seconds"]' in source
+        )
+        # EVERY trial, not just the median.
+        assert "for index, trial in enumerate(trials):" in source
 
     def test_no_artificial_event_is_emitted_for_the_structural_zero(self):
         """The row is supplied at ASSEMBLY time; the sampler must not be made to
@@ -432,11 +462,11 @@ class TestVerdictBasis:
         producer = _producer()
         source = inspect.getsource(producer.profile_cell)
         assert '"verdict_basis": "instrumentation_off_outer_wall_clock"' in source
-        assert '"verdict_seconds": off["wall_seconds_median"]' in source
+        assert '"verdict_seconds": statistics.median(off_walls)' in source
 
     def test_the_off_pass_carries_no_instrumentation(self):
         producer = _producer()
-        code = _code_only(inspect.getsource(producer.timed_off))
+        code = _code_only(inspect.getsource(producer._run_off_trial))
         for forbidden in ("Observer", "observer", "stable_hash", "get_rng_state"):
             assert forbidden not in code, forbidden
 
@@ -447,14 +477,20 @@ class TestVerdictBasis:
         source = inspect.getsource(producer.assemble_events)
         # The divisor is the trial's OWN wall; no OFF-pass value is reachable
         # here at all, since `assemble_events` only receives ON trials.
-        assert 'trial["wall_seconds"]' in source
+        assert 'trial["on_wall_seconds"]' in source
         assert "off" not in _code_only(source)
-        assert '"denominator"' in inspect.getsource(producer.profile_cell)
+        cell = inspect.getsource(producer.profile_cell)
+        assert '"denominator": "per_trial_on_wall_seconds"' in cell
+        assert '"aggregation": "median_of_per_trial_ratios"' in cell
 
     def test_peak_memory_comes_from_the_off_pass(self):
         producer = _producer()
         source = inspect.getsource(producer.profile_cell)
-        assert '"basis": "instrumentation_off_pass"' in source
+        assert '"basis": "instrumentation_off_trials"' in source
+        # Per-trial arrays plus the aggregate max, not one number for all trials.
+        assert '"allocated_bytes_trials": allocated' in source
+        assert '"max_allocated_bytes": max(allocated)' in source
+        assert "reset_peak_memory_stats()" in inspect.getsource(producer._run_off_trial)
 
     def test_the_overhead_is_recorded_with_its_noise_floor(self):
         """A signed point estimate is not publishable at TRIALS=3: the OFF
@@ -466,22 +502,22 @@ class TestVerdictBasis:
     def test_an_overhead_inside_the_noise_is_not_resolvable(self):
         producer = _producer()
         # OFF spreads by 20 ms; the difference is 5 ms.
-        estimate = producer.overhead_estimate([1.00, 1.01, 1.02], [1.015, 1.02, 1.025])
+        estimate = _estimate(producer, [1.00, 1.01, 1.02], [1.015, 1.02, 1.025])
         assert estimate["resolvable"] is False
-        assert estimate["off_spread_seconds"] == pytest.approx(0.02)
+        assert estimate["off_trial_spread"] == pytest.approx(0.02)
 
     def test_an_overhead_larger_than_the_noise_is_resolvable(self):
         producer = _producer()
-        estimate = producer.overhead_estimate([1.00, 1.001, 1.002], [1.50, 1.51, 1.52])
+        estimate = _estimate(producer, [1.00, 1.001, 1.002], [1.50, 1.51, 1.52])
         assert estimate["resolvable"] is True
-        assert estimate["seconds"] > 0
+        assert estimate["median_paired_delta"] > 0
 
     def test_a_negative_difference_inside_the_noise_is_not_a_speedup(self):
         """Instrumentation cannot make the code faster; a negative difference
         inside the spread must not be published as one."""
         producer = _producer()
-        estimate = producer.overhead_estimate([1.00, 1.05, 1.10], [1.02, 1.03, 1.04])
-        assert estimate["seconds"] < 0
+        estimate = _estimate(producer, [1.00, 1.05, 1.10], [1.02, 1.03, 1.04])
+        assert estimate["median_paired_delta"] < 0
         assert estimate["resolvable"] is False
 
     def test_a_large_negative_difference_is_still_flagged_resolvable(self):
@@ -489,9 +525,9 @@ class TestVerdictBasis:
         unsigned comparison is required, since a big negative difference means
         the measurement is broken and must not be silently unresolvable."""
         producer = _producer()
-        estimate = producer.overhead_estimate([2.00, 2.001, 2.002], [1.00, 1.01, 1.02])
-        assert estimate["seconds"] < 0
-        assert abs(estimate["seconds"]) > estimate["off_spread_seconds"]
+        estimate = _estimate(producer, [2.00, 2.001, 2.002], [1.00, 1.01, 1.02])
+        assert estimate["median_paired_delta"] < 0
+        assert abs(estimate["median_paired_delta"]) > estimate["off_trial_spread"]
         assert estimate["resolvable"] is True
 
     def test_the_overhead_is_a_structured_estimate_not_a_bare_number(self):
@@ -499,14 +535,20 @@ class TestVerdictBasis:
         unresolvable signs in the first place."""
         producer = _producer()
         source = inspect.getsource(producer.profile_cell)
-        assert '"instrumentation_overhead": overhead_estimate(' in source
+        assert '"instrumentation_overhead": overhead' in source
         assert '"instrumentation_overhead_seconds"' not in source
-        estimate = producer.overhead_estimate([1.0, 1.0, 1.0], [1.0, 1.0, 1.0])
-        for key in ("seconds", "off_spread_seconds", "resolvable", "basis"):
+        estimate = _estimate(producer, [1.0, 1.0, 1.0], [1.0, 1.0, 1.0])
+        for key in (
+            "median_paired_delta",
+            "paired_delta_trials",
+            "off_trial_spread",
+            "resolvable",
+            "basis",
+        ):
             assert key in estimate, key
 
     def test_the_overhead_basis_explains_the_sign_caveat(self):
-        doc = _producer().overhead_estimate([1.0], [1.0])["basis"]
+        doc = _estimate(_producer(), [1.0], [1.0])["basis"]
         assert "spread" in doc
         assert "sign carries no information" in doc
 
@@ -547,10 +589,10 @@ class TestDiagnosticsAreSeparateFromTiming:
         CUDA-event total it contains: negative instrumentation overhead in 3 of
         5 cells and event shares over 100%."""
         producer = _producer()
-        source = inspect.getsource(producer.timed_on)
+        source = inspect.getsource(producer._run_on_trial)
         drain = source.split("run_once(model, request, observer)")[1]
         sync_index = drain.index("torch.cuda.synchronize()")
-        wall_index = drain.index("wall = time.perf_counter() - start")
+        wall_index = drain.index("wall = time.perf_counter() - begin")
         assert sync_index < wall_index, (
             "the wall is read before the queue drains, so it excludes work the "
             "events measure"
@@ -599,7 +641,12 @@ class TestDiagnosticsAreSeparateFromTiming:
 
     def test_the_timed_passes_request_no_diagnostics(self):
         producer = _producer()
-        for function in (producer.timed_off, producer.timed_on):
+        for function in (
+            producer._run_off_trial,
+            producer._run_on_trial,
+            producer.paired_trials,
+            producer.warmup_arms,
+        ):
             code = _code_only(inspect.getsource(function))
             assert "diagnostics" not in code, function.__name__
 
@@ -620,7 +667,11 @@ class TestDiagnosticsAreSeparateFromTiming:
 
     def test_the_spy_never_runs_during_timing(self):
         producer = _producer()
-        for function in (producer.timed_off, producer.timed_on):
+        for function in (
+            producer._run_off_trial,
+            producer._run_on_trial,
+            producer.paired_trials,
+        ):
             assert "randn" not in _code_only(inspect.getsource(function))
 
 
@@ -787,7 +838,7 @@ class TestTypedFailures:
         assert statistics.median(residuals) < 0
         source = inspect.getsource(producer.profile_cell)
         assert "statistics.median(residuals)" in source
-        assert "if unattributed < 0:" in source
+        assert "residuals[index] < 0" in source
         # No clamping of the residual, in executable code.
         code = _code_only(source)
         for clamping in ("max ( 0", "abs ("):
@@ -798,10 +849,10 @@ class TestTypedFailures:
         `profile_cell` needs a GPU and the real checkpoint."""
         producer = _producer()
         source = inspect.getsource(producer.profile_cell)
-        block = source.split("if unattributed < 0:")[1].split("return cell |")[1]
+        block = source.split("if trial_problems:")[1].split("return cell |")[1]
         assert 'status="profile_invalid"' in block
-        assert 'reason_code="negative_unattributed_seconds"' in block
-        assert "cleanup()" in source.split("if unattributed < 0:")[1][:200]
+        assert 'reason_code="per_trial_coverage_or_residual_invalid"' in block
+        assert "cleanup()" in source.split("if trial_problems:")[1][:200]
 
     def test_the_residual_is_a_median_of_per_trial_residuals(self):
         """Summing medians and subtracting the median wall is the "residual as
@@ -812,19 +863,280 @@ class TestTypedFailures:
         source = inspect.getsource(producer.profile_cell)
         assert "median of per-trial (wall - attributed)" in source
         assert "statistics.median(residuals)" in source
-        assert "negative_unattributed_seconds" in source
+        assert '"unattributed_seconds_trials": residuals' in source
 
     def test_the_failure_stage_is_recorded(self):
         producer = _producer()
         source = inspect.getsource(producer.profile_cell)
-        for stage in ("preflight", "warmup", "off_trial", "on_trial"):
+        for stage in ("preflight", "warmup", "paired_trials"):
             assert f'"{stage}"' in source or f'= "{stage}"' in source
+        # `timing_attempted` is true ONLY once a trial clock has started, so a
+        # warmup OOM is not recorded as a timed failure.
+        assert 'timing_attempted=stage == "paired_trials"' in source
 
     def test_cuda_state_is_cleaned_after_a_failure(self):
         producer = _producer()
         source = inspect.getsource(producer.profile_cell)
         failure_block = source.split("except Exception")[1]
         assert "cleanup()" in failure_block
+
+
+class TestPairedInterleavedOrder:
+    """The producer first ran OFF,OFF,OFF then ON,ON,ON. That loads thermal
+    state, clock drift and allocator growth onto whichever arm always runs
+    second — in the same direction as the effect being measured."""
+
+    def test_the_arm_order_reverses_every_trial(self):
+        producer = _producer()
+        source = inspect.getsource(producer.paired_trials)
+        assert 'order = ("off", "on") if index % 2 == 0 else ("on", "off")' in source
+
+    def test_both_arms_run_inside_one_trial(self):
+        """Not all of one arm and then all of the other."""
+        producer = _producer()
+        source = inspect.getsource(producer.paired_trials)
+        loop = source.split("for index in range(TRIALS):")[1]
+        assert "_run_off_trial" in loop
+        assert "_run_on_trial" in loop
+
+    def test_the_paired_delta_is_computed_from_the_two_walls(self):
+        """A hardcoded 0.0 delta leaves every field present and every count
+        right, while making the overhead permanently unresolvable — so it must
+        be checked as arithmetic, not as a key."""
+        producer = _producer()
+        source = inspect.getsource(producer.paired_trials)
+        assert (
+            'measured["on"]["wall_seconds"] - measured["off"]["wall_seconds"]' in source
+        )
+        # And no constant is assigned to the field.
+        delta_line = source.split('"paired_overhead_seconds":')[1].split("\n")[0]
+        assert "0.0" not in delta_line
+        assert "0," not in delta_line
+
+    def test_the_recorded_delta_matches_the_recorded_walls(self):
+        """Consistency of the trial record itself: whatever the walls say, the
+        delta must be their difference."""
+        producer = _producer()
+        for off, on in ((1.0, 1.25), (2.5, 2.5), (3.0, 2.75)):
+            trial = {
+                "off_wall_seconds": off,
+                "on_wall_seconds": on,
+                "paired_overhead_seconds": on - off,
+            }
+            estimate = producer.overhead_estimate([trial])
+            assert estimate["median_paired_delta"] == pytest.approx(on - off)
+
+    def test_each_trial_records_its_order_and_paired_delta(self):
+        producer = _producer()
+        source = inspect.getsource(producer.paired_trials)
+        for field in (
+            '"order": list(order)',
+            '"off_wall_seconds"',
+            '"on_wall_seconds"',
+            '"paired_overhead_seconds"',
+        ):
+            assert field in source, field
+
+    def test_the_orders_alternate_across_the_frozen_window(self):
+        producer = _producer()
+        orders = [
+            ("off", "on") if index % 2 == 0 else ("on", "off")
+            for index in range(producer.TRIALS)
+        ]
+        assert orders == [("off", "on"), ("on", "off"), ("off", "on")]
+
+    def test_warmup_is_a_separate_stage_from_the_trials(self):
+        """A warmup OOM must not be recorded as a timed failure."""
+        producer = _producer()
+        assert "run_once" in inspect.getsource(producer.warmup_arms)
+        assert "perf_counter" not in inspect.getsource(producer.warmup_arms)
+        cell = inspect.getsource(producer.profile_cell)
+        assert 'stage = "warmup"' in cell
+        assert 'stage = "paired_trials"' in cell
+        assert cell.index('stage = "warmup"') < cell.index('stage = "paired_trials"')
+
+    def test_the_trials_are_not_run_inside_the_warmup_helper(self):
+        producer = _producer()
+        assert "TRIALS" not in inspect.getsource(producer.warmup_arms)
+
+
+class TestPairedOverhead:
+    def test_the_overhead_is_a_median_of_paired_deltas(self):
+        """A difference of medians pairs an OFF trial with an unrelated ON
+        trial — the error this cell already made twice."""
+        producer = _producer()
+        # Deltas are +0.10, +0.10, +0.10 within pairs, but the medians of the
+        # two arms differ by much less because the walls drift together.
+        trials = [
+            {
+                "off_wall_seconds": 1.0,
+                "on_wall_seconds": 1.1,
+                "paired_overhead_seconds": 0.1,
+            },
+            {
+                "off_wall_seconds": 2.0,
+                "on_wall_seconds": 2.1,
+                "paired_overhead_seconds": 0.1,
+            },
+            {
+                "off_wall_seconds": 3.0,
+                "on_wall_seconds": 3.1,
+                "paired_overhead_seconds": 0.1,
+            },
+        ]
+        estimate = producer.overhead_estimate(trials)
+        assert estimate["median_paired_delta"] == pytest.approx(0.1)
+        assert estimate["paired_delta_trials"] == [0.1, 0.1, 0.1]
+
+    def test_a_drifting_baseline_does_not_swamp_the_paired_signal(self):
+        """The pairing is what makes a small overhead visible under drift: each
+        delta is measured against its OWN adjacent baseline."""
+        producer = _producer()
+        trials = [
+            {
+                "off_wall_seconds": 1.0,
+                "on_wall_seconds": 1.05,
+                "paired_overhead_seconds": 0.05,
+            },
+            {
+                "off_wall_seconds": 5.0,
+                "on_wall_seconds": 5.05,
+                "paired_overhead_seconds": 0.05,
+            },
+            {
+                "off_wall_seconds": 9.0,
+                "on_wall_seconds": 9.05,
+                "paired_overhead_seconds": 0.05,
+            },
+        ]
+        estimate = producer.overhead_estimate(trials)
+        assert estimate["median_paired_delta"] == pytest.approx(0.05)
+        # The OFF spread is huge, so it is honestly reported as unresolvable
+        # rather than the delta being inflated by the drift.
+        assert estimate["off_trial_spread"] == pytest.approx(8.0)
+        assert estimate["resolvable"] is False
+
+    def test_a_resolvable_negative_overhead_invalidates_the_cell(self):
+        """Instrumentation cannot accelerate the measured code, so this is a
+        broken clock, not a result."""
+        producer = _producer()
+        source = inspect.getsource(producer.profile_cell)
+        assert (
+            'overhead["resolvable"] and overhead["median_paired_delta"] < 0' in source
+        )
+        guard = source.split(
+            'if overhead["resolvable"] and overhead["median_paired_delta"] < 0:'
+        )[1]
+        head = guard[: guard.index("problems=")]
+        assert 'status="profile_invalid"' in head
+        assert 'reason_code="resolvable_negative_overhead"' in head
+        assert "cannot accelerate" in guard
+
+
+class TestPerTrialGates:
+    """A median-only gate hides one broken trial: coverage [1.05, 0.99, 0.98]
+    and residuals [-3ms, +1ms, +2ms] both pass while a trial is plainly wrong."""
+
+    def test_every_trial_is_checked_for_coverage(self):
+        producer = _producer()
+        source = inspect.getsource(producer.profile_cell)
+        block = source.split("trial_problems: list[str] = []")[1]
+        assert "for index, trial in enumerate(trials):" in block
+        assert "coverage_per_trial[index] > 1.0 + SHARE_TOLERANCE" in block
+
+    def test_every_trial_is_checked_for_a_negative_residual(self):
+        producer = _producer()
+        block = inspect.getsource(producer.profile_cell).split(
+            "trial_problems: list[str] = []"
+        )[1]
+        assert "residuals[index] < 0" in block
+
+    def test_every_trial_is_checked_for_a_positive_wall(self):
+        producer = _producer()
+        block = inspect.getsource(producer.profile_cell).split(
+            "trial_problems: list[str] = []"
+        )[1]
+        assert 'trial["on_wall_seconds"] <= 0' in block
+        assert 'trial["off_wall_seconds"] <= 0' in block
+
+    def test_every_event_value_is_checked_for_finiteness(self):
+        producer = _producer()
+        block = inspect.getsource(producer.profile_cell).split(
+            "trial_problems: list[str] = []"
+        )[1]
+        assert "math.isfinite(value)" in block
+        assert "value < 0" in block
+
+    def test_both_per_trial_arrays_reach_the_artifact(self):
+        """The earlier record kept the residual trials and discarded the
+        coverage trials."""
+        producer = _producer()
+        source = inspect.getsource(producer.profile_cell)
+        assert '"coverage_ratio_trials": coverage_per_trial' in source
+        assert '"unattributed_seconds_trials": residuals' in source
+
+
+class TestPerTrialPeakMemory:
+    def test_peak_stats_are_reset_inside_each_trial(self):
+        """One reset before all trials reports the maximum over the whole run as
+        if it were a per-trial figure."""
+        producer = _producer()
+        source = inspect.getsource(producer._run_off_trial)
+        assert "reset_peak_memory_stats()" in source
+        reset = source.index("reset_peak_memory_stats()")
+        clock = source.index("begin = time.perf_counter()")
+        assert reset < clock, "the reset must precede the clock"
+
+    def test_the_arrays_and_the_aggregate_max_are_both_recorded(self):
+        producer = _producer()
+        source = inspect.getsource(producer.profile_cell)
+        for field in (
+            '"allocated_bytes_trials": allocated',
+            '"reserved_bytes_trials": reserved',
+            '"max_allocated_bytes": max(allocated)',
+            '"max_reserved_bytes": max(reserved)',
+        ):
+            assert field in source, field
+
+    def test_the_peak_comes_from_the_off_arm(self):
+        """The ON arm carries the observer's own allocations."""
+        producer = _producer()
+        source = inspect.getsource(producer.paired_trials)
+        assert (
+            '"peak_allocated_bytes": measured["off"]["peak_allocated_bytes"]' in source
+        )
+        assert "peak" not in _code_only(inspect.getsource(producer._run_on_trial))
+
+
+class TestOomClassification:
+    def test_a_cuda_specific_message_classifies(self):
+        producer = _producer()
+        for message in (
+            "CUDA out of memory. Tried to allocate 2.00 GiB",
+            "CUDA error: out of memory",
+        ):
+            assert (
+                producer.classify_failure(RuntimeError(message)) == "cuda_out_of_memory"
+            )
+
+    def test_a_host_side_out_of_memory_is_not_a_cuda_oom(self):
+        """`time_schedule` runs a scipy spline on the HOST, so a bare
+        "out of memory" here can be a host or SciPy allocation failure — a
+        different capacity story that must not be filed as a CUDA OOM."""
+        producer = _producer()
+        for message in (
+            "out of memory",
+            "Unable to allocate 4.00 GiB for an array with shape (10000,)",
+            "std::bad_alloc: out of memory",
+        ):
+            assert producer.classify_failure(RuntimeError(message)) is None, message
+
+    def test_the_torch_oom_type_always_classifies(self):
+        producer = _producer()
+        assert (
+            producer.classify_failure(torch.cuda.OutOfMemoryError("anything"))
+            == "cuda_out_of_memory"
+        )
 
 
 class TestStableHash:
