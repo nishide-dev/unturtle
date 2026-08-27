@@ -1,0 +1,1474 @@
+{
+  "run": {
+    "head_sha": "e4234d168d3fe3866a41477c31c013504c7350a7",
+    "worktree_clean": true,
+    "worktree_dirty_paths": [],
+    "command": "/home/nishide.21066/.claude/jobs/1492d35a/tmp/wt-fmlm2/benchmarks/flm/fmlm_profile.py --device cuda:0 --out /home/nishide.21066/.claude/jobs/1492d35a/tmp/fmlm-out2",
+    "environment": {
+      "torch": "2.10.0+cu128",
+      "cuda": "12.8",
+      "gpu_name": "NVIDIA RTX 6000 Ada Generation",
+      "transformers": "5.15.0"
+    },
+    "execution_scope": {
+      "request_concurrency": 1,
+      "execution_mode": "single_threaded_sequential",
+      "observer_isolation": "ContextVar",
+      "observer_concurrency_contract": "event isolation only",
+      "rng_concurrency_contract": "not deterministic across concurrent CPU-thread requests: run_fmlm_request seeds inside torch.random.fork_rng, which forks the process-global CPU generator that threads share. Measured with no observer installed. This is the sampler's execution contract, not a defect of this profile."
+    },
+    "fixture": {
+      "checkpoint": "david3684/FMLM-B-OWT@483ea1b38bba56632cd40dc5a3c70a2340bb4946",
+      "gamma": 1.0,
+      "seed": 100,
+      "max_length": 1024,
+      "steps_cells": [
+        1,
+        32
+      ],
+      "batch_sizes": [
+        1,
+        8,
+        32
+      ],
+      "official_cells": [
+        "benchmarks/results/fmlm_owt_1",
+        "benchmarks/results/fmlm_owt_32"
+      ]
+    },
+    "frozen_constants": {
+      "TRIALS": 3,
+      "WARMUP": 2
+    },
+    "gamma_semantics": {
+      "gamma": 1.0,
+      "sqrt_one_minus_gamma_squared": 0.0,
+      "sigma_tilde": 0.0,
+      "t_tilde": 1.0,
+      "weight_z": 0.0,
+      "weight_D": 1.0,
+      "note": "the z_tilde expression ALGEBRAICALLY reduces to D_st_pred at gamma=1. This is a property of the formula, not an asserted bit-identity of the computed tensors. The state update is NOT degenerate bookkeeping: it still performs (steps-1) randn_like draws and full-size [B, L, V] latent arithmetic, which is why it is measured rather than assumed free."
+    },
+    "event_taxonomy": {
+      "grid_init": "begins at the tau linspace; includes the initial randn draw of the [B, L, V] latent; ends once z exists. Does NOT include manual_seed or entry into fork_rng \u2014 those stay unattributed.",
+      "time_schedule": "begins at tau_curr/tau_next indexing; includes _tau_to_t, sigma_target, sigma_tilde, t_tilde and the _t_to_tau inverse; ends once tau_tilde exists. NOT cheap scalar arithmetic despite appearances: _tau_to_t/_t_to_tau go through alpha_to_gamma/gamma_to_alpha, which run `lut(x.cpu().numpy())` \u2014 a device-to-host copy that SYNCHRONIZES the stream, a scipy CubicSpline evaluation on the host, then a copy back. Three such round trips per step (_tau_to_t twice, _t_to_tau once). Independently reproduced: 32 iterations of a busy stream cost ~379 ms more with the round trip than without, against ~515 ms attributed to this event at steps=32 batch=1.",
+      "flow_map_forward": "begins before model(...); includes the double-time model call, its return, and log_D_st_pred.exp(); ends after the exp result exists. The exponential is part of producing D_st_pred, not a later stage.",
+      "state_update": "begins at the weight computation; includes z_tilde composition, the gamma churn arithmetic and torch.randn_like(z); ends after the new z exists. NOT reached on the final step.",
+      "endpoint_decode": "the terminal argmax over the vocabulary axis."
+    }
+  },
+  "cells": [
+    {
+      "steps": 1,
+      "batch_size": 1,
+      "gamma": 1.0,
+      "seed": 100,
+      "max_length": 1024,
+      "non_interference": {
+        "off": {
+          "tokens": {
+            "sha256": "a39c188b8bf8486ed5110cb03d6e25248462310c212e8f9aba32b7a884bf4874",
+            "shape": [
+              1,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:0"
+          },
+          "final_latent": {
+            "sha256": "f8245be096fa876cf2afcce29fd91f3a143c020bbcabe27fbabbf540c1d9d383",
+            "shape": [
+              1,
+              1024,
+              50258
+            ],
+            "dtype": "torch.bfloat16",
+            "device": "cuda:0"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed": {
+            "solver": "flow_map",
+            "steps_requested": 1,
+            "steps_executed": 1,
+            "nfe": 1,
+            "gamma": 1.0,
+            "tau_grid": [
+              0.0,
+              1.0
+            ],
+            "seed": 100,
+            "max_length": 1024,
+            "use_jvp_attn": false
+          },
+          "terminal_rng_cuda": {
+            "sha256": "0aa0829b038fad17d013ceea7b511b8bfa008523629f72172759a871fb97c70a",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on": {
+          "tokens": {
+            "sha256": "a39c188b8bf8486ed5110cb03d6e25248462310c212e8f9aba32b7a884bf4874",
+            "shape": [
+              1,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:0"
+          },
+          "final_latent": {
+            "sha256": "f8245be096fa876cf2afcce29fd91f3a143c020bbcabe27fbabbf540c1d9d383",
+            "shape": [
+              1,
+              1024,
+              50258
+            ],
+            "dtype": "torch.bfloat16",
+            "device": "cuda:0"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed": {
+            "solver": "flow_map",
+            "steps_requested": 1,
+            "steps_executed": 1,
+            "nfe": 1,
+            "gamma": 1.0,
+            "tau_grid": [
+              0.0,
+              1.0
+            ],
+            "seed": 100,
+            "max_length": 1024,
+            "use_jvp_attn": false
+          },
+          "terminal_rng_cuda": {
+            "sha256": "0aa0829b038fad17d013ceea7b511b8bfa008523629f72172759a871fb97c70a",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on_events": {
+          "counts": {
+            "grid_init": 1,
+            "time_schedule": 1,
+            "flow_map_forward": 1,
+            "endpoint_decode": 1
+          },
+          "order": [
+            "grid_init",
+            "time_schedule",
+            "flow_map_forward",
+            "endpoint_decode"
+          ],
+          "balanced": true
+        },
+        "matches": {
+          "tokens": true,
+          "final_latent": true,
+          "terminal_rng_cpu": true,
+          "executed_metadata": true,
+          "terminal_rng_cuda": true
+        },
+        "status": "ok"
+      },
+      "random_calls": {
+        "observed": {
+          "randn": 1,
+          "randn_like": 0
+        },
+        "expected": {
+          "randn": 1,
+          "randn_like": 0
+        },
+        "matches": true
+      },
+      "event_order": {
+        "observed_length": 4,
+        "matches_expected": true
+      },
+      "status": "ok",
+      "timing_attempted": true,
+      "latency": {
+        "verdict_seconds": 0.0440819279756397,
+        "verdict_basis": "instrumentation_off_outer_wall_clock",
+        "off_wall_trials": [
+          0.04074348998256028,
+          0.0440819279756397,
+          0.045190753997303545
+        ],
+        "on_wall_median": 0.03586640499997884,
+        "instrumentation_overhead_seconds": -0.00821552297566086
+      },
+      "peak_memory": {
+        "allocated_bytes": 1286337024,
+        "reserved_bytes": 1549795328,
+        "basis": "instrumentation_off_pass"
+      },
+      "events": [
+        {
+          "name": "grid_init",
+          "calls": 1,
+          "seconds": 0.004092768192291259,
+          "description": "begins at the tau linspace; includes the initial randn draw of the [B, L, V] latent; ends once z exists. Does NOT include manual_seed or entry into fork_rng \u2014 those stay unattributed.",
+          "share_of_on_wall": 0.11411146983629036
+        },
+        {
+          "name": "time_schedule",
+          "calls": 1,
+          "seconds": 0.014578687667846679,
+          "description": "begins at tau_curr/tau_next indexing; includes _tau_to_t, sigma_target, sigma_tilde, t_tilde and the _t_to_tau inverse; ends once tau_tilde exists. NOT cheap scalar arithmetic despite appearances: _tau_to_t/_t_to_tau go through alpha_to_gamma/gamma_to_alpha, which run `lut(x.cpu().numpy())` \u2014 a device-to-host copy that SYNCHRONIZES the stream, a scipy CubicSpline evaluation on the host, then a copy back. Three such round trips per step (_tau_to_t twice, _t_to_tau once). Independently reproduced: 32 iterations of a busy stream cost ~379 ms more with the round trip than without, against ~515 ms attributed to this event at steps=32 batch=1.",
+          "share_of_on_wall": 0.4064719524539825
+        },
+        {
+          "name": "flow_map_forward",
+          "calls": 1,
+          "seconds": 0.01649270439147949,
+          "description": "begins before model(...); includes the double-time model call, its return, and log_D_st_pred.exp(); ends after the exp result exists. The exponential is part of producing D_st_pred, not a later stage.",
+          "share_of_on_wall": 0.4598371203216275
+        },
+        {
+          "name": "state_update",
+          "calls": 0,
+          "seconds": 0.0,
+          "description": "begins at the weight computation; includes z_tilde composition, the gamma churn arithmetic and torch.randn_like(z); ends after the new z exists. NOT reached on the final step.",
+          "structural_zero": true,
+          "reason": "final-step branch exits before state update"
+        },
+        {
+          "name": "endpoint_decode",
+          "calls": 1,
+          "seconds": 0.0001157120019197464,
+          "description": "the terminal argmax over the vocabulary axis.",
+          "share_of_on_wall": 0.003226194594072494
+        }
+      ],
+      "attribution": {
+        "denominator": "on_wall_median",
+        "attributed_seconds": 0.03558768017590046,
+        "unattributed_seconds": 0.00028262291941792,
+        "unattributed_basis": "median of per-trial (wall - attributed)",
+        "unattributed_trials": [
+          0.00028262291941792,
+          0.00029156153276562596,
+          0.00027872482407838295
+        ],
+        "unattributed_note": "fork_rng enter/exit, manual_seed, loop control, observer dispatch, result assembly and executed-metadata construction are deliberately left unattributed rather than folded into an adjacent event"
+      }
+    },
+    {
+      "steps": 1,
+      "batch_size": 8,
+      "gamma": 1.0,
+      "seed": 100,
+      "max_length": 1024,
+      "non_interference": {
+        "off": {
+          "tokens": {
+            "sha256": "fccc8fbe861c99289bef3b0a90f4032620aa1433c8744297336aaa1282753779",
+            "shape": [
+              8,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:0"
+          },
+          "final_latent": {
+            "sha256": "a3f528b1cbab1fc7eb1445970440eed3a34e9becdf4459c0925808ccb730dad9",
+            "shape": [
+              8,
+              1024,
+              50258
+            ],
+            "dtype": "torch.bfloat16",
+            "device": "cuda:0"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed": {
+            "solver": "flow_map",
+            "steps_requested": 1,
+            "steps_executed": 1,
+            "nfe": 1,
+            "gamma": 1.0,
+            "tau_grid": [
+              0.0,
+              1.0
+            ],
+            "seed": 100,
+            "max_length": 1024,
+            "use_jvp_attn": false
+          },
+          "terminal_rng_cuda": {
+            "sha256": "ea3db5698de611c0c73d27770f9c316fcece47da1c49f4eb7960a22bd74b5411",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on": {
+          "tokens": {
+            "sha256": "fccc8fbe861c99289bef3b0a90f4032620aa1433c8744297336aaa1282753779",
+            "shape": [
+              8,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:0"
+          },
+          "final_latent": {
+            "sha256": "a3f528b1cbab1fc7eb1445970440eed3a34e9becdf4459c0925808ccb730dad9",
+            "shape": [
+              8,
+              1024,
+              50258
+            ],
+            "dtype": "torch.bfloat16",
+            "device": "cuda:0"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed": {
+            "solver": "flow_map",
+            "steps_requested": 1,
+            "steps_executed": 1,
+            "nfe": 1,
+            "gamma": 1.0,
+            "tau_grid": [
+              0.0,
+              1.0
+            ],
+            "seed": 100,
+            "max_length": 1024,
+            "use_jvp_attn": false
+          },
+          "terminal_rng_cuda": {
+            "sha256": "ea3db5698de611c0c73d27770f9c316fcece47da1c49f4eb7960a22bd74b5411",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on_events": {
+          "counts": {
+            "grid_init": 1,
+            "time_schedule": 1,
+            "flow_map_forward": 1,
+            "endpoint_decode": 1
+          },
+          "order": [
+            "grid_init",
+            "time_schedule",
+            "flow_map_forward",
+            "endpoint_decode"
+          ],
+          "balanced": true
+        },
+        "matches": {
+          "tokens": true,
+          "final_latent": true,
+          "terminal_rng_cpu": true,
+          "executed_metadata": true,
+          "terminal_rng_cuda": true
+        },
+        "status": "ok"
+      },
+      "random_calls": {
+        "observed": {
+          "randn": 1,
+          "randn_like": 0
+        },
+        "expected": {
+          "randn": 1,
+          "randn_like": 0
+        },
+        "matches": true
+      },
+      "event_order": {
+        "observed_length": 4,
+        "matches_expected": true
+      },
+      "status": "ok",
+      "timing_attempted": true,
+      "latency": {
+        "verdict_seconds": 0.1636572820134461,
+        "verdict_basis": "instrumentation_off_outer_wall_clock",
+        "off_wall_trials": [
+          0.1636572820134461,
+          0.16768168099224567,
+          0.15244085702579468
+        ],
+        "on_wall_median": 0.15797041496261954,
+        "instrumentation_overhead_seconds": -0.0056868670508265495
+      },
+      "peak_memory": {
+        "allocated_bytes": 4810842624,
+        "reserved_bytes": 5370806272,
+        "basis": "instrumentation_off_pass"
+      },
+      "events": [
+        {
+          "name": "grid_init",
+          "calls": 1,
+          "seconds": 0.005950719833374024,
+          "description": "begins at the tau linspace; includes the initial randn draw of the [B, L, V] latent; ends once z exists. Does NOT include manual_seed or entry into fork_rng \u2014 those stay unattributed.",
+          "share_of_on_wall": 0.03766983732227417
+        },
+        {
+          "name": "time_schedule",
+          "calls": 1,
+          "seconds": 0.01824358367919922,
+          "description": "begins at tau_curr/tau_next indexing; includes _tau_to_t, sigma_target, sigma_tilde, t_tilde and the _t_to_tau inverse; ends once tau_tilde exists. NOT cheap scalar arithmetic despite appearances: _tau_to_t/_t_to_tau go through alpha_to_gamma/gamma_to_alpha, which run `lut(x.cpu().numpy())` \u2014 a device-to-host copy that SYNCHRONIZES the stream, a scipy CubicSpline evaluation on the host, then a copy back. Three such round trips per step (_tau_to_t twice, _t_to_tau once). Independently reproduced: 32 iterations of a busy stream cost ~379 ms more with the round trip than without, against ~515 ms attributed to this event at steps=32 batch=1.",
+          "share_of_on_wall": 0.11548734415565211
+        },
+        {
+          "name": "flow_map_forward",
+          "calls": 1,
+          "seconds": 0.13484031677246094,
+          "description": "begins before model(...); includes the double-time model call, its return, and log_D_st_pred.exp(); ends after the exp result exists. The exponential is part of producing D_st_pred, not a later stage.",
+          "share_of_on_wall": 0.8535795566807123
+        },
+        {
+          "name": "state_update",
+          "calls": 0,
+          "seconds": 0.0,
+          "description": "begins at the weight computation; includes z_tilde composition, the gamma churn arithmetic and torch.randn_like(z); ends after the new z exists. NOT reached on the final step.",
+          "structural_zero": true,
+          "reason": "final-step branch exits before state update"
+        },
+        {
+          "name": "endpoint_decode",
+          "calls": 1,
+          "seconds": 0.0010158079862594605,
+          "description": "the terminal argmax over the vocabulary axis.",
+          "share_of_on_wall": 0.006430368537677328
+        }
+      ],
+      "attribution": {
+        "denominator": "on_wall_median",
+        "attributed_seconds": 0.15759427416324615,
+        "unattributed_seconds": 0.00037429460324345243,
+        "unattributed_basis": "median of per-trial (wall - attributed)",
+        "unattributed_trials": [
+          0.00037429460324345243,
+          0.00036917508393527476,
+          0.00037614079937339784
+        ],
+        "unattributed_note": "fork_rng enter/exit, manual_seed, loop control, observer dispatch, result assembly and executed-metadata construction are deliberately left unattributed rather than folded into an adjacent event"
+      }
+    },
+    {
+      "steps": 1,
+      "batch_size": 32,
+      "gamma": 1.0,
+      "seed": 100,
+      "max_length": 1024,
+      "non_interference": {
+        "off": {
+          "tokens": {
+            "sha256": "76e4af673a2a84aae8808d3de8a2f32136546d039633e28cda38c311a92c8bd3",
+            "shape": [
+              32,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:0"
+          },
+          "final_latent": {
+            "sha256": "b85a31b380158c38c07a8d883424407a99c52161498acee60eda0f63b528a9e5",
+            "shape": [
+              32,
+              1024,
+              50258
+            ],
+            "dtype": "torch.bfloat16",
+            "device": "cuda:0"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed": {
+            "solver": "flow_map",
+            "steps_requested": 1,
+            "steps_executed": 1,
+            "nfe": 1,
+            "gamma": 1.0,
+            "tau_grid": [
+              0.0,
+              1.0
+            ],
+            "seed": 100,
+            "max_length": 1024,
+            "use_jvp_attn": false
+          },
+          "terminal_rng_cuda": {
+            "sha256": "970fa8fd811bb5c866ce542217358fc95d9d4e7df764efcb07ab965cafde108a",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on": {
+          "tokens": {
+            "sha256": "76e4af673a2a84aae8808d3de8a2f32136546d039633e28cda38c311a92c8bd3",
+            "shape": [
+              32,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:0"
+          },
+          "final_latent": {
+            "sha256": "b85a31b380158c38c07a8d883424407a99c52161498acee60eda0f63b528a9e5",
+            "shape": [
+              32,
+              1024,
+              50258
+            ],
+            "dtype": "torch.bfloat16",
+            "device": "cuda:0"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed": {
+            "solver": "flow_map",
+            "steps_requested": 1,
+            "steps_executed": 1,
+            "nfe": 1,
+            "gamma": 1.0,
+            "tau_grid": [
+              0.0,
+              1.0
+            ],
+            "seed": 100,
+            "max_length": 1024,
+            "use_jvp_attn": false
+          },
+          "terminal_rng_cuda": {
+            "sha256": "970fa8fd811bb5c866ce542217358fc95d9d4e7df764efcb07ab965cafde108a",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on_events": {
+          "counts": {
+            "grid_init": 1,
+            "time_schedule": 1,
+            "flow_map_forward": 1,
+            "endpoint_decode": 1
+          },
+          "order": [
+            "grid_init",
+            "time_schedule",
+            "flow_map_forward",
+            "endpoint_decode"
+          ],
+          "balanced": true
+        },
+        "matches": {
+          "tokens": true,
+          "final_latent": true,
+          "terminal_rng_cpu": true,
+          "executed_metadata": true,
+          "terminal_rng_cuda": true
+        },
+        "status": "ok"
+      },
+      "random_calls": {
+        "observed": {
+          "randn": 1,
+          "randn_like": 0
+        },
+        "expected": {
+          "randn": 1,
+          "randn_like": 0
+        },
+        "matches": true
+      },
+      "event_order": {
+        "observed_length": 4,
+        "matches_expected": true
+      },
+      "status": "ok",
+      "timing_attempted": true,
+      "latency": {
+        "verdict_seconds": 0.6594663759460673,
+        "verdict_basis": "instrumentation_off_outer_wall_clock",
+        "off_wall_trials": [
+          0.6594663759460673,
+          0.6493951729498804,
+          0.6834906120784581
+        ],
+        "on_wall_median": 0.6649406999349594,
+        "instrumentation_overhead_seconds": 0.005474323988892138
+      },
+      "peak_memory": {
+        "allocated_bytes": 17162740224,
+        "reserved_bytes": 18689818624,
+        "basis": "instrumentation_off_pass"
+      },
+      "events": [
+        {
+          "name": "grid_init",
+          "calls": 1,
+          "seconds": 0.023386335372924803,
+          "description": "begins at the tau linspace; includes the initial randn draw of the [B, L, V] latent; ends once z exists. Does NOT include manual_seed or entry into fork_rng \u2014 those stay unattributed.",
+          "share_of_on_wall": 0.035170557878638375
+        },
+        {
+          "name": "time_schedule",
+          "calls": 1,
+          "seconds": 0.022459392547607423,
+          "description": "begins at tau_curr/tau_next indexing; includes _tau_to_t, sigma_target, sigma_tilde, t_tilde and the _t_to_tau inverse; ends once tau_tilde exists. NOT cheap scalar arithmetic despite appearances: _tau_to_t/_t_to_tau go through alpha_to_gamma/gamma_to_alpha, which run `lut(x.cpu().numpy())` \u2014 a device-to-host copy that SYNCHRONIZES the stream, a scipy CubicSpline evaluation on the host, then a copy back. Three such round trips per step (_tau_to_t twice, _t_to_tau once). Independently reproduced: 32 iterations of a busy stream cost ~379 ms more with the round trip than without, against ~515 ms attributed to this event at steps=32 batch=1.",
+          "share_of_on_wall": 0.03377653458391744
+        },
+        {
+          "name": "flow_map_forward",
+          "calls": 1,
+          "seconds": 0.6156072998046875,
+          "description": "begins before model(...); includes the double-time model call, its return, and log_D_st_pred.exp(); ends after the exp result exists. The exponential is part of producing D_st_pred, not a later stage.",
+          "share_of_on_wall": 0.9258078199528208
+        },
+        {
+          "name": "state_update",
+          "calls": 0,
+          "seconds": 0.0,
+          "description": "begins at the weight computation; includes z_tilde composition, the gamma churn arithmetic and torch.randn_like(z); ends after the new z exists. NOT reached on the final step.",
+          "structural_zero": true,
+          "reason": "final-step branch exits before state update"
+        },
+        {
+          "name": "endpoint_decode",
+          "calls": 1,
+          "seconds": 0.00829030418395996,
+          "description": "the terminal argmax over the vocabulary axis.",
+          "share_of_on_wall": 0.01246773461869738
+        }
+      ],
+      "attribution": {
+        "denominator": "on_wall_median",
+        "attributed_seconds": 0.6644117870330811,
+        "unattributed_seconds": 0.0005289129018782868,
+        "unattributed_basis": "median of per-trial (wall - attributed)",
+        "unattributed_trials": [
+          0.0005686293346807147,
+          0.0005281387371941504,
+          0.0005289129018782868
+        ],
+        "unattributed_note": "fork_rng enter/exit, manual_seed, loop control, observer dispatch, result assembly and executed-metadata construction are deliberately left unattributed rather than folded into an adjacent event"
+      }
+    },
+    {
+      "steps": 32,
+      "batch_size": 1,
+      "gamma": 1.0,
+      "seed": 100,
+      "max_length": 1024,
+      "non_interference": {
+        "off": {
+          "tokens": {
+            "sha256": "8c30cfdad338ca51cc165dd863969cfb677f9793be87cb418e7e8cae5a39a819",
+            "shape": [
+              1,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:0"
+          },
+          "final_latent": {
+            "sha256": "f967cbbd1c9d6084c411204319b917e86a0d872dfc1d161482a131c70fed60a0",
+            "shape": [
+              1,
+              1024,
+              50258
+            ],
+            "dtype": "torch.bfloat16",
+            "device": "cuda:0"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed": {
+            "solver": "flow_map",
+            "steps_requested": 32,
+            "steps_executed": 32,
+            "nfe": 32,
+            "gamma": 1.0,
+            "tau_grid": [
+              0.0,
+              0.03125,
+              0.0625,
+              0.09375,
+              0.125,
+              0.15625,
+              0.1875,
+              0.21875,
+              0.25,
+              0.28125,
+              0.3125,
+              0.34375,
+              0.375,
+              0.40625,
+              0.4375,
+              0.46875,
+              0.5,
+              0.53125,
+              0.5625,
+              0.59375,
+              0.625,
+              0.65625,
+              0.6875,
+              0.71875,
+              0.75,
+              0.78125,
+              0.8125,
+              0.84375,
+              0.875,
+              0.90625,
+              0.9375,
+              0.96875,
+              1.0
+            ],
+            "seed": 100,
+            "max_length": 1024,
+            "use_jvp_attn": false
+          },
+          "terminal_rng_cuda": {
+            "sha256": "8336c77c668de61bfd2205806a42115b26f8ff31bcf26b263e286fcb1e8a171f",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on": {
+          "tokens": {
+            "sha256": "8c30cfdad338ca51cc165dd863969cfb677f9793be87cb418e7e8cae5a39a819",
+            "shape": [
+              1,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:0"
+          },
+          "final_latent": {
+            "sha256": "f967cbbd1c9d6084c411204319b917e86a0d872dfc1d161482a131c70fed60a0",
+            "shape": [
+              1,
+              1024,
+              50258
+            ],
+            "dtype": "torch.bfloat16",
+            "device": "cuda:0"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed": {
+            "solver": "flow_map",
+            "steps_requested": 32,
+            "steps_executed": 32,
+            "nfe": 32,
+            "gamma": 1.0,
+            "tau_grid": [
+              0.0,
+              0.03125,
+              0.0625,
+              0.09375,
+              0.125,
+              0.15625,
+              0.1875,
+              0.21875,
+              0.25,
+              0.28125,
+              0.3125,
+              0.34375,
+              0.375,
+              0.40625,
+              0.4375,
+              0.46875,
+              0.5,
+              0.53125,
+              0.5625,
+              0.59375,
+              0.625,
+              0.65625,
+              0.6875,
+              0.71875,
+              0.75,
+              0.78125,
+              0.8125,
+              0.84375,
+              0.875,
+              0.90625,
+              0.9375,
+              0.96875,
+              1.0
+            ],
+            "seed": 100,
+            "max_length": 1024,
+            "use_jvp_attn": false
+          },
+          "terminal_rng_cuda": {
+            "sha256": "8336c77c668de61bfd2205806a42115b26f8ff31bcf26b263e286fcb1e8a171f",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on_events": {
+          "counts": {
+            "grid_init": 1,
+            "time_schedule": 32,
+            "flow_map_forward": 32,
+            "state_update": 31,
+            "endpoint_decode": 1
+          },
+          "order": [
+            "grid_init",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "endpoint_decode"
+          ],
+          "balanced": true
+        },
+        "matches": {
+          "tokens": true,
+          "final_latent": true,
+          "terminal_rng_cpu": true,
+          "executed_metadata": true,
+          "terminal_rng_cuda": true
+        },
+        "status": "ok"
+      },
+      "random_calls": {
+        "observed": {
+          "randn": 1,
+          "randn_like": 31
+        },
+        "expected": {
+          "randn": 1,
+          "randn_like": 31
+        },
+        "matches": true
+      },
+      "event_order": {
+        "observed_length": 97,
+        "matches_expected": true
+      },
+      "status": "ok",
+      "timing_attempted": true,
+      "latency": {
+        "verdict_seconds": 1.5287522820290178,
+        "verdict_basis": "instrumentation_off_outer_wall_clock",
+        "off_wall_trials": [
+          1.5287522820290178,
+          1.49816969409585,
+          1.5491989509901032
+        ],
+        "on_wall_median": 1.5152892949990928,
+        "instrumentation_overhead_seconds": -0.013462987029924989
+      },
+      "peak_memory": {
+        "allocated_bytes": 1926587904,
+        "reserved_bytes": 2587885568,
+        "basis": "instrumentation_off_pass"
+      },
+      "events": [
+        {
+          "name": "grid_init",
+          "calls": 1,
+          "seconds": 0.003126176118850708,
+          "description": "begins at the tau linspace; includes the initial randn draw of the [B, L, V] latent; ends once z exists. Does NOT include manual_seed or entry into fork_rng \u2014 those stay unattributed.",
+          "share_of_on_wall": 0.0020630886320968695
+        },
+        {
+          "name": "time_schedule",
+          "calls": 32,
+          "seconds": 0.5408368606567382,
+          "description": "begins at tau_curr/tau_next indexing; includes _tau_to_t, sigma_target, sigma_tilde, t_tilde and the _t_to_tau inverse; ends once tau_tilde exists. NOT cheap scalar arithmetic despite appearances: _tau_to_t/_t_to_tau go through alpha_to_gamma/gamma_to_alpha, which run `lut(x.cpu().numpy())` \u2014 a device-to-host copy that SYNCHRONIZES the stream, a scipy CubicSpline evaluation on the host, then a copy back. Three such round trips per step (_tau_to_t twice, _t_to_tau once). Independently reproduced: 32 iterations of a busy stream cost ~379 ms more with the round trip than without, against ~515 ms attributed to this event at steps=32 batch=1.",
+          "share_of_on_wall": 0.35691987163221
+        },
+        {
+          "name": "flow_map_forward",
+          "calls": 32,
+          "seconds": 0.6243198070526123,
+          "description": "begins before model(...); includes the double-time model call, its return, and log_D_st_pred.exp(); ends after the exp result exists. The exponential is part of producing D_st_pred, not a later stage.",
+          "share_of_on_wall": 0.41201360632128403
+        },
+        {
+          "name": "state_update",
+          "calls": 31,
+          "seconds": 0.3624221439361572,
+          "description": "begins at the weight computation; includes z_tilde composition, the gamma churn arithmetic and torch.randn_like(z); ends after the new z exists. NOT reached on the final step.",
+          "share_of_on_wall": 0.2391768655214938
+        },
+        {
+          "name": "endpoint_decode",
+          "calls": 1,
+          "seconds": 0.00013312000036239623,
+          "description": "the terminal argmax over the vocabulary axis.",
+          "share_of_on_wall": 8.785121151567029e-05
+        }
+      ],
+      "attribution": {
+        "denominator": "on_wall_median",
+        "attributed_seconds": 1.5144256255030633,
+        "unattributed_seconds": 0.0008636694960295621,
+        "unattributed_basis": "median of per-trial (wall - attributed)",
+        "unattributed_trials": [
+          0.0007513199476527621,
+          0.0014823322677983697,
+          0.0008636694960295621
+        ],
+        "unattributed_note": "fork_rng enter/exit, manual_seed, loop control, observer dispatch, result assembly and executed-metadata construction are deliberately left unattributed rather than folded into an adjacent event"
+      }
+    },
+    {
+      "steps": 32,
+      "batch_size": 8,
+      "gamma": 1.0,
+      "seed": 100,
+      "max_length": 1024,
+      "non_interference": {
+        "off": {
+          "tokens": {
+            "sha256": "1e64f59b55938d2ff67c4628602562209faff3078b7c240fb6f8bef14d5c0c9d",
+            "shape": [
+              8,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:0"
+          },
+          "final_latent": {
+            "sha256": "50875adf5b6a070910e98b9a3d06ef9d6d66a33186f88262ce7359f9bc374891",
+            "shape": [
+              8,
+              1024,
+              50258
+            ],
+            "dtype": "torch.bfloat16",
+            "device": "cuda:0"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed": {
+            "solver": "flow_map",
+            "steps_requested": 32,
+            "steps_executed": 32,
+            "nfe": 32,
+            "gamma": 1.0,
+            "tau_grid": [
+              0.0,
+              0.03125,
+              0.0625,
+              0.09375,
+              0.125,
+              0.15625,
+              0.1875,
+              0.21875,
+              0.25,
+              0.28125,
+              0.3125,
+              0.34375,
+              0.375,
+              0.40625,
+              0.4375,
+              0.46875,
+              0.5,
+              0.53125,
+              0.5625,
+              0.59375,
+              0.625,
+              0.65625,
+              0.6875,
+              0.71875,
+              0.75,
+              0.78125,
+              0.8125,
+              0.84375,
+              0.875,
+              0.90625,
+              0.9375,
+              0.96875,
+              1.0
+            ],
+            "seed": 100,
+            "max_length": 1024,
+            "use_jvp_attn": false
+          },
+          "terminal_rng_cuda": {
+            "sha256": "4a7e2bcd5e2d6598f61838ba773d66d7a704298dc54e16927dffcd2b63129992",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on": {
+          "tokens": {
+            "sha256": "1e64f59b55938d2ff67c4628602562209faff3078b7c240fb6f8bef14d5c0c9d",
+            "shape": [
+              8,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:0"
+          },
+          "final_latent": {
+            "sha256": "50875adf5b6a070910e98b9a3d06ef9d6d66a33186f88262ce7359f9bc374891",
+            "shape": [
+              8,
+              1024,
+              50258
+            ],
+            "dtype": "torch.bfloat16",
+            "device": "cuda:0"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed": {
+            "solver": "flow_map",
+            "steps_requested": 32,
+            "steps_executed": 32,
+            "nfe": 32,
+            "gamma": 1.0,
+            "tau_grid": [
+              0.0,
+              0.03125,
+              0.0625,
+              0.09375,
+              0.125,
+              0.15625,
+              0.1875,
+              0.21875,
+              0.25,
+              0.28125,
+              0.3125,
+              0.34375,
+              0.375,
+              0.40625,
+              0.4375,
+              0.46875,
+              0.5,
+              0.53125,
+              0.5625,
+              0.59375,
+              0.625,
+              0.65625,
+              0.6875,
+              0.71875,
+              0.75,
+              0.78125,
+              0.8125,
+              0.84375,
+              0.875,
+              0.90625,
+              0.9375,
+              0.96875,
+              1.0
+            ],
+            "seed": 100,
+            "max_length": 1024,
+            "use_jvp_attn": false
+          },
+          "terminal_rng_cuda": {
+            "sha256": "4a7e2bcd5e2d6598f61838ba773d66d7a704298dc54e16927dffcd2b63129992",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on_events": {
+          "counts": {
+            "grid_init": 1,
+            "time_schedule": 32,
+            "flow_map_forward": 32,
+            "state_update": 31,
+            "endpoint_decode": 1
+          },
+          "order": [
+            "grid_init",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "endpoint_decode"
+          ],
+          "balanced": true
+        },
+        "matches": {
+          "tokens": true,
+          "final_latent": true,
+          "terminal_rng_cpu": true,
+          "executed_metadata": true,
+          "terminal_rng_cuda": true
+        },
+        "status": "ok"
+      },
+      "random_calls": {
+        "observed": {
+          "randn": 1,
+          "randn_like": 31
+        },
+        "expected": {
+          "randn": 1,
+          "randn_like": 31
+        },
+        "matches": true
+      },
+      "event_order": {
+        "observed_length": 97,
+        "matches_expected": true
+      },
+      "status": "ok",
+      "timing_attempted": true,
+      "latency": {
+        "verdict_seconds": 7.926928348024376,
+        "verdict_basis": "instrumentation_off_outer_wall_clock",
+        "off_wall_trials": [
+          7.939454184961505,
+          7.926928348024376,
+          7.861598412040621
+        ],
+        "on_wall_median": 8.065275539993308,
+        "instrumentation_overhead_seconds": 0.13834719196893275
+      },
+      "peak_memory": {
+        "allocated_bytes": 10574079488,
+        "reserved_bytes": 13612613632,
+        "basis": "instrumentation_off_pass"
+      },
+      "events": [
+        {
+          "name": "grid_init",
+          "calls": 1,
+          "seconds": 0.0054249920845031736,
+          "description": "begins at the tau linspace; includes the initial randn draw of the [B, L, V] latent; ends once z exists. Does NOT include manual_seed or entry into fork_rng \u2014 those stay unattributed.",
+          "share_of_on_wall": 0.0006726356784219271
+        },
+        {
+          "name": "time_schedule",
+          "calls": 32,
+          "seconds": 0.6332416000366211,
+          "description": "begins at tau_curr/tau_next indexing; includes _tau_to_t, sigma_target, sigma_tilde, t_tilde and the _t_to_tau inverse; ends once tau_tilde exists. NOT cheap scalar arithmetic despite appearances: _tau_to_t/_t_to_tau go through alpha_to_gamma/gamma_to_alpha, which run `lut(x.cpu().numpy())` \u2014 a device-to-host copy that SYNCHRONIZES the stream, a scipy CubicSpline evaluation on the host, then a copy back. Three such round trips per step (_tau_to_t twice, _t_to_tau once). Independently reproduced: 32 iterations of a busy stream cost ~379 ms more with the round trip than without, against ~515 ms attributed to this event at steps=32 batch=1.",
+          "share_of_on_wall": 0.0785145649267113
+        },
+        {
+          "name": "flow_map_forward",
+          "calls": 32,
+          "seconds": 4.408804702758788,
+          "description": "begins before model(...); includes the double-time model call, its return, and log_D_st_pred.exp(); ends after the exp result exists. The exponential is part of producing D_st_pred, not a later stage.",
+          "share_of_on_wall": 0.546640307686555
+        },
+        {
+          "name": "state_update",
+          "calls": 31,
+          "seconds": 2.967099342346191,
+          "description": "begins at the weight computation; includes z_tilde composition, the gamma churn arithmetic and torch.randn_like(z); ends after the new z exists. NOT reached on the final step.",
+          "share_of_on_wall": 0.3678856757755176
+        },
+        {
+          "name": "endpoint_decode",
+          "calls": 1,
+          "seconds": 0.0036239359378814695,
+          "description": "the terminal argmax over the vocabulary axis.",
+          "share_of_on_wall": 0.00044932574465825085
+        }
+      ],
+      "attribution": {
+        "denominator": "on_wall_median",
+        "attributed_seconds": 8.060704176068306,
+        "unattributed_seconds": 0.003748516577296357,
+        "unattributed_basis": "median of per-trial (wall - attributed)",
+        "unattributed_trials": [
+          0.003748516577296357,
+          0.0008969355132446566,
+          0.0045713639250024585
+        ],
+        "unattributed_note": "fork_rng enter/exit, manual_seed, loop control, observer dispatch, result assembly and executed-metadata construction are deliberately left unattributed rather than folded into an adjacent event"
+      }
+    },
+    {
+      "steps": 32,
+      "batch_size": 32,
+      "gamma": 1.0,
+      "seed": 100,
+      "max_length": 1024,
+      "status": "oom",
+      "failure_stage": "preflight",
+      "reason_code": "cuda_out_of_memory",
+      "timing_attempted": false,
+      "latency": null,
+      "events": null,
+      "peak_memory": null,
+      "attribution": null,
+      "exception_class": "OutOfMemoryError",
+      "exception_message": "CUDA out of memory. Tried to allocate 6.14 GiB. GPU 0 has a total capacity of 47.37 GiB of which 2.17 GiB is free. Process 3683673 has 13.77 GiB memory in use. Process 100179 has 526.00 MiB memory in use. Process 169275 has 5.07 GiB memory in use. Including non-PyTorch memory, this process has 25.75"
+    }
+  ]
+}
