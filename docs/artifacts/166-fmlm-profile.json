@@ -1,9 +1,9 @@
 {
   "run": {
-    "head_sha": "83f5ee764de0e8efc4638d27e5ab127425e2a85f",
+    "head_sha": "54b8e663b2f8655b6cdb087d81a0e2edb706cf54",
     "worktree_clean": true,
     "worktree_dirty_paths": [],
-    "command": "/home/nishide.21066/.claude/jobs/1492d35a/tmp/wt-fmlm4/benchmarks/flm/fmlm_profile.py --device cuda:0 --out /home/nishide.21066/.claude/jobs/1492d35a/tmp/fmlm-out4",
+    "command": "/home/nishide.21066/.claude/jobs/1492d35a/tmp/wt-fmlm5/benchmarks/flm/fmlm_profile.py --device cuda:0 --out /home/nishide.21066/.claude/jobs/1492d35a/tmp/fmlm-out5",
     "environment": {
       "torch": "2.10.0+cu128",
       "cuda": "12.8",
@@ -209,54 +209,99 @@
       "status": "ok",
       "timing_attempted": true,
       "latency": {
-        "verdict_seconds": 0.04206029593478888,
+        "verdict_seconds": 0.029481625999324024,
         "verdict_basis": "instrumentation_off_outer_wall_clock",
         "off_wall_trials": [
-          0.04237680300138891,
-          0.04206029593478888,
-          0.028909623972140253
+          0.023609708994627,
+          0.032700082985684276,
+          0.029481625999324024
         ],
-        "on_wall_median": 0.04194291599560529,
+        "on_wall_median": 0.03806716902181506,
         "on_wall_trials": [
-          0.04522814496885985,
-          0.03956600197125226,
-          0.04194291599560529
+          0.03607891593128443,
+          0.04389494506176561,
+          0.03806716902181506
         ],
         "instrumentation_overhead": {
-          "seconds": -0.0001173799391835928,
-          "off_median_seconds": 0.04206029593478888,
-          "on_median_seconds": 0.04194291599560529,
-          "off_spread_seconds": 0.013467179029248655,
-          "resolvable": false,
-          "basis": "on_wall_median - off_wall_median, compared against the OFF trial spread; `resolvable` is False when the difference is smaller than the spread, in which case the sign carries no information"
+          "paired_delta_trials": [
+            0.012469206936657429,
+            0.011194862076081336,
+            0.008585543022491038
+          ],
+          "median_paired_delta": 0.011194862076081336,
+          "off_trial_spread": 0.009090373991057277,
+          "resolvable": true,
+          "basis": "median of per-trial (on_wall - off_wall), from OFF/ON pairs run adjacently with the order reversed each trial, compared against the OFF trial spread. `resolvable` is False when the magnitude is below the spread, in which case the sign carries no information"
         }
       },
+      "trials": [
+        {
+          "trial": 0,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 0.023609708994627,
+          "on_wall_seconds": 0.03607891593128443,
+          "paired_overhead_seconds": 0.012469206936657429
+        },
+        {
+          "trial": 1,
+          "order": [
+            "on",
+            "off"
+          ],
+          "off_wall_seconds": 0.032700082985684276,
+          "on_wall_seconds": 0.04389494506176561,
+          "paired_overhead_seconds": 0.011194862076081336
+        },
+        {
+          "trial": 2,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 0.029481625999324024,
+          "on_wall_seconds": 0.03806716902181506,
+          "paired_overhead_seconds": 0.008585543022491038
+        }
+      ],
       "peak_memory": {
-        "allocated_bytes": 1286337024,
-        "reserved_bytes": 1549795328,
-        "basis": "instrumentation_off_pass"
+        "allocated_bytes_trials": [
+          1286337024,
+          1286337024,
+          1286337024
+        ],
+        "reserved_bytes_trials": [
+          1549795328,
+          1549795328,
+          1549795328
+        ],
+        "max_allocated_bytes": 1286337024,
+        "max_reserved_bytes": 1549795328,
+        "basis": "instrumentation_off_trials"
       },
       "events": [
         {
           "name": "grid_init",
           "calls": 1,
-          "seconds": 0.004320384025573731,
+          "seconds": 0.002519423961639404,
           "description": "begins at the tau linspace; includes the initial randn draw of the [B, L, V] latent; ends once z exists. Does NOT include manual_seed or entry into fork_rng \u2014 those stay unattributed.",
-          "share_of_on_wall": 0.1051623638444478
+          "share_of_on_wall": 0.06274512427786452
         },
         {
           "name": "time_schedule",
           "calls": 1,
-          "seconds": 0.018989055633544923,
+          "seconds": 0.015857664108276368,
           "description": "begins at tau_curr/tau_next indexing; includes _tau_to_t, sigma_target, sigma_tilde, t_tilde and the _t_to_tau inverse; ends once tau_tilde exists. NOT cheap scalar arithmetic despite appearances: _tau_to_t/_t_to_tau go through alpha_to_gamma/gamma_to_alpha, which run `lut(x.cpu().numpy())` \u2014 a device-to-host copy that SYNCHRONIZES the stream, a scipy CubicSpline evaluation on the host, then a copy back. Three such round trips per step (_tau_to_t twice, _t_to_tau once). Independently reproduced: 32 iterations of a busy stream cost ~379 ms more with the round trip than without, against ~515 ms attributed to this event at steps=32 batch=1.",
-          "share_of_on_wall": 0.438213784520252
+          "share_of_on_wall": 0.4165706175625735
         },
         {
           "name": "flow_map_forward",
           "calls": 1,
-          "seconds": 0.017971200942993162,
+          "seconds": 0.018319360733032225,
           "description": "begins before model(...); includes the double-time model call, its return, and log_D_st_pred.exp(); ends after the exp result exists. The exponential is part of producing D_st_pred, not a later stage.",
-          "share_of_on_wall": 0.4405171997715393
+          "share_of_on_wall": 0.4621658028906493
         },
         {
           "name": "state_update",
@@ -269,24 +314,30 @@
         {
           "name": "endpoint_decode",
           "calls": 1,
-          "seconds": 0.0001372160017490387,
+          "seconds": 0.00016486400365829467,
           "description": "the terminal argmax over the vocabulary axis.",
-          "share_of_on_wall": 0.0032609814625571627
+          "share_of_on_wall": 0.004569538729275934
         }
       ],
       "attribution": {
-        "denominator": "on_wall_median",
-        "attributed_seconds": 0.04161273708939552,
-        "unattributed_seconds": 0.0003487220900133259,
-        "coverage_ratio": 0.991989040212621,
+        "denominator": "per_trial_on_wall_seconds",
+        "aggregation": "median_of_per_trial_ratios",
+        "attributed_seconds": 0.037739936001598834,
+        "unattributed_seconds": 0.000310049450956279,
+        "unattributed_seconds_trials": [
+          0.0003037153854966168,
+          0.000310049450956279,
+          0.0003272330202162277
+        ],
+        "unattributed_basis": "median of per-trial (wall - attributed)",
+        "coverage_ratio": 0.9915819148758497,
+        "coverage_ratio_trials": [
+          0.9915819148758497,
+          0.9929365568058007,
+          0.9914037994254655
+        ],
         "coverage_basis": "median of per-trial (sum of event seconds / wall)",
         "coverage_note": "the per-event `share_of_on_wall` values are per-trial medians and do NOT sum to this ratio: each event's median can come from a different trial, so their sum is not a coverage figure",
-        "unattributed_basis": "median of per-trial (wall - attributed)",
-        "unattributed_trials": [
-          0.00036232085060328156,
-          0.0003487220900133259,
-          0.00033017890620976736
-        ],
         "unattributed_note": "fork_rng enter/exit, manual_seed, loop control, observer dispatch, result assembly and executed-metadata construction are deliberately left unattributed rather than folded into an adjacent event"
       }
     },
@@ -441,54 +492,99 @@
       "status": "ok",
       "timing_attempted": true,
       "latency": {
-        "verdict_seconds": 0.17721196298953146,
+        "verdict_seconds": 0.15024857805110514,
         "verdict_basis": "instrumentation_off_outer_wall_clock",
         "off_wall_trials": [
-          0.17721196298953146,
-          0.1719004069454968,
-          0.1826271809404716
+          0.14227584702894092,
+          0.15089368098415434,
+          0.15024857805110514
         ],
-        "on_wall_median": 0.1746313190087676,
+        "on_wall_median": 0.1544344980502501,
         "on_wall_trials": [
-          0.1746313190087676,
-          0.16439276607707143,
-          0.18323692807462066
+          0.16769727400969714,
+          0.1544344980502501,
+          0.14806637505535036
         ],
         "instrumentation_overhead": {
-          "seconds": -0.0025806439807638526,
-          "off_median_seconds": 0.17721196298953146,
-          "on_median_seconds": 0.1746313190087676,
-          "off_spread_seconds": 0.010726773994974792,
+          "paired_delta_trials": [
+            0.025421426980756223,
+            0.0035408170660957694,
+            -0.0021822029957547784
+          ],
+          "median_paired_delta": 0.0035408170660957694,
+          "off_trial_spread": 0.008617833955213428,
           "resolvable": false,
-          "basis": "on_wall_median - off_wall_median, compared against the OFF trial spread; `resolvable` is False when the difference is smaller than the spread, in which case the sign carries no information"
+          "basis": "median of per-trial (on_wall - off_wall), from OFF/ON pairs run adjacently with the order reversed each trial, compared against the OFF trial spread. `resolvable` is False when the magnitude is below the spread, in which case the sign carries no information"
         }
       },
+      "trials": [
+        {
+          "trial": 0,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 0.14227584702894092,
+          "on_wall_seconds": 0.16769727400969714,
+          "paired_overhead_seconds": 0.025421426980756223
+        },
+        {
+          "trial": 1,
+          "order": [
+            "on",
+            "off"
+          ],
+          "off_wall_seconds": 0.15089368098415434,
+          "on_wall_seconds": 0.1544344980502501,
+          "paired_overhead_seconds": 0.0035408170660957694
+        },
+        {
+          "trial": 2,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 0.15024857805110514,
+          "on_wall_seconds": 0.14806637505535036,
+          "paired_overhead_seconds": -0.0021822029957547784
+        }
+      ],
       "peak_memory": {
-        "allocated_bytes": 4810842624,
-        "reserved_bytes": 5370806272,
-        "basis": "instrumentation_off_pass"
+        "allocated_bytes_trials": [
+          4810842624,
+          4810842624,
+          4810842624
+        ],
+        "reserved_bytes_trials": [
+          5370806272,
+          5370806272,
+          5370806272
+        ],
+        "max_allocated_bytes": 4810842624,
+        "max_reserved_bytes": 5370806272,
+        "basis": "instrumentation_off_trials"
       },
       "events": [
         {
           "name": "grid_init",
           "calls": 1,
-          "seconds": 0.006027935981750488,
+          "seconds": 0.005266111850738525,
           "description": "begins at the tau linspace; includes the initial randn draw of the [B, L, V] latent; ends once z exists. Does NOT include manual_seed or entry into fork_rng \u2014 those stay unattributed.",
-          "share_of_on_wall": 0.03289694956736939
+          "share_of_on_wall": 0.03556588623696596
         },
         {
           "name": "time_schedule",
           "calls": 1,
-          "seconds": 0.02349567985534668,
+          "seconds": 0.017871871948242187,
           "description": "begins at tau_curr/tau_next indexing; includes _tau_to_t, sigma_target, sigma_tilde, t_tilde and the _t_to_tau inverse; ends once tau_tilde exists. NOT cheap scalar arithmetic despite appearances: _tau_to_t/_t_to_tau go through alpha_to_gamma/gamma_to_alpha, which run `lut(x.cpu().numpy())` \u2014 a device-to-host copy that SYNCHRONIZES the stream, a scipy CubicSpline evaluation on the host, then a copy back. Three such round trips per step (_tau_to_t twice, _t_to_tau once). Independently reproduced: 32 iterations of a busy stream cost ~379 ms more with the round trip than without, against ~515 ms attributed to this event at steps=32 batch=1.",
-          "share_of_on_wall": 0.12822568082880323
+          "share_of_on_wall": 0.11572460929310634
         },
         {
           "name": "flow_map_forward",
           "calls": 1,
-          "seconds": 0.14361907958984374,
+          "seconds": 0.12901274108886718,
           "description": "begins before model(...); includes the double-time model call, its return, and log_D_st_pred.exp(); ends after the exp result exists. The exponential is part of producing D_st_pred, not a later stage.",
-          "share_of_on_wall": 0.8310499366894671
+          "share_of_on_wall": 0.8367862203517414
         },
         {
           "name": "state_update",
@@ -503,22 +599,28 @@
           "calls": 1,
           "seconds": 0.001017856001853943,
           "description": "the terminal argmax over the vocabulary axis.",
-          "share_of_on_wall": 0.005828599403769264
+          "share_of_on_wall": 0.006590859003036689
         }
       ],
       "attribution": {
-        "denominator": "on_wall_median",
-        "attributed_seconds": 0.17419735133647918,
-        "unattributed_seconds": 0.0004339676722884267,
-        "coverage_ratio": 0.9975149493530044,
+        "denominator": "per_trial_on_wall_seconds",
+        "aggregation": "median_of_per_trial_ratios",
+        "attributed_seconds": 0.154044548869133,
+        "unattributed_seconds": 0.0003956563854589923,
+        "unattributed_seconds_trials": [
+          0.00040235869120805456,
+          0.00038994918111712185,
+          0.0003956563854589923
+        ],
+        "unattributed_basis": "median of per-trial (wall - attributed)",
+        "coverage_ratio": 0.9974749865733352,
+        "coverage_ratio_trials": [
+          0.9976006843666118,
+          0.9974749865733352,
+          0.997327844452793
+        ],
         "coverage_basis": "median of per-trial (sum of event seconds / wall)",
         "coverage_note": "the per-event `share_of_on_wall` values are per-trial medians and do NOT sum to this ratio: each event's median can come from a different trial, so their sum is not a coverage figure",
-        "unattributed_basis": "median of per-trial (wall - attributed)",
-        "unattributed_trials": [
-          0.0004339676722884267,
-          0.0004603823013603625,
-          0.0004164187600836089
-        ],
         "unattributed_note": "fork_rng enter/exit, manual_seed, loop control, observer dispatch, result assembly and executed-metadata construction are deliberately left unattributed rather than folded into an adjacent event"
       }
     },
@@ -673,54 +775,99 @@
       "status": "ok",
       "timing_attempted": true,
       "latency": {
-        "verdict_seconds": 0.669458762044087,
+        "verdict_seconds": 0.5897513759555295,
         "verdict_basis": "instrumentation_off_outer_wall_clock",
         "off_wall_trials": [
-          0.669458762044087,
-          0.6876040559727699,
-          0.6558051609899849
+          0.5897513759555295,
+          0.575781257939525,
+          0.5972282970324159
         ],
-        "on_wall_median": 0.6755793939810246,
+        "on_wall_median": 0.5906594010302797,
         "on_wall_trials": [
-          0.7164943410316482,
-          0.6708448199788108,
-          0.6755793939810246
+          0.5906594010302797,
+          0.5932732749497518,
+          0.5685130200581625
         ],
         "instrumentation_overhead": {
-          "seconds": 0.006120631936937571,
-          "off_median_seconds": 0.669458762044087,
-          "on_median_seconds": 0.6755793939810246,
-          "off_spread_seconds": 0.031798894982784986,
+          "paired_delta_trials": [
+            0.000908025074750185,
+            0.017492017010226846,
+            -0.028715276974253356
+          ],
+          "median_paired_delta": 0.000908025074750185,
+          "off_trial_spread": 0.021447039092890918,
           "resolvable": false,
-          "basis": "on_wall_median - off_wall_median, compared against the OFF trial spread; `resolvable` is False when the difference is smaller than the spread, in which case the sign carries no information"
+          "basis": "median of per-trial (on_wall - off_wall), from OFF/ON pairs run adjacently with the order reversed each trial, compared against the OFF trial spread. `resolvable` is False when the magnitude is below the spread, in which case the sign carries no information"
         }
       },
+      "trials": [
+        {
+          "trial": 0,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 0.5897513759555295,
+          "on_wall_seconds": 0.5906594010302797,
+          "paired_overhead_seconds": 0.000908025074750185
+        },
+        {
+          "trial": 1,
+          "order": [
+            "on",
+            "off"
+          ],
+          "off_wall_seconds": 0.575781257939525,
+          "on_wall_seconds": 0.5932732749497518,
+          "paired_overhead_seconds": 0.017492017010226846
+        },
+        {
+          "trial": 2,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 0.5972282970324159,
+          "on_wall_seconds": 0.5685130200581625,
+          "paired_overhead_seconds": -0.028715276974253356
+        }
+      ],
       "peak_memory": {
-        "allocated_bytes": 17162740224,
-        "reserved_bytes": 18689818624,
-        "basis": "instrumentation_off_pass"
+        "allocated_bytes_trials": [
+          17162740224,
+          17162740224,
+          17162740224
+        ],
+        "reserved_bytes_trials": [
+          18689818624,
+          18689818624,
+          18689818624
+        ],
+        "max_allocated_bytes": 17162740224,
+        "max_reserved_bytes": 18689818624,
+        "basis": "instrumentation_off_trials"
       },
       "events": [
         {
           "name": "grid_init",
           "calls": 1,
-          "seconds": 0.02199456024169922,
+          "seconds": 0.01954755210876465,
           "description": "begins at the tau linspace; includes the initial randn draw of the [B, L, V] latent; ends once z exists. Does NOT include manual_seed or entry into fork_rng \u2014 those stay unattributed.",
-          "share_of_on_wall": 0.030697465398024266
+          "share_of_on_wall": 0.03309445693180893
         },
         {
           "name": "time_schedule",
           "calls": 1,
-          "seconds": 0.010908672332763672,
+          "seconds": 0.008950783729553222,
           "description": "begins at tau_curr/tau_next indexing; includes _tau_to_t, sigma_target, sigma_tilde, t_tilde and the _t_to_tau inverse; ends once tau_tilde exists. NOT cheap scalar arithmetic despite appearances: _tau_to_t/_t_to_tau go through alpha_to_gamma/gamma_to_alpha, which run `lut(x.cpu().numpy())` \u2014 a device-to-host copy that SYNCHRONIZES the stream, a scipy CubicSpline evaluation on the host, then a copy back. Three such round trips per step (_tau_to_t twice, _t_to_tau once). Independently reproduced: 32 iterations of a busy stream cost ~379 ms more with the round trip than without, against ~515 ms attributed to this event at steps=32 batch=1.",
-          "share_of_on_wall": 0.016147135969440285
+          "share_of_on_wall": 0.015087117703576522
         },
         {
           "name": "flow_map_forward",
           "calls": 1,
-          "seconds": 0.6395556030273437,
+          "seconds": 0.5470576782226563,
           "description": "begins before model(...); includes the double-time model call, its return, and log_D_st_pred.exp(); ends after the exp result exists. The exponential is part of producing D_st_pred, not a later stage.",
-          "share_of_on_wall": 0.9361185819918146
+          "share_of_on_wall": 0.9336108035074313
         },
         {
           "name": "state_update",
@@ -733,24 +880,30 @@
         {
           "name": "endpoint_decode",
           "calls": 1,
-          "seconds": 0.00979468822479248,
+          "seconds": 0.009175040245056153,
           "description": "the terminal argmax over the vocabulary axis.",
-          "share_of_on_wall": 0.013670293907261774
+          "share_of_on_wall": 0.01613866335746803
         }
       ],
       "attribution": {
-        "denominator": "on_wall_median",
-        "attributed_seconds": 0.6749911289215088,
-        "unattributed_seconds": 0.0005882650595158134,
-        "coverage_ratio": 0.9991638479060296,
+        "denominator": "per_trial_on_wall_seconds",
+        "aggregation": "median_of_per_trial_ratios",
+        "attributed_seconds": 0.588943790435791,
+        "unattributed_seconds": 0.001715610594488659,
+        "unattributed_seconds_trials": [
+          0.001715610594488659,
+          0.0005939517533406491,
+          0.002422449608333377
+        ],
+        "unattributed_basis": "median of per-trial (wall - attributed)",
+        "coverage_ratio": 0.997095431662484,
+        "coverage_ratio_trials": [
+          0.997095431662484,
+          0.9989988563813347,
+          0.9957389725074625
+        ],
         "coverage_basis": "median of per-trial (sum of event seconds / wall)",
         "coverage_note": "the per-event `share_of_on_wall` values are per-trial medians and do NOT sum to this ratio: each event's median can come from a different trial, so their sum is not a coverage figure",
-        "unattributed_basis": "median of per-trial (wall - attributed)",
-        "unattributed_trials": [
-          0.0005973082939162433,
-          0.0005609283009544441,
-          0.0005882650595158134
-        ],
         "unattributed_note": "fork_rng enter/exit, manual_seed, loop control, observer dispatch, result assembly and executed-metadata construction are deliberately left unattributed rather than folded into an adjacent event"
       }
     },
@@ -1061,83 +1214,134 @@
       "status": "ok",
       "timing_attempted": true,
       "latency": {
-        "verdict_seconds": 1.5212077850010246,
+        "verdict_seconds": 1.219831591937691,
         "verdict_basis": "instrumentation_off_outer_wall_clock",
         "off_wall_trials": [
-          1.5212077850010246,
-          1.5199870319338515,
-          1.528545021894388
+          1.219831591937691,
+          1.2138904160819948,
+          1.2311615590006113
         ],
-        "on_wall_median": 1.5588352440390736,
+        "on_wall_median": 1.2253356010187417,
         "on_wall_trials": [
-          1.5908644939772785,
-          1.5588352440390736,
-          1.5191738379653543
+          1.2197817870182917,
+          1.2253356010187417,
+          1.233182658907026
         ],
         "instrumentation_overhead": {
-          "seconds": 0.03762745903804898,
-          "off_median_seconds": 1.5212077850010246,
-          "on_median_seconds": 1.5588352440390736,
-          "off_spread_seconds": 0.00855798996053636,
-          "resolvable": true,
-          "basis": "on_wall_median - off_wall_median, compared against the OFF trial spread; `resolvable` is False when the difference is smaller than the spread, in which case the sign carries no information"
+          "paired_delta_trials": [
+            -4.980491939932108e-05,
+            0.011445184936746955,
+            0.0020210999064147472
+          ],
+          "median_paired_delta": 0.0020210999064147472,
+          "off_trial_spread": 0.017271142918616533,
+          "resolvable": false,
+          "basis": "median of per-trial (on_wall - off_wall), from OFF/ON pairs run adjacently with the order reversed each trial, compared against the OFF trial spread. `resolvable` is False when the magnitude is below the spread, in which case the sign carries no information"
         }
       },
+      "trials": [
+        {
+          "trial": 0,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 1.219831591937691,
+          "on_wall_seconds": 1.2197817870182917,
+          "paired_overhead_seconds": -4.980491939932108e-05
+        },
+        {
+          "trial": 1,
+          "order": [
+            "on",
+            "off"
+          ],
+          "off_wall_seconds": 1.2138904160819948,
+          "on_wall_seconds": 1.2253356010187417,
+          "paired_overhead_seconds": 0.011445184936746955
+        },
+        {
+          "trial": 2,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 1.2311615590006113,
+          "on_wall_seconds": 1.233182658907026,
+          "paired_overhead_seconds": 0.0020210999064147472
+        }
+      ],
       "peak_memory": {
-        "allocated_bytes": 1926587904,
-        "reserved_bytes": 2587885568,
-        "basis": "instrumentation_off_pass"
+        "allocated_bytes_trials": [
+          1926587904,
+          1926587904,
+          1926587904
+        ],
+        "reserved_bytes_trials": [
+          2587885568,
+          2587885568,
+          2587885568
+        ],
+        "max_allocated_bytes": 1926587904,
+        "max_reserved_bytes": 2587885568,
+        "basis": "instrumentation_off_trials"
       },
       "events": [
         {
           "name": "grid_init",
           "calls": 1,
-          "seconds": 0.0023447680473327637,
+          "seconds": 0.001732640027999878,
           "description": "begins at the tau linspace; includes the initial randn draw of the [B, L, V] latent; ends once z exists. Does NOT include manual_seed or entry into fork_rng \u2014 those stay unattributed.",
-          "share_of_on_wall": 0.0015041795188420759
+          "share_of_on_wall": 0.0014140126399325738
         },
         {
           "name": "time_schedule",
           "calls": 32,
-          "seconds": 0.5445949416160583,
+          "seconds": 0.3535257614850998,
           "description": "begins at tau_curr/tau_next indexing; includes _tau_to_t, sigma_target, sigma_tilde, t_tilde and the _t_to_tau inverse; ends once tau_tilde exists. NOT cheap scalar arithmetic despite appearances: _tau_to_t/_t_to_tau go through alpha_to_gamma/gamma_to_alpha, which run `lut(x.cpu().numpy())` \u2014 a device-to-host copy that SYNCHRONIZES the stream, a scipy CubicSpline evaluation on the host, then a copy back. Three such round trips per step (_tau_to_t twice, _t_to_tau once). Independently reproduced: 32 iterations of a busy stream cost ~379 ms more with the round trip than without, against ~515 ms attributed to this event at steps=32 batch=1.",
-          "share_of_on_wall": 0.34232641666074953
+          "share_of_on_wall": 0.2866775322630882
         },
         {
           "name": "flow_map_forward",
           "calls": 32,
-          "seconds": 0.6354079961776734,
+          "seconds": 0.5576682577133178,
           "description": "begins before model(...); includes the double-time model call, its return, and log_D_st_pred.exp(); ends after the exp result exists. The exponential is part of producing D_st_pred, not a later stage.",
-          "share_of_on_wall": 0.41825891171788615
+          "share_of_on_wall": 0.45718690313987703
         },
         {
           "name": "state_update",
           "calls": 31,
-          "seconds": 0.3726423377990723,
+          "seconds": 0.3101859197616577,
           "description": "begins at the weight computation; includes z_tilde composition, the gamma churn arithmetic and torch.randn_like(z); ends after the new z exists. NOT reached on the final step.",
-          "share_of_on_wall": 0.234238892884861
+          "share_of_on_wall": 0.2515328264805285
         },
         {
           "name": "endpoint_decode",
           "calls": 1,
-          "seconds": 0.00013312000036239623,
+          "seconds": 0.00012937599420547485,
           "description": "the terminal argmax over the vocabulary axis.",
-          "share_of_on_wall": 8.49651252934733e-05
+          "share_of_on_wall": 0.00010558413066421305
         }
       ],
       "attribution": {
-        "denominator": "on_wall_median",
-        "attributed_seconds": 1.5566937553435563,
-        "unattributed_seconds": 0.0008275677822531247,
-        "coverage_ratio": 0.9994722873537224,
+        "denominator": "per_trial_on_wall_seconds",
+        "aggregation": "median_of_per_trial_ratios",
+        "attributed_seconds": 1.2245989454388617,
+        "unattributed_seconds": 0.0007366555798800078,
+        "unattributed_seconds_trials": [
+          0.0007622334612531478,
+          0.0007366555798800078,
+          0.0007347188554704953
+        ],
+        "unattributed_basis": "median of per-trial (wall - attributed)",
+        "coverage_ratio": 0.9993988132073633,
+        "coverage_ratio_trials": [
+          0.9993751067040307,
+          0.9993988132073633,
+          0.9994042092222399
+        ],
         "coverage_basis": "median of per-trial (sum of event seconds / wall)",
         "coverage_note": "the per-event `share_of_on_wall` values are per-trial medians and do NOT sum to this ratio: each event's median can come from a different trial, so their sum is not a coverage figure",
-        "unattributed_basis": "median of per-trial (wall - attributed)",
-        "unattributed_trials": [
-          0.0008275677822531247,
-          0.002141488695517335,
-          0.0008016872461884539
-        ],
         "unattributed_note": "fork_rng enter/exit, manual_seed, loop control, observer dispatch, result assembly and executed-metadata construction are deliberately left unattributed rather than folded into an adjacent event"
       }
     },
@@ -1448,83 +1652,134 @@
       "status": "ok",
       "timing_attempted": true,
       "latency": {
-        "verdict_seconds": 7.522133736987598,
+        "verdict_seconds": 6.631887524970807,
         "verdict_basis": "instrumentation_off_outer_wall_clock",
         "off_wall_trials": [
-          7.565884249983355,
-          7.522133736987598,
-          7.508065469912253
+          6.562871312955394,
+          6.631887524970807,
+          6.919034057063982
         ],
-        "on_wall_median": 8.044311915058643,
+        "on_wall_median": 6.650791930966079,
         "on_wall_trials": [
-          8.044311915058643,
-          8.04123581002932,
-          8.05453933402896
+          6.620428147958592,
+          6.650791930966079,
+          6.801392441964708
         ],
         "instrumentation_overhead": {
-          "seconds": 0.5221781780710444,
-          "off_median_seconds": 7.522133736987598,
-          "on_median_seconds": 8.044311915058643,
-          "off_spread_seconds": 0.05781878007110208,
-          "resolvable": true,
-          "basis": "on_wall_median - off_wall_median, compared against the OFF trial spread; `resolvable` is False when the difference is smaller than the spread, in which case the sign carries no information"
+          "paired_delta_trials": [
+            0.05755683500319719,
+            0.0189044059952721,
+            -0.11764161509927362
+          ],
+          "median_paired_delta": 0.0189044059952721,
+          "off_trial_spread": 0.3561627441085875,
+          "resolvable": false,
+          "basis": "median of per-trial (on_wall - off_wall), from OFF/ON pairs run adjacently with the order reversed each trial, compared against the OFF trial spread. `resolvable` is False when the magnitude is below the spread, in which case the sign carries no information"
         }
       },
+      "trials": [
+        {
+          "trial": 0,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 6.562871312955394,
+          "on_wall_seconds": 6.620428147958592,
+          "paired_overhead_seconds": 0.05755683500319719
+        },
+        {
+          "trial": 1,
+          "order": [
+            "on",
+            "off"
+          ],
+          "off_wall_seconds": 6.631887524970807,
+          "on_wall_seconds": 6.650791930966079,
+          "paired_overhead_seconds": 0.0189044059952721
+        },
+        {
+          "trial": 2,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 6.919034057063982,
+          "on_wall_seconds": 6.801392441964708,
+          "paired_overhead_seconds": -0.11764161509927362
+        }
+      ],
       "peak_memory": {
-        "allocated_bytes": 10574079488,
-        "reserved_bytes": 13612613632,
-        "basis": "instrumentation_off_pass"
+        "allocated_bytes_trials": [
+          10574079488,
+          10574079488,
+          10574079488
+        ],
+        "reserved_bytes_trials": [
+          13612613632,
+          13612613632,
+          13612613632
+        ],
+        "max_allocated_bytes": 10574079488,
+        "max_reserved_bytes": 13612613632,
+        "basis": "instrumentation_off_trials"
       },
       "events": [
         {
           "name": "grid_init",
           "calls": 1,
-          "seconds": 0.0043787841796875,
+          "seconds": 0.0031497600078582762,
           "description": "begins at the tau linspace; includes the initial randn draw of the [B, L, V] latent; ends once z exists. Does NOT include manual_seed or entry into fork_rng \u2014 those stay unattributed.",
-          "share_of_on_wall": 0.0005443329679311147
+          "share_of_on_wall": 0.0004735917226929018
         },
         {
           "name": "time_schedule",
           "calls": 32,
-          "seconds": 0.6060287963151932,
+          "seconds": 0.37386035132408135,
           "description": "begins at tau_curr/tau_next indexing; includes _tau_to_t, sigma_target, sigma_tilde, t_tilde and the _t_to_tau inverse; ends once tau_tilde exists. NOT cheap scalar arithmetic despite appearances: _tau_to_t/_t_to_tau go through alpha_to_gamma/gamma_to_alpha, which run `lut(x.cpu().numpy())` \u2014 a device-to-host copy that SYNCHRONIZES the stream, a scipy CubicSpline evaluation on the host, then a copy back. Three such round trips per step (_tau_to_t twice, _t_to_tau once). Independently reproduced: 32 iterations of a busy stream cost ~379 ms more with the round trip than without, against ~515 ms attributed to this event at steps=32 batch=1.",
-          "share_of_on_wall": 0.07524065265344626
+          "share_of_on_wall": 0.05647072107252779
         },
         {
           "name": "flow_map_forward",
           "calls": 32,
-          "seconds": 4.485432456970216,
+          "seconds": 3.7250884552001957,
           "description": "begins before model(...); includes the double-time model call, its return, and log_D_st_pred.exp(); ends after the exp result exists. The exponential is part of producing D_st_pred, not a later stage.",
-          "share_of_on_wall": 0.5568825566497742
+          "share_of_on_wall": 0.5625532749759325
         },
         {
           "name": "state_update",
           "calls": 31,
-          "seconds": 2.960153633117675,
+          "seconds": 2.5382117233276364,
           "description": "begins at the weight computation; includes z_tilde composition, the gamma churn arithmetic and torch.randn_like(z); ends after the new z exists. NOT reached on the final step.",
-          "share_of_on_wall": 0.36798096150105536
+          "share_of_on_wall": 0.37980590771056216
         },
         {
           "name": "endpoint_decode",
           "calls": 1,
-          "seconds": 0.0035819520950317383,
+          "seconds": 0.0014663679599761963,
           "description": "the terminal argmax over the vocabulary axis.",
-          "share_of_on_wall": 0.000445447960942048
+          "share_of_on_wall": 0.00022048020374066865
         }
       ],
       "attribution": {
-        "denominator": "on_wall_median",
-        "attributed_seconds": 8.040525030851365,
-        "unattributed_seconds": 0.002588008868508851,
-        "coverage_ratio": 0.9996781578193141,
+        "denominator": "per_trial_on_wall_seconds",
+        "aggregation": "median_of_per_trial_ratios",
+        "attributed_seconds": 6.649975259780884,
+        "unattributed_seconds": 0.0018531300295139275,
+        "unattributed_seconds_trials": [
+          0.0018531300295139275,
+          0.000816671185194906,
+          0.0023315871721134585
+        ],
+        "unattributed_basis": "median of per-trial (wall - attributed)",
+        "coverage_ratio": 0.9997200890957354,
+        "coverage_ratio_trials": [
+          0.9997200890957354,
+          0.9998772069260816,
+          0.9996571897310722
+        ],
         "coverage_basis": "median of per-trial (sum of event seconds / wall)",
         "coverage_note": "the per-event `share_of_on_wall` values are per-trial medians and do NOT sum to this ratio: each event's median can come from a different trial, so their sum is not a coverage figure",
-        "unattributed_basis": "median of per-trial (wall - attributed)",
-        "unattributed_trials": [
-          0.0037868842072779074,
-          0.002588008868508851,
-          0.0015292570292935181
-        ],
         "unattributed_note": "fork_rng enter/exit, manual_seed, loop control, observer dispatch, result assembly and executed-metadata construction are deliberately left unattributed rather than folded into an adjacent event"
       }
     },
@@ -1542,8 +1797,9 @@
       "events": null,
       "peak_memory": null,
       "attribution": null,
+      "trials": null,
       "exception_class": "OutOfMemoryError",
-      "exception_message": "CUDA out of memory. Tried to allocate 6.14 GiB. GPU 0 has a total capacity of 47.37 GiB of which 2.29 GiB is free. Process 3683673 has 13.77 GiB memory in use. Process 169275 has 5.47 GiB memory in use. Including non-PyTorch memory, this process has 25.75 GiB memory in use. Of the allocated memory 2"
+      "exception_message": "CUDA out of memory. Tried to allocate 6.14 GiB. GPU 0 has a total capacity of 47.37 GiB of which 1.77 GiB is free. Process 3683673 has 13.77 GiB memory in use. Process 409906 has 526.00 MiB memory in use. Process 418482 has 5.47 GiB memory in use. Including non-PyTorch memory, this process has 25.75"
     }
   ]
 }
