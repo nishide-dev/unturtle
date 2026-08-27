@@ -114,6 +114,78 @@ PARITY_ATOL = 2e-2
 PARITY_RTOL = 2e-2
 
 
+#: Stable reason code for the #177 limitation. A code rather than a message so
+#: a future run can be matched against this one without string comparison.
+DTYPE_MISMATCH_REASON = "fast_path_execution_dtype_mismatch"
+
+
+def classify_failure(error: BaseException) -> str | None:
+    """Map an exception to the known limitation, or None if it is something else.
+
+    Deliberately narrow: an unrelated RuntimeError must NOT be labelled as the
+    known dtype limitation, or a new defect would be filed under an old one.
+    """
+    if not isinstance(error, RuntimeError):
+        return None
+    text = str(error).lower()
+    dtype_words = ("same dtype", "expected mat1 and mat2", "self and mat2")
+    if any(word in text for word in dtype_words) and (
+        "bfloat16" in text or "float" in text
+    ):
+        return DTYPE_MISMATCH_REASON
+    return None
+
+
+def execution_preflight(model, trainer, optimizer, batch, arm: str) -> dict[str, Any]:
+    """ONE untimed forward+backward, before warmup or any timing.
+
+    Its purpose is to answer whether the arm can execute at all. A path that
+    installs cleanly and then fails on its first real forward is a product
+    limitation, and reporting a speed number for it — or a zero — would present
+    a non-execution as a measurement.
+    """
+    import torch
+
+    try:
+        with qkv_arm(model, arm):
+            loss = trainer.compute_loss(model, dict(batch))
+            loss.backward()
+            optimizer.zero_grad(set_to_none=True)
+    except Exception as error:  # noqa: BLE001 - classified, then re-reported
+        import traceback
+
+        model.zero_grad(set_to_none=True)
+        frames = traceback.extract_tb(error.__traceback__)
+        # WHERE it raised, not just what it says. The reference arm fails with
+        # the same message from Unsloth's MLP path, so message-matching alone
+        # would credit an unrelated failure to the QKV kernel.
+        origin = next(
+            (
+                f"{frame.filename.split('/')[-1]}:{frame.lineno}"
+                for frame in reversed(frames)
+                if "fast_lora" in frame.filename or "kernels" in frame.filename
+            ),
+            f"{frames[-1].filename.split('/')[-1]}:{frames[-1].lineno}"
+            if frames
+            else None,
+        )
+        in_qkv_path = any(
+            "unturtle/kernels/fast_lora" in frame.filename for frame in frames
+        )
+        return {
+            "arm": arm,
+            "executable": False,
+            "exception_class": type(error).__name__,
+            "exception_message": str(error)[:300],
+            "raised_in": origin,
+            "raised_in_unturtle_qkv_kernel": in_qkv_path,
+            "reason_code": classify_failure(error),
+        }
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    return {"arm": arm, "executable": True, "reason_code": None}
+
+
 class OomInPhase(Exception):
     """An OOM tagged with the phase it happened in (#152 typed result)."""
 
@@ -186,6 +258,45 @@ def state_fingerprint(model, batch) -> str:
     return digest.hexdigest()[:16]
 
 
+def require_single_device(shards: set[str], device: str) -> None:
+    """Refuse a model whose parameters are spread over more than one device.
+
+    `device_map="auto"` sharded this 7B checkpoint over cuda:1/2/3 with nothing
+    on cuda:0: matmuls failed across devices, and timing, peak memory and RNG
+    fingerprints would each have referred to a different device.
+    """
+    if shards == {device}:
+        return
+    raise SystemExit(
+        f"the model is spread over {sorted(shards)}; this producer requires "
+        f"every parameter on {device} so that timing, peak memory and RNG "
+        "fingerprints refer to one device"
+    )
+
+
+def require_fast_baseline(counts: dict[str, int], expected_layers: int) -> None:
+    """Refuse a build whose baseline is not the fast path on EVERY layer.
+
+    peft's own `get_peft_model` leaves every layer on `_original_apply_qkv`,
+    because the Dream QKV patch keys on `hasattr(q_proj, "lora_A")` and runs
+    during `from_pretrained` — before any adapter exists. Both arms then run the
+    reference, and the cell reports a ~0% difference as a kernel finding.
+    """
+    if (
+        expected_layers
+        and counts.get("fast") == expected_layers
+        and not counts.get("reference")
+        and not counts.get("other")
+    ):
+        return
+    raise SystemExit(
+        f"the Dream fast QKV path was not installed on every layer (observed "
+        f"{counts} over {expected_layers} layers), so the fast arm would not "
+        "differ from the reference; check the LoRA config guards (dropout must "
+        "be 0, bias 'none', no DoRA)"
+    )
+
+
 def build(args, *, seq_len: int, batch_size: int, seed: int):
     """4-bit Dream base with bf16 LoRA adapters, plus a clean batch.
 
@@ -217,13 +328,7 @@ def build(args, *, seq_len: int, batch_size: int, seed: int):
         dtype=torch.bfloat16,
         device_map={"": args.device},
     )
-    shards = {str(param.device) for param in model.parameters()}
-    if shards != {args.device}:
-        raise SystemExit(
-            f"the model is spread over {sorted(shards)}; this producer requires "
-            f"every parameter on {args.device} so that timing, peak memory and "
-            "RNG fingerprints refer to one device"
-        )
+    require_single_device({str(p.device) for p in model.parameters()}, args.device)
     # `FastDiffusionModel.get_peft_model`, NOT peft's: the Dream QKV patch
     # requires `hasattr(q_proj, "lora_A")`, so patching before adapters exist
     # installs nothing. Calling peft directly left every layer on
@@ -238,15 +343,7 @@ def build(args, *, seq_len: int, batch_size: int, seed: int):
         target_modules=list(LORA_TARGETS),
         use_gradient_checkpointing=False,
     )
-    installed = [getattr(attn, "apply_qkv", None) for attn in attention_modules(model)]
-    from unturtle.kernels.fast_lora import apply_lora_qkv_with_bias as _fast_qkv
-
-    if not installed or any(fn is not _fast_qkv for fn in installed):
-        raise SystemExit(
-            "the Dream fast QKV path was not installed on every layer, so the "
-            "fast arm would not differ from the reference; check the LoRA "
-            "config guards (dropout must be 0, bias 'none', no DoRA)"
-        )
+    require_fast_baseline(qkv_installation(model), len(attention_modules(model)))
     model.config.use_cache = False
     mask_id = getattr(model.config, "mask_token_id", None) or tokenizer.mask_token_id
 
@@ -825,3 +922,192 @@ def run_condition(
         "peak_reserved_bytes": peak_reserved,
         "operations": timer.result() if instrument else None,
     }
+
+
+def environment() -> dict[str, Any]:
+    """Versions that determine whether the limitation reproduces."""
+    import importlib.metadata as metadata
+
+    import torch
+
+    def version(name: str) -> str | None:
+        try:
+            return metadata.version(name)
+        except Exception:  # pragma: no cover - provenance must not fail a run
+            return None
+
+    return {
+        "torch": torch.__version__,
+        "cuda": torch.version.cuda,
+        "gpu_name": (
+            torch.cuda.get_device_name(0) if torch.cuda.is_available() else None
+        ),
+        "transformers": version("transformers"),
+        "peft": version("peft"),
+        "bitsandbytes": version("bitsandbytes"),
+    }
+
+
+def provenance(args: argparse.Namespace) -> dict[str, Any]:
+
+    def git(*command: str) -> str | None:
+        try:
+            return subprocess.run(
+                ["git", *command], capture_output=True, text=True, check=True
+            ).stdout.strip()
+        except Exception:  # pragma: no cover
+            return None
+
+    dirty = git("status", "--porcelain")
+    return {
+        "head_sha": git("rev-parse", "HEAD") or "unknown",
+        "worktree_clean": (dirty == "") if dirty is not None else None,
+        "worktree_dirty_paths": (
+            [line[3:] for line in dirty.splitlines()] if dirty else []
+        ),
+        "command": " ".join(sys.argv),
+        "args": vars(args),
+        "environment": environment(),
+        "fixture": {
+            "checkpoint": f"{CHECKPOINT}@{CHECKPOINT_REVISION}",
+            "load_in_4bit": True,
+            "requested_dtype": "bfloat16",
+            "adapter_entry_point": "FastDiffusionModel.get_peft_model",
+            "lora": {
+                "r": LORA_R,
+                "alpha": LORA_ALPHA,
+                "dropout": LORA_DROPOUT,
+                "bias": LORA_BIAS,
+                "targets": list(LORA_TARGETS),
+                "dora": False,
+            },
+        },
+        "frozen_constants": {"TRIALS": TRIALS, "STEPS": STEPS, "WARMUP": WARMUP},
+    }
+
+
+def dtype_survey(model) -> dict[str, Any]:
+    """What the model actually produces, versus what the path requires."""
+    import collections
+
+    import torch
+    from unsloth.kernels.utils import fast_dequantize, get_lora_parameters_bias
+
+    attn = attention_modules(model)[0]
+    weight, quant_state, lora_a, lora_b, _scale, bias = get_lora_parameters_bias(
+        attn.q_proj
+    )
+    ids = torch.randint(1, 1000, (1, 8), device=next(model.parameters()).device)
+    hidden = model.get_input_embeddings()(ids)
+    return {
+        "parameter_dtypes": dict(
+            collections.Counter(str(p.dtype) for p in model.parameters())
+        ),
+        "hidden_state_dtype": str(hidden.dtype),
+        "quantized_weight_dtype": str(weight.dtype),
+        "dequantized_weight_dtype": str(fast_dequantize(weight, quant_state).dtype),
+        "lora_a_dtype": str(lora_a.dtype),
+        "lora_b_dtype": str(lora_b.dtype),
+        "bias_dtype": str(bias.dtype) if bias is not None else None,
+    }
+
+
+def main() -> None:
+    import gc as _gc
+
+    import torch
+
+    args = parse_args()
+    require_supported_device(args.device)
+    out = pathlib.Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+
+    # --- preflight order: construction, device, identity, snapshot, execution ---
+    model, trainer, clean, optimizer, _mask_id = build(
+        args, seq_len=SEQ_LEN, batch_size=1, seed=TRIAL_SEEDS[0]
+    )
+    assert_single_device(model, optimizer, args.device)
+    baseline_install = qkv_installation(model)
+    layers = len(attention_modules(model))
+    survey = dtype_survey(model)
+
+    torch.manual_seed(TRIAL_SEEDS[0])
+    torch.cuda.manual_seed_all(TRIAL_SEEDS[0])
+    ids = clean["input_ids"]
+    batch = {
+        "input_ids": ids,
+        "labels": ids.clone(),
+        "attention_mask": clean["attention_mask"],
+        "diffusion_mask": torch.rand(ids.shape, device=ids.device) < 0.5,
+        "timesteps": torch.full((ids.shape[0],), 0.5, device=ids.device),
+    }
+
+    fast_check = execution_preflight(model, trainer, optimizer, batch, "fast")
+    # The reference arm is probed for DIAGNOSIS only. A working reference cannot
+    # upgrade the cell: a two-arm comparison needs both arms to execute under
+    # the same frozen fixture.
+    reference_check = execution_preflight(model, trainer, optimizer, batch, "reference")
+
+    record: dict[str, Any] = {
+        "row": 5,
+        "cell": "dream_bias_aware_fast_lora",
+        "layers": layers,
+        "baseline_installation": baseline_install,
+        "dtype_survey": survey,
+        "fast_arm_preflight": fast_check,
+        "reference_arm_preflight": reference_check | {"diagnostic_only": True},
+    }
+
+    if fast_check["executable"]:
+        record |= {
+            "status": "preflight_passed",
+            "note": (
+                "the fast arm executes; timing would proceed from here in a "
+                "follow-up run pinned to this SHA"
+            ),
+        }
+    else:
+        # Null, never zero: a zero latency or 0% share reads as measured.
+        record |= {
+            "status": "unsupported",
+            "stage": "preflight",
+            "failure_stage": "fast_arm_preflight_forward",
+            "reason_code": fast_check["reason_code"],
+            "measurement_valid": False,
+            "timing_attempted": False,
+            "warmup_attempted": False,
+            "speed_verdict": None,
+            "operation_profile": None,
+            "peak_memory": None,
+            "target_selection_eligible": False,
+            "blocked_by": "#177",
+            "reproduction": {
+                "file": "benchmarks/kernels/repro_dream_4bit_lora_dtype.py",
+                "command": (
+                    ".venv/bin/python benchmarks/kernels/repro_dream_4bit_lora_dtype.py"
+                ),
+            },
+            "conclusion": (
+                "Row 5 is not performance-measurable in its frozen documented "
+                "configuration. The supported Dream adapter entry point installs "
+                f"the bias-aware fast QKV callable on all {layers} layers, but "
+                "the first real 4-bit training forward fails because the FP32 "
+                "hidden state is incompatible with the fast path's operand "
+                "dtypes. No timing was attempted and no speed conclusion is "
+                "drawn. The production defect is tracked separately in #177."
+            ),
+        }
+
+    payload = {"run": provenance(args), "cells": [record]}
+    (out / "fast_lora_profile.json").write_text(json.dumps(payload, indent=2) + "\n")
+    print(json.dumps({k: v for k, v in record.items() if k != "dtype_survey"})[:600])
+    print(f"wrote 1 cell to {out / 'fast_lora_profile.json'}")
+
+    del model, trainer, clean, optimizer
+    _gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+if __name__ == "__main__":
+    main()
