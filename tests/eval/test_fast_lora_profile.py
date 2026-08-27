@@ -153,6 +153,24 @@ class TestUnsupportedDisposition:
         assert 'if fast_check["executable"]:' in source
         assert "reference_check[" not in source.split("if fast_check")[1][:400]
 
+    def test_no_parity_result_is_claimed(self):
+        """`parity_preflight` needs both arms to complete a forward, which
+        neither can here. An earlier run reported 784/784 bit-identical while
+        BOTH arms were silently on the reference callable, so the record must
+        not restate that as fast-vs-reference parity."""
+        producer = _producer()
+        source = inspect.getsource(producer.main)
+        unsupported = source.split('"status": "unsupported"')[1]
+        assert '"parity": None' in unsupported
+        assert "reference against itself" in unsupported
+        # `main` must not invoke the unreachable check.
+        assert "parity_preflight(" not in source
+
+    def test_the_unreachable_parity_check_carries_its_erratum(self):
+        doc = inspect.getdoc(_producer().parity_preflight)
+        assert "NOT REACHABLE" in doc
+        assert "5f141cb" in doc
+
     def test_the_record_states_the_blocker_is_broader_than_this_kernel(self):
         """Both arms fail, the reference from Unsloth's own MLP path. Reading
         the record as a Dream-QKV-kernel defect would scope #177 wrongly and

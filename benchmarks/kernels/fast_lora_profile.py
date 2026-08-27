@@ -432,6 +432,22 @@ def qkv_arm(model, arm: str):
 def parity_preflight(args, *, seq_len: int, batch_size: int, seed: int) -> dict:
     """Compare the two arms on ONE model with a FIXED pre-noised batch.
 
+    NOT REACHABLE IN THE FROZEN ROW-5 CONFIGURATION (2026-08-27). This function
+    needs both arms to complete a forward, and under `load_in_4bit=True` +
+    `get_peft_model` neither can (#177) — verified by calling it directly on the
+    fixed build, which raises the same operand-dtype RuntimeError. It is kept,
+    uncalled, because it is the correct check to run the moment #177 unblocks the
+    cell; `main()` deliberately stops at `execution_preflight` instead.
+
+    ERRATUM to commit 5f141cb, recorded 2026-08-27: that commit's body reports
+    "784 of 784 bit-identical, loss delta 0.000e+00" as a fast-vs-reference
+    parity result. The run behind that number happened at 6a7b5ce, which called
+    peft's `get_peft_model` and therefore left every layer on the reference
+    callable. Both arms ran the SAME implementation, so the figure is a
+    reference-against-itself comparison and does not establish fast/reference
+    numerical parity. The number itself is not disputed and is not restated
+    here as parity; no fast-vs-reference parity result exists for row 5.
+
     Runs before any timing: a speed number for implementations that disagree
     numerically would be meaningless, and the tolerances are module constants so
     they cannot be relaxed after seeing a result.
@@ -1095,6 +1111,17 @@ def main() -> None:
                 "hidden state is incompatible with the fast path's operand "
                 "dtypes. No timing was attempted and no speed conclusion is "
                 "drawn. The production defect is tracked separately in #177."
+            ),
+            "parity": None,
+            "parity_note": (
+                "No fast-vs-reference parity result exists for row 5. The check "
+                "needs both arms to complete a forward, which neither can here "
+                "(#177); calling parity_preflight directly on this build raises "
+                "the same operand-dtype error. ERRATUM (2026-08-27): commit "
+                "5f141cb's body reports '784 of 784 bit-identical' as parity, "
+                "but that run predates the install-gate fix (54a3af6) and ran "
+                "BOTH arms on the reference callable, so it compares the "
+                "reference against itself."
             ),
             "scope_note": (
                 "The blocker is BROADER than this row's kernel: the reference "
