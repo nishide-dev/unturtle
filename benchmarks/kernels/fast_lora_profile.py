@@ -12,7 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""#166 Stage-1 — bias-aware fast LoRA (ledger row 5).
+"""WHAT THIS RUN ACTUALLY PRODUCES (2026-08-27): a typed `unsupported`
+cell and NO TIMING. Both QKV arms fail their first real forward under
+`load_in_4bit=True` + `get_peft_model` (#177), so `main()` stops at the
+untimed execution preflight. The timing design described below is
+implemented but NOT EXERCISED — `parity_preflight`, `run_condition`,
+`StateSnapshot`, `rng_fingerprint`, `state_fingerprint` and `oom_phase`
+are all unreachable from `main()` today, and the declared
+TRIALS/STEPS/WARMUP window ran zero times. Read what follows as the
+design to resume, not as a description of this artifact.
+
+#166 Stage-1 — bias-aware fast LoRA (ledger row 5).
 
 Two separate questions, deliberately not conflated:
 
@@ -43,6 +53,7 @@ from __future__ import annotations
 import argparse
 import functools
 import gc
+import inspect
 import json
 import pathlib
 import statistics
@@ -128,10 +139,19 @@ def classify_failure(error: BaseException) -> str | None:
     if not isinstance(error, RuntimeError):
         return None
     text = str(error).lower()
-    dtype_words = ("same dtype", "expected mat1 and mat2", "self and mat2")
-    if any(word in text for word in dtype_words) and (
-        "bfloat16" in text or "float" in text
-    ):
+    # ATen's operand-DTYPE error says "have the same dtype"; its SHAPE and
+    # DEVICE errors share the "self and mat2" / "mat1 and mat2" prefix. Matching
+    # the prefix plus a loose "float" filed all three under this reason —
+    # verified: "self and mat2 shapes cannot be multiplied (4x8 and 9x2) for
+    # float tensors", a device mismatch naming float32, and an OOM containing
+    # "self and mat2 are float" were ALL classified as the dtype limitation, so
+    # a future shape regression would be closed as a known defect.
+    if "same dtype" not in text and "same type" not in text:
+        return None
+    for unrelated in ("shapes cannot be multiplied", "same device", "out of memory"):
+        if unrelated in text:
+            return None
+    if "bfloat16" in text or "float" in text:
         return DTYPE_MISMATCH_REASON
     return None
 
@@ -156,19 +176,23 @@ def execution_preflight(model, trainer, optimizer, batch, arm: str) -> dict[str,
 
         model.zero_grad(set_to_none=True)
         frames = traceback.extract_tb(error.__traceback__)
+
         # WHERE it raised, not just what it says. The reference arm fails with
         # the same message from Unsloth's MLP path, so message-matching alone
         # would credit an unrelated failure to the QKV kernel.
-        origin = next(
-            (
-                f"{frame.filename.split('/')[-1]}:{frame.lineno}"
-                for frame in reversed(frames)
-                if "fast_lora" in frame.filename or "kernels" in frame.filename
-            ),
-            f"{frames[-1].filename.split('/')[-1]}:{frames[-1].lineno}"
-            if frames
-            else None,
-        )
+        def label(frame) -> str:
+            """Enough path to identify WHICH file. A basename made both arms
+            report `utils.py:1099` — unsloth/kernels/utils.py matched a bare
+            "kernels" test — so the field could not tell the arms apart, which
+            was its whole purpose."""
+            return f"{'/'.join(frame.filename.split('/')[-2:])}:{frame.lineno}"
+
+        origin = label(frames[-1]) if frames else None
+        # The deepest frame inside UNTURTLE's own kernels, or None. This is what
+        # separates "our kernel raised" from "we merely ran while Unsloth's MLP
+        # path raised".
+        ours = [f for f in frames if "unturtle/kernels" in f.filename]
+        origin_in_unturtle = label(ours[-1]) if ours else None
         in_qkv_path = any(
             "unturtle/kernels/fast_lora" in frame.filename for frame in frames
         )
@@ -177,9 +201,21 @@ def execution_preflight(model, trainer, optimizer, batch, arm: str) -> dict[str,
             "executable": False,
             "exception_class": type(error).__name__,
             "exception_message": str(error)[:300],
+            # The raising frame, which is the SAME for both arms here.
             "raised_in": origin,
+            # Where the traceback last passed through Unturtle's kernels, or
+            # null. THIS is the field that distinguishes the two arms.
+            "raised_in_unturtle_kernels": origin_in_unturtle,
             "raised_in_unturtle_qkv_kernel": in_qkv_path,
             "reason_code": classify_failure(error),
+            # An unclassified failure is NOT evidence of a product limitation:
+            # OOM from a co-resident job, or a trainer signature change, would
+            # otherwise publish "row 5 is not performance-measurable".
+            "failure_kind": (
+                "product_limitation"
+                if classify_failure(error) is not None
+                else "unclassified"
+            ),
         }
     if torch.cuda.is_available():
         torch.cuda.synchronize()
@@ -197,6 +233,10 @@ class OomInPhase(Exception):
 
 @contextmanager
 def oom_phase(phase: str):
+    """Tag an OOM with the phase it happened in, so it can be typed per #152.
+
+    NOT REACHED IN THE FROZEN ROW-5 CONFIGURATION. Retained, uncalled, because it is required the moment #177 unblocks the cell; `main()` stops at the untimed execution preflight. See the module docstring.
+    """
     import torch
 
     try:
@@ -223,7 +263,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def rng_fingerprint() -> str:
-    """Hash of the ACTUAL CPU and CUDA RNG states — seed integers are not
+    """NOT REACHED IN THE FROZEN ROW-5 CONFIGURATION. Retained, uncalled, because it is required the moment #177 unblocks the cell; `main()` stops at the untimed execution preflight. See the module docstring.
+
+        Hash of the ACTUAL CPU and CUDA RNG states — seed integers are not
     evidence of pairing, as #176 demonstrated."""
     import hashlib
 
@@ -238,7 +280,9 @@ def rng_fingerprint() -> str:
 
 
 def state_fingerprint(model, batch) -> str:
-    """Hash of trainable weights and inputs: arms must agree on WHAT they
+    """NOT REACHED IN THE FROZEN ROW-5 CONFIGURATION. Retained, uncalled, because it is required the moment #177 unblocks the cell; `main()` stops at the untimed execution preflight. See the module docstring.
+
+        Hash of trainable weights and inputs: arms must agree on WHAT they
     compute, not only on the RNG that produced it."""
     import hashlib
 
@@ -715,10 +759,6 @@ def callable_identities(model) -> dict[str, str | None]:
     """
 
     def fingerprint(value):
-        # `inspect.unwrap` first, so an instrumentation wrapper carrying
-        # `functools.wraps` reports the callable it wraps. Without it the
-        # identity gate and the profiling wrapper each read the other as a
-        # change.
         """Identify the underlying function, not a bound-method wrapper.
 
         `id(module.forward)` creates a NEW bound method on every access, so
@@ -726,10 +766,19 @@ def callable_identities(model) -> dict[str, str | None]:
         measured: 56 of 56 keys "differed" between two consecutive calls with no
         modification in between. The values look stable within one expression
         only because CPython reuses the freed address.
+
+        `inspect.unwrap` runs too, so an instrumentation wrapper carrying
+        `functools.wraps` reports the callable it wraps rather than itself.
+        Without it the identity gate and the profiling wrapper read each other
+        as changes — verified: wrapping a function with `functools.wraps` moved
+        the fingerprint even though `__qualname__` was preserved, because the
+        wrapper is a different object.
         """
         if value is None:
             return None
-        underlying = getattr(value, "__func__", value)
+        underlying = inspect.unwrap(getattr(value, "__func__", value))
+        # A bound method can hide under the wrapper too, so unbind again.
+        underlying = getattr(underlying, "__func__", underlying)
         return (
             f"{getattr(underlying, '__qualname__', repr(underlying))}@{id(underlying)}"
         )
@@ -746,7 +795,9 @@ def callable_identities(model) -> dict[str, str | None]:
 
 
 class StateSnapshot:
-    """Trainable parameters, full optimizer state, and both RNG streams.
+    """NOT REACHED IN THE FROZEN ROW-5 CONFIGURATION. Retained, uncalled, because it is required the moment #177 unblocks the cell; `main()` stops at the untimed execution preflight. See the module docstring.
+
+        Trainable parameters, full optimizer state, and both RNG streams.
 
     Restored before every timed window and OUTSIDE the wall: a snapshot copy or
     an optimizer `load_state_dict` inside the timed region would be charged to
@@ -853,7 +904,9 @@ def instrumented(model, trainer, timer: CudaEventTimer):
 def run_condition(
     condition, *, model, trainer, optimizer, batch, snapshot, device, timer=None
 ):
-    """One timed window for one condition.
+    """NOT REACHED IN THE FROZEN ROW-5 CONFIGURATION. Retained, uncalled, because it is required the moment #177 unblocks the cell; `main()` stops at the untimed execution preflight. See the module docstring.
+
+        One timed window for one condition.
 
     Restoration, arm installation and peak reset all happen BEFORE the clock
     starts. Warmup runs inside the arm, then state and RNG are restored AGAIN so
@@ -975,9 +1028,18 @@ def provenance(args: argparse.Namespace) -> dict[str, Any]:
             return None
 
     dirty = git("status", "--porcelain")
+    head = git("rev-parse", "HEAD")
+    # Fail rather than publish an untraceable artifact: a `head_sha` of
+    # "unknown" silently discards exactly the provenance this record exists to
+    # carry.
+    if head is None or dirty is None:
+        raise SystemExit(
+            "cannot establish provenance (git rev-parse / status failed); "
+            "refusing to write an artifact whose measuring commit is unknown"
+        )
     return {
-        "head_sha": git("rev-parse", "HEAD") or "unknown",
-        "worktree_clean": (dirty == "") if dirty is not None else None,
+        "head_sha": head,
+        "worktree_clean": dirty == "",
         "worktree_dirty_paths": (
             [line[3:] for line in dirty.splitlines()] if dirty else []
         ),
@@ -998,7 +1060,20 @@ def provenance(args: argparse.Namespace) -> dict[str, Any]:
                 "dora": False,
             },
         },
-        "frozen_constants": {"TRIALS": TRIALS, "STEPS": STEPS, "WARMUP": WARMUP},
+        # Declared for the timing loop this cell never reaches. Marked as not
+        # exercised so a reader cannot reconcile them with
+        # `warmup_attempted: false` by assuming 3 trials of 8 steps ran.
+        "frozen_constants": {
+            "TRIALS": TRIALS,
+            "STEPS": STEPS,
+            "WARMUP": WARMUP,
+            "exercised": False,
+            "note": (
+                "the timing window is declared but NOT exercised in this run: "
+                "the cell stops at the untimed execution preflight, so trials, "
+                "steps and warmup each executed zero times"
+            ),
+        },
     }
 
 
@@ -1026,6 +1101,94 @@ def dtype_survey(model) -> dict[str, Any]:
         "lora_b_dtype": str(lora_b.dtype),
         "bias_dtype": str(bias.dtype) if bias is not None else None,
     }
+
+
+def disposition(fast_check: dict[str, Any], layers: int) -> dict[str, Any]:
+    """The typed disposition for one preflight outcome.
+
+    A pure function so the record can be asserted by CALLING it rather than
+    by grepping `main`'s source: ten of this cell's first tests matched
+    source text, which cannot fail for a behavior change, only a rename.
+    """
+    record: dict[str, Any] = {}
+    if fast_check["executable"]:
+        record |= {
+            "status": "preflight_passed",
+            "note": (
+                "the fast arm executes; timing would proceed from here in a "
+                "follow-up run pinned to this SHA"
+            ),
+        }
+    else:
+        # Null, never zero: a zero latency or 0% share reads as measured.
+        record |= {
+            # `unsupported` claims a PRODUCT limitation. An UNCLASSIFIED
+            # failure (OOM from a co-resident job, a trainer signature change)
+            # is a measurement problem until someone diagnoses it, and must not
+            # be published as "row 5 is not performance-measurable in its
+            # frozen documented configuration".
+            "status": (
+                "unsupported"
+                if fast_check["failure_kind"] == "product_limitation"
+                else "measurement_invalid"
+            ),
+            "failure_kind": fast_check["failure_kind"],
+            "stage": "preflight",
+            "failure_stage": "fast_arm_preflight_forward",
+            "reason_code": fast_check["reason_code"],
+            "measurement_valid": False,
+            "timing_attempted": False,
+            "warmup_attempted": False,
+            "speed_verdict": None,
+            "operation_profile": None,
+            "peak_memory": None,
+            "target_selection_eligible": False,
+            # Only a CLASSIFIED failure is attributed to the known defect.
+            "blocked_by": (
+                "#177" if fast_check["failure_kind"] == "product_limitation" else None
+            ),
+            "reproduction": {
+                "file": "benchmarks/kernels/repro_dream_4bit_lora_dtype.py",
+                "command": (
+                    ".venv/bin/python benchmarks/kernels/repro_dream_4bit_lora_dtype.py"
+                ),
+            },
+            "conclusion": (
+                "Row 5 is not performance-measurable in its frozen documented "
+                "configuration. The supported Dream adapter entry point installs "
+                f"the bias-aware fast QKV callable on all {layers} layers, but "
+                "the first real 4-bit training forward fails because the FP32 "
+                "hidden state is incompatible with the fast path's operand "
+                "dtypes. No timing was attempted and no speed conclusion is "
+                "drawn. The production defect is tracked separately in #177."
+            ),
+            "parity": None,
+            "parity_note": (
+                "No fast-vs-reference parity result exists for row 5. The check "
+                "needs both arms to complete a forward, which neither can here "
+                "(#177); calling parity_preflight directly on this build raises "
+                "the same operand-dtype error. ERRATUM (2026-08-27): commit "
+                "5f141cb's body reports '784 of 784 bit-identical' as parity, "
+                "but that run predates the install-gate fix (54a3af6) and ran "
+                "BOTH arms on the reference callable, so it compares the "
+                "reference against itself."
+            ),
+            "scope_note": (
+                "The blocker is BROADER than this row's kernel: the reference "
+                "arm fails with the same operand-dtype error raised from "
+                "Unsloth's own MLP fast_lora path, so neither arm executes and "
+                "the failure is not specific to the Dream bias-aware QKV "
+                "kernel. Both arms report the SAME `raised_in` frame, so that "
+                "field alone cannot separate them; "
+                "`raised_in_unturtle_kernels` and "
+                "`raised_in_unturtle_qkv_kernel` are the discriminating "
+                "fields. Consequence for Stage 1: this "
+                "cell cannot be repaired by changing the row-5 kernel alone, "
+                "and any 4-bit + PEFT cell in the same configuration is "
+                "expected to hit the same wall."
+            ),
+        }
+    return record
 
 
 def main() -> None:
@@ -1074,67 +1237,7 @@ def main() -> None:
         "reference_arm_preflight": reference_check | {"diagnostic_only": True},
     }
 
-    if fast_check["executable"]:
-        record |= {
-            "status": "preflight_passed",
-            "note": (
-                "the fast arm executes; timing would proceed from here in a "
-                "follow-up run pinned to this SHA"
-            ),
-        }
-    else:
-        # Null, never zero: a zero latency or 0% share reads as measured.
-        record |= {
-            "status": "unsupported",
-            "stage": "preflight",
-            "failure_stage": "fast_arm_preflight_forward",
-            "reason_code": fast_check["reason_code"],
-            "measurement_valid": False,
-            "timing_attempted": False,
-            "warmup_attempted": False,
-            "speed_verdict": None,
-            "operation_profile": None,
-            "peak_memory": None,
-            "target_selection_eligible": False,
-            "blocked_by": "#177",
-            "reproduction": {
-                "file": "benchmarks/kernels/repro_dream_4bit_lora_dtype.py",
-                "command": (
-                    ".venv/bin/python benchmarks/kernels/repro_dream_4bit_lora_dtype.py"
-                ),
-            },
-            "conclusion": (
-                "Row 5 is not performance-measurable in its frozen documented "
-                "configuration. The supported Dream adapter entry point installs "
-                f"the bias-aware fast QKV callable on all {layers} layers, but "
-                "the first real 4-bit training forward fails because the FP32 "
-                "hidden state is incompatible with the fast path's operand "
-                "dtypes. No timing was attempted and no speed conclusion is "
-                "drawn. The production defect is tracked separately in #177."
-            ),
-            "parity": None,
-            "parity_note": (
-                "No fast-vs-reference parity result exists for row 5. The check "
-                "needs both arms to complete a forward, which neither can here "
-                "(#177); calling parity_preflight directly on this build raises "
-                "the same operand-dtype error. ERRATUM (2026-08-27): commit "
-                "5f141cb's body reports '784 of 784 bit-identical' as parity, "
-                "but that run predates the install-gate fix (54a3af6) and ran "
-                "BOTH arms on the reference callable, so it compares the "
-                "reference against itself."
-            ),
-            "scope_note": (
-                "The blocker is BROADER than this row's kernel: the reference "
-                "arm fails with the same operand-dtype error raised from "
-                "Unsloth's own MLP fast_lora path, so neither arm executes and "
-                "the failure is not specific to the Dream bias-aware QKV "
-                "kernel. `raised_in` / `raised_in_unturtle_qkv_kernel` on each "
-                "arm carry the raising frame. Consequence for Stage 1: this "
-                "cell cannot be repaired by changing the row-5 kernel alone, "
-                "and any 4-bit + PEFT cell in the same configuration is "
-                "expected to hit the same wall."
-            ),
-        }
+    record |= disposition(fast_check, layers)
 
     payload = {"run": provenance(args), "cells": [record]}
     (out / "fast_lora_profile.json").write_text(json.dumps(payload, indent=2) + "\n")
