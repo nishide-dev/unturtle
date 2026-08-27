@@ -153,6 +153,16 @@ class TestUnsupportedDisposition:
         assert 'if fast_check["executable"]:' in source
         assert "reference_check[" not in source.split("if fast_check")[1][:400]
 
+    def test_the_record_states_the_blocker_is_broader_than_this_kernel(self):
+        """Both arms fail, the reference from Unsloth's own MLP path. Reading
+        the record as a Dream-QKV-kernel defect would scope #177 wrongly and
+        invite a fix that cannot unblock the cell."""
+        source = inspect.getsource(_producer().main)
+        unsupported = source.split('"status": "unsupported"')[1]
+        assert '"scope_note"' in unsupported
+        assert "BROADER" in unsupported
+        assert "MLP fast_lora" in unsupported
+
     def test_timing_never_runs_after_a_failed_preflight(self):
         source = inspect.getsource(_producer().main)
         after = source.split("fast_check = execution_preflight")[1]

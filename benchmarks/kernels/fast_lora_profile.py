@@ -1096,6 +1096,17 @@ def main() -> None:
                 "dtypes. No timing was attempted and no speed conclusion is "
                 "drawn. The production defect is tracked separately in #177."
             ),
+            "scope_note": (
+                "The blocker is BROADER than this row's kernel: the reference "
+                "arm fails with the same operand-dtype error raised from "
+                "Unsloth's own MLP fast_lora path, so neither arm executes and "
+                "the failure is not specific to the Dream bias-aware QKV "
+                "kernel. `raised_in` / `raised_in_unturtle_qkv_kernel` on each "
+                "arm carry the raising frame. Consequence for Stage 1: this "
+                "cell cannot be repaired by changing the row-5 kernel alone, "
+                "and any 4-bit + PEFT cell in the same configuration is "
+                "expected to hit the same wall."
+            ),
         }
 
     payload = {"run": provenance(args), "cells": [record]}
