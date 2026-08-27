@@ -41,6 +41,7 @@ internals would change the thing being measured.
 from __future__ import annotations
 
 import argparse
+import functools
 import gc
 import json
 import pathlib
@@ -205,10 +206,15 @@ def build(args, *, seq_len: int, batch_size: int, seed: int):
     # assumption here — synchronization, CUDA events, peak-memory stats and RNG
     # fingerprints all target the default device — and made a cross-device
     # matmul fail outright. A sharded model cannot be profiled by this producer.
+    # `dtype=bfloat16` explicitly: without it the model loads fp32 while the
+    # 4-bit weights dequantize to bf16, and the fast QKV path fails with
+    # "expected mat1 and mat2 to have the same dtype". `bf16=True` on the
+    # trainer only drives autocast — it does not change the stored weights.
     model, tokenizer = FastDiffusionModel.from_pretrained(
         CHECKPOINT,
         revision=CHECKPOINT_REVISION,
         load_in_4bit=True,
+        dtype=torch.bfloat16,
         device_map={"": args.device},
     )
     shards = {str(param.device) for param in model.parameters()}
@@ -479,7 +485,20 @@ def parity_preflight(args, *, seq_len: int, batch_size: int, seed: int) -> dict:
         "loss_fast": fast["loss"],
         "loss_reference": reference["loss"],
         "loss_bit_identical": fast["loss"] == reference["loss"],
+        # The COUNT OF COMPARISONS ACTUALLY MADE, not an arithmetic estimate.
+        # An earlier version reported `len(shared)*2 + len(qkv) + 1`, which
+        # added the scalar loss to a tensor tally even though the loss is
+        # compared by subtraction and never enters `graded`. The denominator is
+        # one smaller for that reason alone — no tensor was dropped.
         "compared_tensors": len(graded),
+        "comparison_inventory": {
+            "qkv_outputs": len(fast.get("qkv", [])),
+            "gradients": len(shared),
+            "post_step_parameters": len(
+                set(fast["post_step"]) & set(reference["post_step"])
+            ),
+            "scalar_loss": "compared separately, not counted in compared_tensors",
+        },
     }
     # No `del` of the closed-over names: `one_arm` captures them, so deleting
     # them in this scope makes them deleted-locals for the whole function and
@@ -502,6 +521,50 @@ CONDITION_ORDERS = (
     ("reference_off", "fast_on", "reference_on", "fast_off"),
     ("fast_on", "reference_on", "fast_off", "reference_off"),
 )
+
+
+def qkv_installation(model) -> dict[str, int]:
+    """How many layers carry each QKV implementation.
+
+    A MIXED state is the dangerous one: a speed difference could no longer be
+    read as the kernel's effect across 28 layers.
+    """
+    from unturtle.fast_diffusion_model import _original_apply_qkv
+    from unturtle.kernels.fast_lora import apply_lora_qkv_with_bias
+
+    counts = {"fast": 0, "reference": 0, "other": 0}
+    for attn in attention_modules(model):
+        current = getattr(attn, "apply_qkv", None)
+        underlying = getattr(current, "__func__", current)
+        if underlying is apply_lora_qkv_with_bias:
+            counts["fast"] += 1
+        elif underlying is _original_apply_qkv:
+            counts["reference"] += 1
+        else:
+            counts["other"] += 1
+    return counts
+
+
+def assert_arm_installed(model, arm: str, *, expected_layers: int) -> dict[str, int]:
+    """Stage 1 and 2 of the gate: fast at baseline, and actually swapped.
+
+    Re-checked immediately before every timed window, not only at fixture
+    build: warmup or wrapper installation could break it in between, and a
+    build-time-only check would miss that.
+    """
+    counts = qkv_installation(model)
+    want = "fast" if arm == "fast" else "reference"
+    if (
+        counts[want] != expected_layers
+        or counts["other"]
+        or sum(counts.values()) != expected_layers
+    ):
+        raise RuntimeError(
+            f"arm {arm!r} expected {expected_layers} layers on the {want} "
+            f"callable, observed {counts}: a mixed or unexpected installation "
+            "makes a speed difference unattributable to the kernel"
+        )
+    return counts
 
 
 def assert_single_device(model, optimizer, device: str) -> None:
@@ -539,6 +602,10 @@ def callable_identities(model) -> dict[str, str | None]:
     """
 
     def fingerprint(value):
+        # `inspect.unwrap` first, so an instrumentation wrapper carrying
+        # `functools.wraps` reports the callable it wraps. Without it the
+        # identity gate and the profiling wrapper each read the other as a
+        # change.
         """Identify the underlying function, not a bound-method wrapper.
 
         `id(module.forward)` creates a NEW bound method on every access, so
@@ -632,6 +699,7 @@ def instrumented(model, trainer, timer: CudaEventTimer):
     def wrap_apply(module):
         original = module.apply_qkv
 
+        @functools.wraps(original)
         def timed(self, X, _original=original):
             with timer.measure("qkv_lora_projection"):
                 return _original(self, X)
@@ -693,6 +761,8 @@ def run_condition(
 
     snapshot.restore(model, optimizer)
     with qkv_arm(model, arm) as layer_count:
+        # Stages 1-2: the right callable, on every layer, right now.
+        install_before = assert_arm_installed(model, arm, expected_layers=layer_count)
         identities_before = callable_identities(model)
 
         # Warmup inside the arm, then restore again: its updates and peak must
@@ -723,6 +793,9 @@ def run_condition(
 
         peak_allocated = torch.cuda.max_memory_allocated()
         peak_reserved = torch.cuda.max_memory_reserved()
+        # Still installed after the window: a wrapper left behind, or an arm
+        # that reverted mid-run, must not pass silently.
+        install_after = assert_arm_installed(model, arm, expected_layers=layer_count)
         identities_after = callable_identities(model)
 
     if identities_before != identities_after:
@@ -730,10 +803,21 @@ def run_condition(
             "non-QKV callables changed during the window, so the arms differ by "
             "more than the QKV projection"
         )
+    from unturtle.fast_diffusion_model import _original_apply_qkv
+    from unturtle.kernels.fast_lora import apply_lora_qkv_with_bias
+
+    active = apply_lora_qkv_with_bias if arm == "fast" else _original_apply_qkv
     return {
         "condition": condition,
         "arm": arm,
         "instrumented": instrument,
+        "qkv_callable": {
+            "module": active.__module__,
+            "qualname": active.__qualname__,
+            "layer_count": layer_count,
+        },
+        "qkv_installation_before": install_before,
+        "qkv_installation_after": install_after,
         "wall_seconds": wall,
         "per_step_seconds": wall / STEPS,
         "layers": layer_count,
