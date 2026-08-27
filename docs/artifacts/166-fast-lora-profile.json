@@ -1,0 +1,117 @@
+{
+  "run": {
+    "head_sha": "1acc0a9f2e9b918ef71656bfd0ae53f20583a381",
+    "worktree_clean": true,
+    "worktree_dirty_paths": [],
+    "command": "/home/nishide.21066/.claude/jobs/1492d35a/tmp/wt-fl3/benchmarks/kernels/fast_lora_profile.py --device cuda:0 --out /home/nishide.21066/.claude/jobs/1492d35a/tmp/fl3-out",
+    "args": {
+      "device": "cuda:0",
+      "out": "/home/nishide.21066/.claude/jobs/1492d35a/tmp/fl3-out"
+    },
+    "environment": {
+      "torch": "2.10.0+cu128",
+      "cuda": "12.8",
+      "gpu_name": "NVIDIA RTX 6000 Ada Generation",
+      "transformers": "5.15.0",
+      "peft": "0.19.1",
+      "bitsandbytes": "0.49.2"
+    },
+    "fixture": {
+      "checkpoint": "Dream-org/Dream-v0-Instruct-7B@05334cb9faaf763692dcf9d8737c642be2b2a6ae",
+      "load_in_4bit": true,
+      "requested_dtype": "bfloat16",
+      "adapter_entry_point": "FastDiffusionModel.get_peft_model",
+      "lora": {
+        "r": 16,
+        "alpha": 16,
+        "dropout": 0.0,
+        "bias": "none",
+        "targets": [
+          "q_proj",
+          "k_proj",
+          "v_proj",
+          "o_proj",
+          "gate_proj",
+          "up_proj",
+          "down_proj"
+        ],
+        "dora": false
+      }
+    },
+    "frozen_constants": {
+      "TRIALS": 3,
+      "STEPS": 8,
+      "WARMUP": 3,
+      "exercised": false,
+      "note": "the timing window is declared but NOT exercised in this run: the cell stops at the untimed execution preflight, so trials, steps and warmup each executed zero times"
+    }
+  },
+  "cells": [
+    {
+      "row": 5,
+      "cell": "dream_bias_aware_fast_lora",
+      "layers": 28,
+      "baseline_installation": {
+        "fast": 28,
+        "reference": 0,
+        "other": 0
+      },
+      "dtype_survey": {
+        "parameter_dtypes": {
+          "torch.float32": 535,
+          "torch.uint8": 196
+        },
+        "hidden_state_dtype": "torch.float32",
+        "quantized_weight_dtype": "torch.uint8",
+        "dequantized_weight_dtype": "torch.bfloat16",
+        "lora_a_dtype": "torch.float32",
+        "lora_b_dtype": "torch.float32",
+        "bias_dtype": "torch.float32"
+      },
+      "fast_arm_preflight": {
+        "arm": "fast",
+        "executable": false,
+        "exception_class": "RuntimeError",
+        "exception_message": "expected mat1 and mat2 to have the same dtype, but got: float != c10::BFloat16",
+        "raised_in": "kernels/utils.py:1099",
+        "raised_in_unturtle_kernels": "kernels/fast_lora.py:96",
+        "raised_in_unturtle_qkv_kernel": true,
+        "reason_code": "fast_path_execution_dtype_mismatch",
+        "failure_kind": "product_limitation"
+      },
+      "reference_arm_preflight": {
+        "arm": "reference",
+        "executable": false,
+        "exception_class": "RuntimeError",
+        "exception_message": "expected mat1 and mat2 to have the same dtype, but got: float != c10::BFloat16",
+        "raised_in": "kernels/utils.py:1099",
+        "raised_in_unturtle_kernels": null,
+        "raised_in_unturtle_qkv_kernel": false,
+        "reason_code": "fast_path_execution_dtype_mismatch",
+        "failure_kind": "product_limitation",
+        "diagnostic_only": true
+      },
+      "status": "unsupported",
+      "failure_kind": "product_limitation",
+      "stage": "preflight",
+      "failure_stage": "fast_arm_preflight_forward",
+      "reason_code": "fast_path_execution_dtype_mismatch",
+      "measurement_valid": false,
+      "timing_attempted": false,
+      "warmup_attempted": false,
+      "speed_verdict": null,
+      "operation_profile": null,
+      "peak_memory": null,
+      "target_selection_eligible": false,
+      "blocked_by": "#177",
+      "reproduction": {
+        "file": "benchmarks/kernels/repro_dream_4bit_lora_dtype.py",
+        "command": ".venv/bin/python benchmarks/kernels/repro_dream_4bit_lora_dtype.py"
+      },
+      "conclusion": "Row 5 is not performance-measurable in its frozen documented configuration. The supported Dream adapter entry point installs the bias-aware fast QKV callable on all 28 layers, but the first real 4-bit training forward fails because the FP32 hidden state is incompatible with the fast path's operand dtypes. No timing was attempted and no speed conclusion is drawn. The production defect is tracked separately in #177.",
+      "parity": null,
+      "parity_note": "No fast-vs-reference parity result exists for row 5. The check needs both arms to complete a forward, which neither can here (#177); calling parity_preflight directly on this build raises the same operand-dtype error. ERRATUM (2026-08-27): commit 5f141cb's body reports '784 of 784 bit-identical' as parity, but that run predates the install-gate fix (54a3af6) and ran BOTH arms on the reference callable, so it compares the reference against itself.",
+      "scope_note": "The blocker is BROADER than this row's kernel: the reference arm fails with the same operand-dtype error raised from Unsloth's own MLP fast_lora path, so neither arm executes and the failure is not specific to the Dream bias-aware QKV kernel. Both arms report the SAME `raised_in` frame, so that field alone cannot separate them; `raised_in_unturtle_kernels` and `raised_in_unturtle_qkv_kernel` are the discriminating fields. Consequence for Stage 1: this cell cannot be repaired by changing the row-5 kernel alone, and any 4-bit + PEFT cell in the same configuration is expected to hit the same wall."
+    }
+  ]
+}
