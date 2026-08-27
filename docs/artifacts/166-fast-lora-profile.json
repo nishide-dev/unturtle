@@ -1,12 +1,12 @@
 {
   "run": {
-    "head_sha": "e7250305c8df9d70de37f9913728e38113c5d3fa",
+    "head_sha": "1acc0a9f2e9b918ef71656bfd0ae53f20583a381",
     "worktree_clean": true,
     "worktree_dirty_paths": [],
-    "command": "/home/nishide.21066/.claude/jobs/1492d35a/tmp/wt-fastlora/benchmarks/kernels/fast_lora_profile.py --device cuda:0 --out /home/nishide.21066/.claude/jobs/1492d35a/tmp/fastlora-out",
+    "command": "/home/nishide.21066/.claude/jobs/1492d35a/tmp/wt-fl3/benchmarks/kernels/fast_lora_profile.py --device cuda:0 --out /home/nishide.21066/.claude/jobs/1492d35a/tmp/fl3-out",
     "args": {
       "device": "cuda:0",
-      "out": "/home/nishide.21066/.claude/jobs/1492d35a/tmp/fastlora-out"
+      "out": "/home/nishide.21066/.claude/jobs/1492d35a/tmp/fl3-out"
     },
     "environment": {
       "torch": "2.10.0+cu128",
@@ -41,7 +41,9 @@
     "frozen_constants": {
       "TRIALS": 3,
       "STEPS": 8,
-      "WARMUP": 3
+      "WARMUP": 3,
+      "exercised": false,
+      "note": "the timing window is declared but NOT exercised in this run: the cell stops at the untimed execution preflight, so trials, steps and warmup each executed zero times"
     }
   },
   "cells": [
@@ -71,21 +73,26 @@
         "executable": false,
         "exception_class": "RuntimeError",
         "exception_message": "expected mat1 and mat2 to have the same dtype, but got: float != c10::BFloat16",
-        "raised_in": "utils.py:1099",
+        "raised_in": "kernels/utils.py:1099",
+        "raised_in_unturtle_kernels": "kernels/fast_lora.py:96",
         "raised_in_unturtle_qkv_kernel": true,
-        "reason_code": "fast_path_execution_dtype_mismatch"
+        "reason_code": "fast_path_execution_dtype_mismatch",
+        "failure_kind": "product_limitation"
       },
       "reference_arm_preflight": {
         "arm": "reference",
         "executable": false,
         "exception_class": "RuntimeError",
         "exception_message": "expected mat1 and mat2 to have the same dtype, but got: float != c10::BFloat16",
-        "raised_in": "utils.py:1099",
+        "raised_in": "kernels/utils.py:1099",
+        "raised_in_unturtle_kernels": null,
         "raised_in_unturtle_qkv_kernel": false,
         "reason_code": "fast_path_execution_dtype_mismatch",
+        "failure_kind": "product_limitation",
         "diagnostic_only": true
       },
       "status": "unsupported",
+      "failure_kind": "product_limitation",
       "stage": "preflight",
       "failure_stage": "fast_arm_preflight_forward",
       "reason_code": "fast_path_execution_dtype_mismatch",
@@ -102,7 +109,9 @@
         "command": ".venv/bin/python benchmarks/kernels/repro_dream_4bit_lora_dtype.py"
       },
       "conclusion": "Row 5 is not performance-measurable in its frozen documented configuration. The supported Dream adapter entry point installs the bias-aware fast QKV callable on all 28 layers, but the first real 4-bit training forward fails because the FP32 hidden state is incompatible with the fast path's operand dtypes. No timing was attempted and no speed conclusion is drawn. The production defect is tracked separately in #177.",
-      "scope_note": "The blocker is BROADER than this row's kernel: the reference arm fails with the same operand-dtype error raised from Unsloth's own MLP fast_lora path, so neither arm executes and the failure is not specific to the Dream bias-aware QKV kernel. `raised_in` / `raised_in_unturtle_qkv_kernel` on each arm carry the raising frame. Consequence for Stage 1: this cell cannot be repaired by changing the row-5 kernel alone, and any 4-bit + PEFT cell in the same configuration is expected to hit the same wall."
+      "parity": null,
+      "parity_note": "No fast-vs-reference parity result exists for row 5. The check needs both arms to complete a forward, which neither can here (#177); calling parity_preflight directly on this build raises the same operand-dtype error. ERRATUM (2026-08-27): commit 5f141cb's body reports '784 of 784 bit-identical' as parity, but that run predates the install-gate fix (54a3af6) and ran BOTH arms on the reference callable, so it compares the reference against itself.",
+      "scope_note": "The blocker is BROADER than this row's kernel: the reference arm fails with the same operand-dtype error raised from Unsloth's own MLP fast_lora path, so neither arm executes and the failure is not specific to the Dream bias-aware QKV kernel. Both arms report the SAME `raised_in` frame, so that field alone cannot separate them; `raised_in_unturtle_kernels` and `raised_in_unturtle_qkv_kernel` are the discriminating fields. Consequence for Stage 1: this cell cannot be repaired by changing the row-5 kernel alone, and any 4-bit + PEFT cell in the same configuration is expected to hit the same wall."
     }
   ]
 }
