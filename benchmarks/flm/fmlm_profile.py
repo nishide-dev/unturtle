@@ -67,6 +67,12 @@ from typing import Any
 
 REPO = pathlib.Path(__file__).resolve().parent.parent.parent
 
+#: How far the summed event shares may exceed 1.0 before the cell is invalid.
+#: Small positive slack only: CUDA event pairs are measured independently, so
+#: rounding across five events can land marginally above the wall without
+#: meaning the spans overlap.
+SHARE_TOLERANCE = 0.02
+
 #: Frozen measurement window. MODULE CONSTANTS, never CLI-settable: a verdict
 #: that moves with a command-line flag is not a verdict. Three #166 gates failed
 #: for exactly this reason.
@@ -200,8 +206,11 @@ class CudaEventObserver:
     """Timed observer. Records CUDA event pairs and NOTHING else.
 
     No tensor fingerprints, no `.item()`, no `.cpu()`, no clones, no RNG
-    capture: each of those would change what is being measured. Elapsed times
-    are read after ONE synchronize at the end of the window.
+    capture: each of those would change what is being measured.
+
+    Elapsed times are read after the ONE window-closing synchronize, which the
+    CALLER performs inside its timed span so the wall clock contains the queue
+    drain. `collect` itself never synchronizes and never blocks per event.
     """
 
     def __init__(self, torch_module) -> None:
@@ -228,8 +237,9 @@ class CudaEventObserver:
                 f"{len(self._open)} scope(s) never closed; a partial window "
                 "would attribute this run's time to the next one"
             )
-        # ONE synchronize for the whole window.
-        self._torch.cuda.synchronize()
+        # No synchronize here: the caller performs the ONE window-closing
+        # synchronize INSIDE its timed span, so the wall contains the drain. A
+        # sync here would land outside the span and understate the wall again.
         seconds: dict[str, float] = {}
         for name, start, end in self._pairs:
             seconds[name] = seconds.get(name, 0.0) + start.elapsed_time(end) / 1000.0
@@ -402,6 +412,13 @@ def timed_on(model, steps: int, batch: int) -> dict[str, Any]:
         torch.cuda.synchronize()
         start = time.perf_counter()
         run_once(model, request, observer)
+        # Generation is ASYNC: `run_once` returns while kernels are still in
+        # flight. Reading the wall here — before the queue drains — made the ON
+        # wall SHORTER than the CUDA-event total it is supposed to contain,
+        # producing negative instrumentation overhead in 3 of 5 cells and event
+        # shares summing over 100%. The single window-closing synchronize must
+        # happen INSIDE the timed span.
+        torch.cuda.synchronize()
         wall = time.perf_counter() - start
         seconds = observer.collect()
         trials.append(
@@ -435,8 +452,6 @@ def assemble_events(steps: int, trials: list[dict]) -> list[dict[str, Any]]:
     does not exist would be worse than recording the zero. The row is supplied
     here, at assembly time, and flagged.
     """
-    on_walls = [trial["wall_seconds"] for trial in trials]
-    wall_median = statistics.median(on_walls)
     rows = []
     for name in EVENT_TAXONOMY:
         per_trial = [trial["event_seconds"].get(name, 0.0) for trial in trials]
@@ -456,8 +471,17 @@ def assemble_events(steps: int, trials: list[dict]) -> list[dict[str, Any]]:
                 "reason": "final-step branch exits before state update",
             }
         else:
+            # Share PER TRIAL, then the median of the shares. Dividing a median
+            # event time by a median wall is the same median-of-sums error the
+            # residual had one level up: the per-event medians can come from
+            # different trials, so the shares summed OVER 100% in 3 of 5 cells.
+            per_trial_shares = [
+                trial["event_seconds"].get(name, 0.0) / trial["wall_seconds"]
+                for trial in trials
+                if trial["wall_seconds"] > 0
+            ]
             row["share_of_on_wall"] = (
-                row["seconds"] / wall_median if wall_median > 0 else None
+                statistics.median(per_trial_shares) if per_trial_shares else None
             )
         rows.append(row)
     return rows
@@ -599,6 +623,33 @@ def profile_cell(model, steps: int, batch: int) -> dict[str, Any]:
     on_walls = [trial["wall_seconds"] for trial in on["trials"]]
     events = assemble_events(steps, on["trials"])
     on_median = statistics.median(on_walls)
+
+    # Over-coverage gate on the SHARES, independent of the residual gate: the
+    # residual is computed from summed seconds, so it can look healthy while the
+    # per-event shares still exceed the wall.
+    # Per-trial coverage ratio, then the median. Summing per-event MEDIAN
+    # shares does not preserve any trial's total — medians of different events
+    # come from different trials — so that sum is not a coverage figure at all.
+    coverage_per_trial = [
+        sum(trial["event_seconds"].values()) / trial["wall_seconds"]
+        for trial in on["trials"]
+        if trial["wall_seconds"] > 0
+    ]
+    share_total = statistics.median(coverage_per_trial) if coverage_per_trial else 0.0
+    if share_total > 1.0 + SHARE_TOLERANCE:
+        cleanup()
+        return cell | failure_record(
+            stage="on_trial",
+            reason_code="event_shares_exceed_wall",
+            timing_attempted=True,
+            status="profile_invalid",
+            problems=[
+                f"median per-trial event coverage is {share_total:.4f} of the ON wall",
+                f"per-trial coverage: {coverage_per_trial}",
+                "the event spans overlap or the wall excludes work the events cover",
+            ],
+        )
+
     # Residual PER TRIAL, then the median of residuals. Summing medians and
     # subtracting the median wall is the "residual as a difference of medians"
     # error: median-of-sums != sum-of-medians, so the two can cross and produce
@@ -652,6 +703,13 @@ def profile_cell(model, steps: int, batch: int) -> dict[str, Any]:
             "denominator": "on_wall_median",
             "attributed_seconds": attributed,
             "unattributed_seconds": unattributed,
+            "coverage_ratio": share_total,
+            "coverage_basis": "median of per-trial (sum of event seconds / wall)",
+            "coverage_note": (
+                "the per-event `share_of_on_wall` values are per-trial medians "
+                "and do NOT sum to this ratio: each event's median can come "
+                "from a different trial, so their sum is not a coverage figure"
+            ),
             "unattributed_basis": "median of per-trial (wall - attributed)",
             "unattributed_trials": residuals,
             "unattributed_note": (

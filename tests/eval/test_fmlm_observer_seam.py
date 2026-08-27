@@ -157,9 +157,30 @@ class TestDefaultOff:
         assert sampler._OBSERVER_CONTEXT.get() is None
 
     def test_the_callback_never_fires_when_disabled(self):
-        recorder = _Recorder()
-        _run(4, observer=None)
-        assert recorder.log == []
+        """The earlier version created a recorder, ran with observer=None and
+        asserted the recorder was empty — vacuously true, since the recorder was
+        never installed. This installs a callback that FAILS if invoked, then
+        runs the disabled path."""
+        from unturtle_flm import sampler
+
+        fired: list[str] = []
+
+        def must_not_fire(name, phase):
+            fired.append(f"{name}:{phase}")
+
+        model = _build_model()
+        # Sanity: the callback DOES fire when installed, so its silence below
+        # means something.
+        token = sampler._install_observer(must_not_fire)
+        try:
+            sampler.run_fmlm_request(model, _request(4))
+        finally:
+            sampler._restore_observer(token)
+        assert fired, "the probe callback never fires at all"
+
+        fired.clear()
+        sampler.run_fmlm_request(model, _request(4))
+        assert fired == [], f"the disabled path invoked a callback: {fired}"
 
     def test_the_disabled_scope_allocates_nothing_per_event(self):
         """`_OFF` is a shared singleton, so an OFF run creates no scope object
@@ -460,6 +481,47 @@ class TestEventCounts:
         for context in exp_context:
             assert "flow_map_forward" in context, (
                 f"`.exp()` ran outside flow_map_forward: {context}"
+            )
+
+    def test_every_time_conversion_is_inside_time_schedule(self):
+        """The 35.7% attributed to `time_schedule` IS these calls: each does a
+        `lut(x.cpu().numpy())` host round trip that synchronizes the stream. If
+        one escapes the scope, the headline claim moves with it while every event
+        count stays identical."""
+        from unturtle_flm import sampler
+
+        open_stack: list[str] = []
+        conversions: list[tuple[str, tuple[str, ...]]] = []
+
+        def observer(name, phase):
+            if phase == "enter":
+                open_stack.append(name)
+            else:
+                open_stack.remove(name)
+
+        class Watched(StubFlowMap):
+            def _tau_to_t(self, tau):
+                conversions.append(("_tau_to_t", tuple(open_stack)))
+                return super()._tau_to_t(tau)
+
+            def _t_to_tau(self, t):
+                conversions.append(("_t_to_tau", tuple(open_stack)))
+                return super()._t_to_tau(t)
+
+        torch.manual_seed(4242)
+        model = Watched().eval()
+        token = sampler._install_observer(observer)
+        try:
+            sampler.run_fmlm_request(model, _request(4))
+        finally:
+            sampler._restore_observer(token)
+
+        # 4 steps x (_tau_to_t twice + _t_to_tau once) = 12 conversions.
+        assert len(conversions) == 12, conversions
+        assert {name for name, _ in conversions} == {"_tau_to_t", "_t_to_tau"}
+        for name, context in conversions:
+            assert "time_schedule" in context, (
+                f"{name} ran outside time_schedule: {context}"
             )
 
     def test_the_noise_draw_is_inside_state_update(self):

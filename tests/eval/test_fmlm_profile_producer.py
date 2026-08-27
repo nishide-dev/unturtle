@@ -82,6 +82,40 @@ class TestFrozenConfiguration:
         assert producer.STEPS_CELLS == (1, 32)
         assert producer.BATCH_SIZES == (1, 8, 32)
 
+    def test_the_window_values_are_pinned_not_merely_typed(self):
+        """`TRIALS = 1` passes an isinstance check while making every median a
+        single sample and the residual arithmetic untestable, with provenance
+        faithfully reporting the degraded value."""
+        producer = _producer()
+        assert producer.TRIALS == 3
+        assert producer.WARMUP == 2
+        assert producer.SHARE_TOLERANCE == 0.02
+
+    def test_the_device_gate_refuses_anything_but_cuda_zero(self):
+        """`environment()` hardcodes `get_device_name(0)` and the peak stats are
+        global, so another device would be mis-recorded against device 0."""
+        producer = _producer()
+        producer.require_supported_device("cuda:0")
+        for device in ("cpu", "cuda:1", "cuda", "cuda:0 "):
+            with pytest.raises(SystemExit, match="cuda:0 only"):
+                producer.require_supported_device(device)
+
+    def test_the_diagnostic_flags_stay_out_of_the_public_kwargs(self):
+        """`request.kwargs` is the documented surface; a diagnostic flag there
+        would change the public contract."""
+        producer = _producer()
+        plain = producer.Request(steps=1, num_samples=1)
+        flagged = producer.Request(
+            steps=1, num_samples=1, diagnostics=("terminal_rng", "final_latent")
+        )
+        expected = {"steps", "num_samples", "seed", "gamma"}
+        assert set(plain.kwargs) == expected
+        assert set(flagged.kwargs) == expected
+        assert not hasattr(plain, "_unturtle_profile_diagnostics")
+        assert flagged._unturtle_profile_diagnostics == frozenset(
+            {"terminal_rng", "final_latent"}
+        )
+
     def test_only_device_and_out_are_configurable(self):
         producer = _producer()
         source = inspect.getsource(producer.parse_args)
@@ -198,16 +232,18 @@ class TestStructuralZero:
     @staticmethod
     def _trials(steps, seconds):
         producer = _producer()
+        # The walls VARY across trials, and not by 1.0. Three identical walls
+        # make median == min == max == mean, so a denominator swapped to `min`
+        # or `max` is unobservable; a unit wall makes a DROPPED denominator
+        # unobservable. Median stays 4.0.
+        walls = (3.0, 4.0, 5.0)
         return producer, [
             {
-                # NOT 1.0: dividing by a constant 1.0 is indistinguishable from
-                # dividing by the wall, so a mutant that drops the divisor
-                # survives against a unit wall.
-                "wall_seconds": 4.0,
+                "wall_seconds": wall,
                 "event_seconds": dict(seconds),
                 "calls": producer.expected_counts(steps),
             }
-            for _ in range(3)
+            for wall in walls
         ]
 
     def test_state_update_is_a_flagged_zero_at_one_step(self):
@@ -257,8 +293,125 @@ class TestStructuralZero:
         assert "structural_zero" not in rows["state_update"]
         assert rows["state_update"]["seconds"] == 0.3
         assert rows["state_update"]["calls"] == 31
-        # Share is against the ON wall (4.0), so 0.3/4.0 = 7.5%.
+        # Median of per-trial shares: 0.3/3, 0.3/4, 0.3/5 -> median 0.3/4.
         assert rows["state_update"]["share_of_on_wall"] == pytest.approx(0.075)
+
+    def test_the_denominator_is_a_central_tendency_not_a_best_case(self):
+        """A denominator swapped to `min(on_walls)` inflates every published
+        share by the ratio of median to fastest trial."""
+        producer, trials = self._trials(
+            32,
+            {
+                "grid_init": 0.1,
+                "time_schedule": 0.05,
+                "flow_map_forward": 0.5,
+                "state_update": 0.3,
+                "endpoint_decode": 0.02,
+            },
+        )
+        walls = [trial["wall_seconds"] for trial in trials]
+        assert min(walls) != max(walls), "the fixture must vary the wall"
+        rows = {row["name"]: row for row in producer.assemble_events(32, trials)}
+        # 0.5/4 = 0.125 for the median wall; 0.5/3 = 0.167 for the fastest.
+        assert rows["flow_map_forward"]["share_of_on_wall"] == pytest.approx(0.125)
+
+    def test_shares_are_per_trial_medians_not_a_ratio_of_medians(self):
+        """Per-event medians can come from DIFFERENT trials, so dividing a
+        median event time by a median wall let the shares sum over 100% — it did,
+        in 3 of 5 published cells."""
+        producer = _producer()
+        # Event maxima deliberately land in different trials.
+        trials = [
+            {
+                "wall_seconds": 1.0,
+                "event_seconds": {
+                    "grid_init": 0.5,
+                    "time_schedule": 0.1,
+                    "flow_map_forward": 0.1,
+                    "state_update": 0.1,
+                    "endpoint_decode": 0.1,
+                },
+                "calls": producer.expected_counts(32),
+            },
+            {
+                "wall_seconds": 1.0,
+                "event_seconds": {
+                    "grid_init": 0.1,
+                    "time_schedule": 0.5,
+                    "flow_map_forward": 0.1,
+                    "state_update": 0.1,
+                    "endpoint_decode": 0.1,
+                },
+                "calls": producer.expected_counts(32),
+            },
+            {
+                "wall_seconds": 1.0,
+                "event_seconds": {
+                    "grid_init": 0.1,
+                    "time_schedule": 0.1,
+                    "flow_map_forward": 0.5,
+                    "state_update": 0.1,
+                    "endpoint_decode": 0.1,
+                },
+                "calls": producer.expected_counts(32),
+            },
+        ]
+        rows = {row["name"]: row for row in producer.assemble_events(32, trials)}
+        # Each event's per-trial shares are [0.5, 0.1, 0.1] in some order, so
+        # every median is 0.1 — the sum (0.5) is BELOW each trial's true 0.9
+        # coverage. That is why the summed per-event shares are not a coverage
+        # figure and the artifact says so; coverage is gated per trial instead.
+        for name in ("grid_init", "time_schedule", "flow_map_forward"):
+            assert rows[name]["share_of_on_wall"] == pytest.approx(0.1), name
+        by_trial = [
+            sum(trial["event_seconds"].values()) / trial["wall_seconds"]
+            for trial in trials
+        ]
+        assert all(ratio == pytest.approx(0.9) for ratio in by_trial)
+
+    def test_the_artifact_warns_that_shares_do_not_sum_to_coverage(self):
+        """A reader adding up the per-event shares gets a number that is not
+        coverage — each event's median can come from a different trial — so the
+        record must say so next to the figure."""
+        producer = _producer()
+        source = inspect.getsource(producer.profile_cell)
+        note = source.split('"coverage_note": (')[1].split("),")[0]
+        for phrase in ("per-trial medians", "do NOT sum", "different trial"):
+            assert phrase in note, phrase
+        assert '"coverage_basis"' in source
+        assert '"coverage_ratio": share_total' in source
+
+    def test_the_over_coverage_gate_is_a_live_branch(self):
+        """Disabling the comparison leaves every string intact, so the branch is
+        checked structurally: the guard must compare against the tolerance and
+        return `profile_invalid`."""
+        producer = _producer()
+        source = inspect.getsource(producer.profile_cell)
+        assert "if share_total > 1.0 + SHARE_TOLERANCE:" in source
+        guard = source.split("if share_total > 1.0 + SHARE_TOLERANCE:")[1]
+        head = guard[: guard.index("problems=")]
+        assert 'status="profile_invalid"' in head
+        assert 'reason_code="event_shares_exceed_wall"' in head
+        assert "cleanup()" in head
+
+    def test_over_coverage_and_negative_residual_are_separate_gates(self):
+        """The residual comes from summed seconds, so it can look healthy while
+        the per-event coverage still exceeds the wall."""
+        producer = _producer()
+        source = inspect.getsource(producer.profile_cell)
+        assert source.index("event_shares_exceed_wall") < source.index(
+            "negative_unattributed_seconds"
+        )
+        assert source.count('status="profile_invalid"') == 2
+
+    def test_coverage_is_gated_per_trial(self):
+        """The gate must not use the sum of per-event medians, which is not a
+        coverage figure."""
+        producer = _producer()
+        source = inspect.getsource(producer.profile_cell)
+        assert "coverage_per_trial" in source
+        assert "event_shares_exceed_wall" in source
+        assert 'sum(trial["event_seconds"].values()) / trial["wall_seconds"]' in source
 
     def test_no_artificial_event_is_emitted_for_the_structural_zero(self):
         """The row is supplied at ASSEMBLY time; the sampler must not be made to
@@ -292,11 +445,11 @@ class TestVerdictBasis:
         instrumentation overhead to the operations."""
         producer = _producer()
         source = inspect.getsource(producer.assemble_events)
-        assert "wall_median" in source
-        assert "off" not in source.replace("off", "", 0) or "off_wall" not in source
-        assert '"denominator": "on_wall_median"' in inspect.getsource(
-            producer.profile_cell
-        )
+        # The divisor is the trial's OWN wall; no OFF-pass value is reachable
+        # here at all, since `assemble_events` only receives ON trials.
+        assert 'trial["wall_seconds"]' in source
+        assert "off" not in _code_only(source)
+        assert '"denominator"' in inspect.getsource(producer.profile_cell)
 
     def test_peak_memory_comes_from_the_off_pass(self):
         producer = _producer()
@@ -334,10 +487,60 @@ class TestDiagnosticsAreSeparateFromTiming:
         ):
             assert forbidden not in source, forbidden
 
-    def test_the_timed_observer_synchronizes_once(self):
-        """One sync for the whole window, after it closes — a per-event sync
-        would serialise the very work being timed."""
-        assert _code_only(self._observer_source()).count("synchronize") == 1
+    def test_the_observer_never_synchronizes(self):
+        """`collect` must not sync: the caller performs the ONE window-closing
+        synchronize INSIDE its timed span, so the wall contains the queue
+        drain. A sync inside `collect` lands outside the span."""
+        assert "synchronize" not in _code_only(self._observer_source())
+
+    def test_the_on_wall_includes_the_queue_drain(self):
+        """Generation is async, so `run_once` returns with kernels in flight.
+        Reading the wall before the drain made the ON wall SHORTER than the
+        CUDA-event total it contains: negative instrumentation overhead in 3 of
+        5 cells and event shares over 100%."""
+        producer = _producer()
+        source = inspect.getsource(producer.timed_on)
+        drain = source.split("run_once(model, request, observer)")[1]
+        sync_index = drain.index("torch.cuda.synchronize()")
+        wall_index = drain.index("wall = time.perf_counter() - start")
+        assert sync_index < wall_index, (
+            "the wall is read before the queue drains, so it excludes work the "
+            "events measure"
+        )
+
+    def test_the_observer_does_not_block_per_event(self):
+        """Counting occurrences cannot see RELOCATION, so the counter is driven
+        through a fake device module instead."""
+        producer = _producer()
+
+        class FakeEvent:
+            def record(self):
+                pass
+
+            def elapsed_time(self, _other):
+                return 1.0
+
+        calls = {"sync": 0}
+
+        class FakeCuda:
+            @staticmethod
+            def Event(enable_timing=False):
+                return FakeEvent()
+
+            @staticmethod
+            def synchronize():
+                calls["sync"] += 1
+
+        class FakeTorch:
+            cuda = FakeCuda
+
+        observer = producer.CudaEventObserver(FakeTorch)
+        for name in ("grid_init", "time_schedule", "flow_map_forward"):
+            observer(name, "enter")
+            observer(name, "exit")
+        assert calls["sync"] == 0, "the observer synchronized while recording"
+        observer.collect()
+        assert calls["sync"] == 0, "`collect` synchronized; the caller must"
 
     def test_an_unclosed_window_is_refused(self):
         producer = _producer()
