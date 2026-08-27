@@ -537,6 +537,33 @@ def failure_record(
     }
 
 
+def overhead_estimate(off_walls: list[float], on_walls: list[float]) -> dict[str, Any]:
+    """The ON-OFF difference, reported against its own noise floor.
+
+    A signed point estimate is not publishable here: with TRIALS=3 the OFF
+    trials alone spread by up to 16%, and the measured difference lands inside
+    that, so its SIGN is an artifact of which trial happened to be the median.
+    Reporting `seconds` without `resolvable` invites reading noise as a real
+    instrumentation cost — or, worse, as instrumentation making the code faster.
+    """
+    off_median = statistics.median(off_walls)
+    on_median = statistics.median(on_walls)
+    difference = on_median - off_median
+    off_spread = (max(off_walls) - min(off_walls)) if off_walls else 0.0
+    return {
+        "seconds": difference,
+        "off_median_seconds": off_median,
+        "on_median_seconds": on_median,
+        "off_spread_seconds": off_spread,
+        "resolvable": abs(difference) > off_spread,
+        "basis": (
+            "on_wall_median - off_wall_median, compared against the OFF trial "
+            "spread; `resolvable` is False when the difference is smaller than "
+            "the spread, in which case the sign carries no information"
+        ),
+    }
+
+
 def gate_trials(steps: int, trials: list[dict]) -> list[str]:
     """Gate EVERY trial, not an aggregate: two trials can be individually wrong
     while their totals look right."""
@@ -689,7 +716,16 @@ def profile_cell(model, steps: int, batch: int) -> dict[str, Any]:
             "verdict_basis": "instrumentation_off_outer_wall_clock",
             "off_wall_trials": off["wall_seconds_trials"],
             "on_wall_median": on_median,
-            "instrumentation_overhead_seconds": on_median - off["wall_seconds_median"],
+            "on_wall_trials": on_walls,
+            # The ON-OFF difference is reported WITH the noise floor that
+            # decides whether it means anything. At TRIALS=3 the OFF spread is
+            # 1.4-16.2% while the difference is -1.4% to +10.1%, so the sign is
+            # not resolvable and a bare signed number would read as a measured
+            # slowdown or speedup. `resolvable` is False whenever the magnitude
+            # sits inside the OFF spread.
+            "instrumentation_overhead": overhead_estimate(
+                off["wall_seconds_trials"], on_walls
+            ),
         },
         "peak_memory": {
             "allocated_bytes": off["peak_memory_bytes"],

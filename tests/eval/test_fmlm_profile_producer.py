@@ -456,11 +456,59 @@ class TestVerdictBasis:
         source = inspect.getsource(producer.profile_cell)
         assert '"basis": "instrumentation_off_pass"' in source
 
-    def test_the_overhead_is_recorded_rather_than_hidden(self):
+    def test_the_overhead_is_recorded_with_its_noise_floor(self):
+        """A signed point estimate is not publishable at TRIALS=3: the OFF
+        trials alone spread by up to 16% while the difference is -1.4% to
+        +10.1%, so the SIGN is an artifact of which trial was the median."""
         producer = _producer()
-        assert "instrumentation_overhead_seconds" in inspect.getsource(
-            producer.profile_cell
-        )
+        assert "instrumentation_overhead" in inspect.getsource(producer.profile_cell)
+
+    def test_an_overhead_inside_the_noise_is_not_resolvable(self):
+        producer = _producer()
+        # OFF spreads by 20 ms; the difference is 5 ms.
+        estimate = producer.overhead_estimate([1.00, 1.01, 1.02], [1.015, 1.02, 1.025])
+        assert estimate["resolvable"] is False
+        assert estimate["off_spread_seconds"] == pytest.approx(0.02)
+
+    def test_an_overhead_larger_than_the_noise_is_resolvable(self):
+        producer = _producer()
+        estimate = producer.overhead_estimate([1.00, 1.001, 1.002], [1.50, 1.51, 1.52])
+        assert estimate["resolvable"] is True
+        assert estimate["seconds"] > 0
+
+    def test_a_negative_difference_inside_the_noise_is_not_a_speedup(self):
+        """Instrumentation cannot make the code faster; a negative difference
+        inside the spread must not be published as one."""
+        producer = _producer()
+        estimate = producer.overhead_estimate([1.00, 1.05, 1.10], [1.02, 1.03, 1.04])
+        assert estimate["seconds"] < 0
+        assert estimate["resolvable"] is False
+
+    def test_a_large_negative_difference_is_still_flagged_resolvable(self):
+        """The magnitude decides resolvability, not the direction: an
+        unsigned comparison is required, since a big negative difference means
+        the measurement is broken and must not be silently unresolvable."""
+        producer = _producer()
+        estimate = producer.overhead_estimate([2.00, 2.001, 2.002], [1.00, 1.01, 1.02])
+        assert estimate["seconds"] < 0
+        assert abs(estimate["seconds"]) > estimate["off_spread_seconds"]
+        assert estimate["resolvable"] is True
+
+    def test_the_overhead_is_a_structured_estimate_not_a_bare_number(self):
+        """A bare `instrumentation_overhead_seconds` float is what published the
+        unresolvable signs in the first place."""
+        producer = _producer()
+        source = inspect.getsource(producer.profile_cell)
+        assert '"instrumentation_overhead": overhead_estimate(' in source
+        assert '"instrumentation_overhead_seconds"' not in source
+        estimate = producer.overhead_estimate([1.0, 1.0, 1.0], [1.0, 1.0, 1.0])
+        for key in ("seconds", "off_spread_seconds", "resolvable", "basis"):
+            assert key in estimate, key
+
+    def test_the_overhead_basis_explains_the_sign_caveat(self):
+        doc = _producer().overhead_estimate([1.0], [1.0])["basis"]
+        assert "spread" in doc
+        assert "sign carries no information" in doc
 
 
 class TestDiagnosticsAreSeparateFromTiming:
