@@ -192,7 +192,6 @@ def build(args, *, seq_len: int, batch_size: int, seed: int):
     count, and this cell's counts are a gate.
     """
     import torch
-    from peft import LoraConfig, get_peft_model
 
     from unturtle import FastDiffusionModel
     from unturtle.diffusion import DiffusionTrainer, DiffusionTrainingArguments
@@ -219,17 +218,29 @@ def build(args, *, seq_len: int, batch_size: int, seed: int):
             f"every parameter on {args.device} so that timing, peak memory and "
             "RNG fingerprints refer to one device"
         )
-    model = get_peft_model(
+    # `FastDiffusionModel.get_peft_model`, NOT peft's: the Dream QKV patch
+    # requires `hasattr(q_proj, "lora_A")`, so patching before adapters exist
+    # installs nothing. Calling peft directly left every layer on
+    # `_original_apply_qkv` — verified — which would have made the "fast" arm
+    # identical to the reference and reported a 0% difference as a finding.
+    model = FastDiffusionModel.get_peft_model(
         model,
-        LoraConfig(
-            r=LORA_R,
-            lora_alpha=LORA_ALPHA,
-            lora_dropout=LORA_DROPOUT,
-            bias=LORA_BIAS,
-            target_modules=list(LORA_TARGETS),
-            use_dora=False,
-        ),
+        r=LORA_R,
+        lora_alpha=LORA_ALPHA,
+        lora_dropout=LORA_DROPOUT,
+        bias=LORA_BIAS,
+        target_modules=list(LORA_TARGETS),
+        use_gradient_checkpointing=False,
     )
+    installed = [getattr(attn, "apply_qkv", None) for attn in attention_modules(model)]
+    from unturtle.kernels.fast_lora import apply_lora_qkv_with_bias as _fast_qkv
+
+    if not installed or any(fn is not _fast_qkv for fn in installed):
+        raise SystemExit(
+            "the Dream fast QKV path was not installed on every layer, so the "
+            "fast arm would not differ from the reference; check the LoRA "
+            "config guards (dropout must be 0, bias 'none', no DoRA)"
+        )
     model.config.use_cache = False
     mask_id = getattr(model.config, "mask_token_id", None) or tokenizer.mask_token_id
 
@@ -479,3 +490,254 @@ def parity_preflight(args, *, seq_len: int, batch_size: int, seed: int) -> dict:
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     return result
+
+
+#: The four conditions, cycled so each lands in each ordinal position across
+#: trials. A fixed order would load thermal, allocator and clock drift onto
+#: whichever condition always runs last — at 7B that is the same order as the
+#: effect being measured. Fixed before timing, not adjusted after seeing results.
+CONDITIONS = ("fast_off", "reference_off", "fast_on", "reference_on")
+CONDITION_ORDERS = (
+    ("fast_off", "reference_off", "fast_on", "reference_on"),
+    ("reference_off", "fast_on", "reference_on", "fast_off"),
+    ("fast_on", "reference_on", "fast_off", "reference_off"),
+)
+
+
+def assert_single_device(model, optimizer, device: str) -> None:
+    """Every parameter, buffer and optimizer state on ONE device.
+
+    `device_map="auto"` sharded this checkpoint across cuda:1/2/3 with nothing
+    on cuda:0, which silently invalidates synchronization, CUDA events, peak
+    stats and RNG fingerprints — all of which target the default device.
+    """
+    import torch
+
+    places = {str(p.device) for p in model.parameters()}
+    places |= {str(b.device) for b in model.buffers()}
+    for state in optimizer.state.values():
+        places |= {str(v.device) for v in state.values() if torch.is_tensor(v)}
+    if places != {device}:
+        raise SystemExit(
+            f"model/optimizer state spans {sorted(places)}; this producer needs "
+            f"everything on {device} so timing, memory and RNG refer to one device"
+        )
+    current = f"cuda:{torch.cuda.current_device()}"
+    if current != device:
+        raise SystemExit(
+            f"torch.cuda.current_device() is {current}, not {device}: the timer, "
+            "memory stats and RNG would target a different device than the model"
+        )
+
+
+def callable_identities(model) -> dict[str, str | None]:
+    """Identity of everything that must NOT change between arms.
+
+    Only `apply_qkv` may differ. Capturing O projection, MLP and the attention
+    forward makes a mutation that swaps them fail rather than be attributed to
+    QKV.
+    """
+
+    def fingerprint(value):
+        """Identify the underlying function, not a bound-method wrapper.
+
+        `id(module.forward)` creates a NEW bound method on every access, so
+        comparing those ids reports a change even when nothing changed —
+        measured: 56 of 56 keys "differed" between two consecutive calls with no
+        modification in between. The values look stable within one expression
+        only because CPython reuses the freed address.
+        """
+        if value is None:
+            return None
+        underlying = getattr(value, "__func__", value)
+        return (
+            f"{getattr(underlying, '__qualname__', repr(underlying))}@{id(underlying)}"
+        )
+
+    identities: dict[str, str | None] = {}
+    for index, attn in enumerate(attention_modules(model)):
+        identities[f"attn{index}.forward"] = fingerprint(attn.forward)
+        identities[f"attn{index}.apply_o"] = fingerprint(getattr(attn, "apply_o", None))
+        identities[f"attn{index}.o_proj.forward"] = fingerprint(attn.o_proj.forward)
+        identities[f"attn{index}.apply_qkv"] = fingerprint(
+            getattr(attn, "apply_qkv", None)
+        )
+    return identities
+
+
+class StateSnapshot:
+    """Trainable parameters, full optimizer state, and both RNG streams.
+
+    Restored before every timed window and OUTSIDE the wall: a snapshot copy or
+    an optimizer `load_state_dict` inside the timed region would be charged to
+    step time. Optimizer state means the whole dict — step counter, `exp_avg`,
+    `exp_avg_sq` — not just parameters, or the second arm would run against a
+    warmed-up Adam.
+    """
+
+    def __init__(self, model, optimizer) -> None:
+        import copy
+
+        import torch
+
+        self.params = {
+            name: param.detach().clone()
+            for name, param in model.named_parameters()
+            if param.requires_grad
+        }
+        self.optimizer_state = copy.deepcopy(optimizer.state_dict())
+        self.cpu_rng = torch.get_rng_state().clone()
+        self.cuda_rng = (
+            [state.clone() for state in torch.cuda.get_rng_state_all()]
+            if torch.cuda.is_available()
+            else None
+        )
+
+    def restore(self, model, optimizer) -> None:
+        import copy
+
+        import torch
+
+        with torch.no_grad():
+            for name, param in model.named_parameters():
+                if name in self.params:
+                    param.copy_(self.params[name])
+        optimizer.load_state_dict(copy.deepcopy(self.optimizer_state))
+        torch.set_rng_state(self.cpu_rng.clone())
+        if self.cuda_rng is not None:
+            torch.cuda.set_rng_state_all([s.clone() for s in self.cuda_rng])
+        model.zero_grad(set_to_none=True)
+        # Gradients are NOT snapshotted: each window starts from none, and that
+        # is asserted rather than assumed.
+        leftover = [
+            name
+            for name, param in model.named_parameters()
+            if param.requires_grad and param.grad is not None
+        ]
+        if leftover:
+            raise RuntimeError(
+                f"{len(leftover)} trainable parameters still carry gradients "
+                f"after zero_grad, first: {leftover[:3]}"
+            )
+
+
+@contextmanager
+def instrumented(model, trainer, timer: CudaEventTimer):
+    """Hooks for the ON condition; every one restored in `finally`."""
+    import unturtle.diffusion.trainer as trainer_module
+
+    scopes: dict[int, Any] = {}
+    saved_apply = []
+
+    def wrap_apply(module):
+        original = module.apply_qkv
+
+        def timed(self, X, _original=original):
+            with timer.measure("qkv_lora_projection"):
+                return _original(self, X)
+
+        module.apply_qkv = timed
+        return original
+
+    for module in attention_modules(model):
+        saved_apply.append((module, wrap_apply(module)))
+
+    original_forward = model.__class__.__call__
+
+    def timed_forward(self, *args, _timer=timer, **kwargs):
+        with _timer.measure("full_model_forward"):
+            return original_forward(self, *args, **kwargs)
+
+    model.__class__.__call__ = timed_forward
+
+    # The loss symbol bound INTO the trainer module — patching the kernel module
+    # would wrap a name nobody calls.
+    original_loss = trainer_module.fast_masked_diffusion_loss
+
+    def timed_loss(*args, **kwargs):
+        with timer.measure("loss"):
+            return original_loss(*args, **kwargs)
+
+    trainer_module.fast_masked_diffusion_loss = timed_loss
+    try:
+        yield
+    finally:
+        for module, original in saved_apply:
+            module.apply_qkv = original
+        model.__class__.__call__ = original_forward
+        trainer_module.fast_masked_diffusion_loss = original_loss
+        scopes.clear()
+
+
+def run_condition(
+    condition, *, model, trainer, optimizer, batch, snapshot, device, timer=None
+):
+    """One timed window for one condition.
+
+    Restoration, arm installation and peak reset all happen BEFORE the clock
+    starts. Warmup runs inside the arm, then state and RNG are restored AGAIN so
+    warmup's parameter updates and allocator peak cannot reach the timed result.
+    """
+    import time
+
+    import torch
+
+    arm = "fast" if condition.startswith("fast") else "reference"
+    instrument = condition.endswith("_on")
+
+    def one_step() -> None:
+        loss = trainer.compute_loss(model, dict(batch))
+        loss.backward()
+        optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
+
+    snapshot.restore(model, optimizer)
+    with qkv_arm(model, arm) as layer_count:
+        identities_before = callable_identities(model)
+
+        # Warmup inside the arm, then restore again: its updates and peak must
+        # not enter the timed window.
+        for _ in range(WARMUP):
+            one_step()
+        torch.cuda.synchronize()
+        snapshot.restore(model, optimizer)
+        torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats()
+
+        if instrument:
+            with instrumented(model, trainer, timer):
+                torch.cuda.synchronize()
+                start = time.perf_counter()
+                for _ in range(STEPS):
+                    one_step()
+                torch.cuda.synchronize()
+                timer.collect(synchronize=False)
+                wall = time.perf_counter() - start
+        else:
+            torch.cuda.synchronize()
+            start = time.perf_counter()
+            for _ in range(STEPS):
+                one_step()
+            torch.cuda.synchronize()
+            wall = time.perf_counter() - start
+
+        peak_allocated = torch.cuda.max_memory_allocated()
+        peak_reserved = torch.cuda.max_memory_reserved()
+        identities_after = callable_identities(model)
+
+    if identities_before != identities_after:
+        raise RuntimeError(
+            "non-QKV callables changed during the window, so the arms differ by "
+            "more than the QKV projection"
+        )
+    return {
+        "condition": condition,
+        "arm": arm,
+        "instrumented": instrument,
+        "wall_seconds": wall,
+        "per_step_seconds": wall / STEPS,
+        "layers": layer_count,
+        "peak_allocated_bytes": peak_allocated,
+        "peak_reserved_bytes": peak_reserved,
+        "operations": timer.result() if instrument else None,
+    }
