@@ -55,11 +55,19 @@ from typing import Any
 # bit-identical, so an outer pre/post fingerprint cannot detect an observer that
 # perturbs the internal stream. The check has to read the state before the fork
 # closes or it proves nothing.
-#: Observer, held in a ContextVar so a profiled run cannot observe an unrelated
-#: concurrent one. A plain module global leaked across threads — MEASURED: with
-#: an observer installed on the profiling thread, 26 events from an unrelated
-#: thread's ordinary `run_fmlm_request` were captured. A ContextVar isolates
-#: threads AND async tasks; each thread and task sees its own value.
+#: Observer state, scoped by EXECUTION CONTEXT. Independently established
+#: contexts do not leak events, and nested installation restores via ContextVar
+#: tokens.
+#:
+#: A plain module global did leak — MEASURED: with an observer installed on the
+#: profiling thread, 26 events from an unrelated thread's ordinary
+#: `run_fmlm_request` were captured.
+#:
+#: NOT claimed: that no child task can ever see the observer. A task created
+#: INSIDE an observed context inherits the context, so it inherits the observer
+#: — verified. That is standard ContextVar copy-on-spawn semantics, not a leak,
+#: and it is irrelevant to the profiler, which spawns nothing and runs one
+#: request at a time.
 _OBSERVER_CONTEXT: ContextVar[Any] = ContextVar("_FMLM_OBSERVER", default=None)
 
 #: Frozen event boundaries. `flow_map_forward` spans the double-time model call

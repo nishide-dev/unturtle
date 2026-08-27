@@ -263,7 +263,27 @@ class TestExecutionContextIsolation:
         attempts = [unobserved_pair() for _ in range(4)]
         assert all(t.shape == attempts[0].shape for t in attempts)
 
-    def test_an_async_task_is_isolated(self):
+    def test_a_task_created_inside_an_observed_context_inherits_it(self):
+        """Pins the LIMIT of the guarantee, so the docstring cannot drift into
+        "never leaks to any child task" — which is false. Copy-on-spawn is
+        standard ContextVar behavior; the profiler spawns nothing."""
+        import asyncio
+
+        from unturtle_flm import sampler
+
+        async def child():
+            return sampler._OBSERVER_CONTEXT.get()
+
+        async def main():
+            token = sampler._install_observer(lambda _n, _p: None)
+            try:
+                return await asyncio.create_task(child())
+            finally:
+                sampler._restore_observer(token)
+
+        assert asyncio.run(main()) is not None
+
+    def test_independently_established_async_contexts_are_isolated(self):
         import asyncio
 
         from unturtle_flm import sampler
