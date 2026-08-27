@@ -104,9 +104,11 @@ REQUIRED_EVENTS = frozenset(
     }
 )
 
-#: Parity tolerances, fixed BEFORE any timing so they cannot be relaxed to fit
-#: a result. bf16 LoRA over a 4-bit base accumulates visible error across a
-#: 7B-parameter graph; these bound it without admitting a real divergence.
+#: Parity tolerances, fixed BEFORE any timing so they cannot be relaxed to fit a
+#: result. They exist as a safety margin for bf16 LoRA over a 4-bit base; on the
+#: real training step nothing has needed them so far — every compared tensor has
+#: been bit-identical, and the graded report says so rather than reporting a
+#: single "equivalent" count that would hide the distinction.
 PARITY_ATOL = 2e-2
 PARITY_RTOL = 2e-2
 
@@ -410,8 +412,10 @@ def parity_preflight(args, *, seq_len: int, batch_size: int, seed: int) -> dict:
     restore()
 
     problems: list[str] = []
+    graded: list[tuple[str, Any, Any]] = []
 
     def compare(label: str, a, b) -> None:
+        graded.append((label, a, b))
         if not torch.isfinite(a).all() or not torch.isfinite(b).all():
             problems.append(f"{label}: non-finite values")
             return
@@ -440,15 +444,31 @@ def parity_preflight(args, *, seq_len: int, batch_size: int, seed: int) -> dict:
             f"post_step:{name}", fast["post_step"][name], reference["post_step"][name]
         )
 
+    # Equivalence is graded, not lumped: "785 tensors equivalent" would hide
+    # which agreed exactly and which only agreed within tolerance.
+    bit_identical = 0
+    tolerance_equivalent = 0
+    for _label, a, b in graded:
+        if torch.equal(a, b):
+            bit_identical += 1
+        elif torch.allclose(a, b, atol=PARITY_ATOL, rtol=PARITY_RTOL):
+            tolerance_equivalent += 1
     result = {
         "status": "ok" if not problems else "parity_failed",
         "problems": problems,
+        "mismatch": len(problems),
+        "bit_identical": bit_identical,
+        "tolerance_equivalent": tolerance_equivalent,
+        "tolerance_provenance": (
+            "module constants PARITY_ATOL/PARITY_RTOL, fixed before any timing"
+        ),
         "atol": PARITY_ATOL,
         "rtol": PARITY_RTOL,
         "layers": fast.get("layers"),
         "loss_fast": fast["loss"],
         "loss_reference": reference["loss"],
-        "compared_tensors": len(shared) * 2 + len(fast.get("qkv", [])) + 1,
+        "loss_bit_identical": fast["loss"] == reference["loss"],
+        "compared_tensors": len(graded),
     }
     # No `del` of the closed-over names: `one_arm` captures them, so deleting
     # them in this scope makes them deleted-locals for the whole function and
