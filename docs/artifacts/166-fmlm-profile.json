@@ -1,9 +1,9 @@
 {
   "run": {
-    "head_sha": "e4234d168d3fe3866a41477c31c013504c7350a7",
+    "head_sha": "83f5ee764de0e8efc4638d27e5ab127425e2a85f",
     "worktree_clean": true,
     "worktree_dirty_paths": [],
-    "command": "/home/nishide.21066/.claude/jobs/1492d35a/tmp/wt-fmlm2/benchmarks/flm/fmlm_profile.py --device cuda:0 --out /home/nishide.21066/.claude/jobs/1492d35a/tmp/fmlm-out2",
+    "command": "/home/nishide.21066/.claude/jobs/1492d35a/tmp/wt-fmlm4/benchmarks/flm/fmlm_profile.py --device cuda:0 --out /home/nishide.21066/.claude/jobs/1492d35a/tmp/fmlm-out4",
     "environment": {
       "torch": "2.10.0+cu128",
       "cuda": "12.8",
@@ -209,15 +209,27 @@
       "status": "ok",
       "timing_attempted": true,
       "latency": {
-        "verdict_seconds": 0.0440819279756397,
+        "verdict_seconds": 0.04206029593478888,
         "verdict_basis": "instrumentation_off_outer_wall_clock",
         "off_wall_trials": [
-          0.04074348998256028,
-          0.0440819279756397,
-          0.045190753997303545
+          0.04237680300138891,
+          0.04206029593478888,
+          0.028909623972140253
         ],
-        "on_wall_median": 0.03586640499997884,
-        "instrumentation_overhead_seconds": -0.00821552297566086
+        "on_wall_median": 0.04194291599560529,
+        "on_wall_trials": [
+          0.04522814496885985,
+          0.03956600197125226,
+          0.04194291599560529
+        ],
+        "instrumentation_overhead": {
+          "seconds": -0.0001173799391835928,
+          "off_median_seconds": 0.04206029593478888,
+          "on_median_seconds": 0.04194291599560529,
+          "off_spread_seconds": 0.013467179029248655,
+          "resolvable": false,
+          "basis": "on_wall_median - off_wall_median, compared against the OFF trial spread; `resolvable` is False when the difference is smaller than the spread, in which case the sign carries no information"
+        }
       },
       "peak_memory": {
         "allocated_bytes": 1286337024,
@@ -228,23 +240,23 @@
         {
           "name": "grid_init",
           "calls": 1,
-          "seconds": 0.004092768192291259,
+          "seconds": 0.004320384025573731,
           "description": "begins at the tau linspace; includes the initial randn draw of the [B, L, V] latent; ends once z exists. Does NOT include manual_seed or entry into fork_rng \u2014 those stay unattributed.",
-          "share_of_on_wall": 0.11411146983629036
+          "share_of_on_wall": 0.1051623638444478
         },
         {
           "name": "time_schedule",
           "calls": 1,
-          "seconds": 0.014578687667846679,
+          "seconds": 0.018989055633544923,
           "description": "begins at tau_curr/tau_next indexing; includes _tau_to_t, sigma_target, sigma_tilde, t_tilde and the _t_to_tau inverse; ends once tau_tilde exists. NOT cheap scalar arithmetic despite appearances: _tau_to_t/_t_to_tau go through alpha_to_gamma/gamma_to_alpha, which run `lut(x.cpu().numpy())` \u2014 a device-to-host copy that SYNCHRONIZES the stream, a scipy CubicSpline evaluation on the host, then a copy back. Three such round trips per step (_tau_to_t twice, _t_to_tau once). Independently reproduced: 32 iterations of a busy stream cost ~379 ms more with the round trip than without, against ~515 ms attributed to this event at steps=32 batch=1.",
-          "share_of_on_wall": 0.4064719524539825
+          "share_of_on_wall": 0.438213784520252
         },
         {
           "name": "flow_map_forward",
           "calls": 1,
-          "seconds": 0.01649270439147949,
+          "seconds": 0.017971200942993162,
           "description": "begins before model(...); includes the double-time model call, its return, and log_D_st_pred.exp(); ends after the exp result exists. The exponential is part of producing D_st_pred, not a later stage.",
-          "share_of_on_wall": 0.4598371203216275
+          "share_of_on_wall": 0.4405171997715393
         },
         {
           "name": "state_update",
@@ -257,20 +269,23 @@
         {
           "name": "endpoint_decode",
           "calls": 1,
-          "seconds": 0.0001157120019197464,
+          "seconds": 0.0001372160017490387,
           "description": "the terminal argmax over the vocabulary axis.",
-          "share_of_on_wall": 0.003226194594072494
+          "share_of_on_wall": 0.0032609814625571627
         }
       ],
       "attribution": {
         "denominator": "on_wall_median",
-        "attributed_seconds": 0.03558768017590046,
-        "unattributed_seconds": 0.00028262291941792,
+        "attributed_seconds": 0.04161273708939552,
+        "unattributed_seconds": 0.0003487220900133259,
+        "coverage_ratio": 0.991989040212621,
+        "coverage_basis": "median of per-trial (sum of event seconds / wall)",
+        "coverage_note": "the per-event `share_of_on_wall` values are per-trial medians and do NOT sum to this ratio: each event's median can come from a different trial, so their sum is not a coverage figure",
         "unattributed_basis": "median of per-trial (wall - attributed)",
         "unattributed_trials": [
-          0.00028262291941792,
-          0.00029156153276562596,
-          0.00027872482407838295
+          0.00036232085060328156,
+          0.0003487220900133259,
+          0.00033017890620976736
         ],
         "unattributed_note": "fork_rng enter/exit, manual_seed, loop control, observer dispatch, result assembly and executed-metadata construction are deliberately left unattributed rather than folded into an adjacent event"
       }
@@ -426,15 +441,27 @@
       "status": "ok",
       "timing_attempted": true,
       "latency": {
-        "verdict_seconds": 0.1636572820134461,
+        "verdict_seconds": 0.17721196298953146,
         "verdict_basis": "instrumentation_off_outer_wall_clock",
         "off_wall_trials": [
-          0.1636572820134461,
-          0.16768168099224567,
-          0.15244085702579468
+          0.17721196298953146,
+          0.1719004069454968,
+          0.1826271809404716
         ],
-        "on_wall_median": 0.15797041496261954,
-        "instrumentation_overhead_seconds": -0.0056868670508265495
+        "on_wall_median": 0.1746313190087676,
+        "on_wall_trials": [
+          0.1746313190087676,
+          0.16439276607707143,
+          0.18323692807462066
+        ],
+        "instrumentation_overhead": {
+          "seconds": -0.0025806439807638526,
+          "off_median_seconds": 0.17721196298953146,
+          "on_median_seconds": 0.1746313190087676,
+          "off_spread_seconds": 0.010726773994974792,
+          "resolvable": false,
+          "basis": "on_wall_median - off_wall_median, compared against the OFF trial spread; `resolvable` is False when the difference is smaller than the spread, in which case the sign carries no information"
+        }
       },
       "peak_memory": {
         "allocated_bytes": 4810842624,
@@ -445,23 +472,23 @@
         {
           "name": "grid_init",
           "calls": 1,
-          "seconds": 0.005950719833374024,
+          "seconds": 0.006027935981750488,
           "description": "begins at the tau linspace; includes the initial randn draw of the [B, L, V] latent; ends once z exists. Does NOT include manual_seed or entry into fork_rng \u2014 those stay unattributed.",
-          "share_of_on_wall": 0.03766983732227417
+          "share_of_on_wall": 0.03289694956736939
         },
         {
           "name": "time_schedule",
           "calls": 1,
-          "seconds": 0.01824358367919922,
+          "seconds": 0.02349567985534668,
           "description": "begins at tau_curr/tau_next indexing; includes _tau_to_t, sigma_target, sigma_tilde, t_tilde and the _t_to_tau inverse; ends once tau_tilde exists. NOT cheap scalar arithmetic despite appearances: _tau_to_t/_t_to_tau go through alpha_to_gamma/gamma_to_alpha, which run `lut(x.cpu().numpy())` \u2014 a device-to-host copy that SYNCHRONIZES the stream, a scipy CubicSpline evaluation on the host, then a copy back. Three such round trips per step (_tau_to_t twice, _t_to_tau once). Independently reproduced: 32 iterations of a busy stream cost ~379 ms more with the round trip than without, against ~515 ms attributed to this event at steps=32 batch=1.",
-          "share_of_on_wall": 0.11548734415565211
+          "share_of_on_wall": 0.12822568082880323
         },
         {
           "name": "flow_map_forward",
           "calls": 1,
-          "seconds": 0.13484031677246094,
+          "seconds": 0.14361907958984374,
           "description": "begins before model(...); includes the double-time model call, its return, and log_D_st_pred.exp(); ends after the exp result exists. The exponential is part of producing D_st_pred, not a later stage.",
-          "share_of_on_wall": 0.8535795566807123
+          "share_of_on_wall": 0.8310499366894671
         },
         {
           "name": "state_update",
@@ -474,20 +501,23 @@
         {
           "name": "endpoint_decode",
           "calls": 1,
-          "seconds": 0.0010158079862594605,
+          "seconds": 0.001017856001853943,
           "description": "the terminal argmax over the vocabulary axis.",
-          "share_of_on_wall": 0.006430368537677328
+          "share_of_on_wall": 0.005828599403769264
         }
       ],
       "attribution": {
         "denominator": "on_wall_median",
-        "attributed_seconds": 0.15759427416324615,
-        "unattributed_seconds": 0.00037429460324345243,
+        "attributed_seconds": 0.17419735133647918,
+        "unattributed_seconds": 0.0004339676722884267,
+        "coverage_ratio": 0.9975149493530044,
+        "coverage_basis": "median of per-trial (sum of event seconds / wall)",
+        "coverage_note": "the per-event `share_of_on_wall` values are per-trial medians and do NOT sum to this ratio: each event's median can come from a different trial, so their sum is not a coverage figure",
         "unattributed_basis": "median of per-trial (wall - attributed)",
         "unattributed_trials": [
-          0.00037429460324345243,
-          0.00036917508393527476,
-          0.00037614079937339784
+          0.0004339676722884267,
+          0.0004603823013603625,
+          0.0004164187600836089
         ],
         "unattributed_note": "fork_rng enter/exit, manual_seed, loop control, observer dispatch, result assembly and executed-metadata construction are deliberately left unattributed rather than folded into an adjacent event"
       }
@@ -643,15 +673,27 @@
       "status": "ok",
       "timing_attempted": true,
       "latency": {
-        "verdict_seconds": 0.6594663759460673,
+        "verdict_seconds": 0.669458762044087,
         "verdict_basis": "instrumentation_off_outer_wall_clock",
         "off_wall_trials": [
-          0.6594663759460673,
-          0.6493951729498804,
-          0.6834906120784581
+          0.669458762044087,
+          0.6876040559727699,
+          0.6558051609899849
         ],
-        "on_wall_median": 0.6649406999349594,
-        "instrumentation_overhead_seconds": 0.005474323988892138
+        "on_wall_median": 0.6755793939810246,
+        "on_wall_trials": [
+          0.7164943410316482,
+          0.6708448199788108,
+          0.6755793939810246
+        ],
+        "instrumentation_overhead": {
+          "seconds": 0.006120631936937571,
+          "off_median_seconds": 0.669458762044087,
+          "on_median_seconds": 0.6755793939810246,
+          "off_spread_seconds": 0.031798894982784986,
+          "resolvable": false,
+          "basis": "on_wall_median - off_wall_median, compared against the OFF trial spread; `resolvable` is False when the difference is smaller than the spread, in which case the sign carries no information"
+        }
       },
       "peak_memory": {
         "allocated_bytes": 17162740224,
@@ -662,23 +704,23 @@
         {
           "name": "grid_init",
           "calls": 1,
-          "seconds": 0.023386335372924803,
+          "seconds": 0.02199456024169922,
           "description": "begins at the tau linspace; includes the initial randn draw of the [B, L, V] latent; ends once z exists. Does NOT include manual_seed or entry into fork_rng \u2014 those stay unattributed.",
-          "share_of_on_wall": 0.035170557878638375
+          "share_of_on_wall": 0.030697465398024266
         },
         {
           "name": "time_schedule",
           "calls": 1,
-          "seconds": 0.022459392547607423,
+          "seconds": 0.010908672332763672,
           "description": "begins at tau_curr/tau_next indexing; includes _tau_to_t, sigma_target, sigma_tilde, t_tilde and the _t_to_tau inverse; ends once tau_tilde exists. NOT cheap scalar arithmetic despite appearances: _tau_to_t/_t_to_tau go through alpha_to_gamma/gamma_to_alpha, which run `lut(x.cpu().numpy())` \u2014 a device-to-host copy that SYNCHRONIZES the stream, a scipy CubicSpline evaluation on the host, then a copy back. Three such round trips per step (_tau_to_t twice, _t_to_tau once). Independently reproduced: 32 iterations of a busy stream cost ~379 ms more with the round trip than without, against ~515 ms attributed to this event at steps=32 batch=1.",
-          "share_of_on_wall": 0.03377653458391744
+          "share_of_on_wall": 0.016147135969440285
         },
         {
           "name": "flow_map_forward",
           "calls": 1,
-          "seconds": 0.6156072998046875,
+          "seconds": 0.6395556030273437,
           "description": "begins before model(...); includes the double-time model call, its return, and log_D_st_pred.exp(); ends after the exp result exists. The exponential is part of producing D_st_pred, not a later stage.",
-          "share_of_on_wall": 0.9258078199528208
+          "share_of_on_wall": 0.9361185819918146
         },
         {
           "name": "state_update",
@@ -691,20 +733,23 @@
         {
           "name": "endpoint_decode",
           "calls": 1,
-          "seconds": 0.00829030418395996,
+          "seconds": 0.00979468822479248,
           "description": "the terminal argmax over the vocabulary axis.",
-          "share_of_on_wall": 0.01246773461869738
+          "share_of_on_wall": 0.013670293907261774
         }
       ],
       "attribution": {
         "denominator": "on_wall_median",
-        "attributed_seconds": 0.6644117870330811,
-        "unattributed_seconds": 0.0005289129018782868,
+        "attributed_seconds": 0.6749911289215088,
+        "unattributed_seconds": 0.0005882650595158134,
+        "coverage_ratio": 0.9991638479060296,
+        "coverage_basis": "median of per-trial (sum of event seconds / wall)",
+        "coverage_note": "the per-event `share_of_on_wall` values are per-trial medians and do NOT sum to this ratio: each event's median can come from a different trial, so their sum is not a coverage figure",
         "unattributed_basis": "median of per-trial (wall - attributed)",
         "unattributed_trials": [
-          0.0005686293346807147,
-          0.0005281387371941504,
-          0.0005289129018782868
+          0.0005973082939162433,
+          0.0005609283009544441,
+          0.0005882650595158134
         ],
         "unattributed_note": "fork_rng enter/exit, manual_seed, loop control, observer dispatch, result assembly and executed-metadata construction are deliberately left unattributed rather than folded into an adjacent event"
       }
@@ -1016,15 +1061,27 @@
       "status": "ok",
       "timing_attempted": true,
       "latency": {
-        "verdict_seconds": 1.5287522820290178,
+        "verdict_seconds": 1.5212077850010246,
         "verdict_basis": "instrumentation_off_outer_wall_clock",
         "off_wall_trials": [
-          1.5287522820290178,
-          1.49816969409585,
-          1.5491989509901032
+          1.5212077850010246,
+          1.5199870319338515,
+          1.528545021894388
         ],
-        "on_wall_median": 1.5152892949990928,
-        "instrumentation_overhead_seconds": -0.013462987029924989
+        "on_wall_median": 1.5588352440390736,
+        "on_wall_trials": [
+          1.5908644939772785,
+          1.5588352440390736,
+          1.5191738379653543
+        ],
+        "instrumentation_overhead": {
+          "seconds": 0.03762745903804898,
+          "off_median_seconds": 1.5212077850010246,
+          "on_median_seconds": 1.5588352440390736,
+          "off_spread_seconds": 0.00855798996053636,
+          "resolvable": true,
+          "basis": "on_wall_median - off_wall_median, compared against the OFF trial spread; `resolvable` is False when the difference is smaller than the spread, in which case the sign carries no information"
+        }
       },
       "peak_memory": {
         "allocated_bytes": 1926587904,
@@ -1035,48 +1092,51 @@
         {
           "name": "grid_init",
           "calls": 1,
-          "seconds": 0.003126176118850708,
+          "seconds": 0.0023447680473327637,
           "description": "begins at the tau linspace; includes the initial randn draw of the [B, L, V] latent; ends once z exists. Does NOT include manual_seed or entry into fork_rng \u2014 those stay unattributed.",
-          "share_of_on_wall": 0.0020630886320968695
+          "share_of_on_wall": 0.0015041795188420759
         },
         {
           "name": "time_schedule",
           "calls": 32,
-          "seconds": 0.5408368606567382,
+          "seconds": 0.5445949416160583,
           "description": "begins at tau_curr/tau_next indexing; includes _tau_to_t, sigma_target, sigma_tilde, t_tilde and the _t_to_tau inverse; ends once tau_tilde exists. NOT cheap scalar arithmetic despite appearances: _tau_to_t/_t_to_tau go through alpha_to_gamma/gamma_to_alpha, which run `lut(x.cpu().numpy())` \u2014 a device-to-host copy that SYNCHRONIZES the stream, a scipy CubicSpline evaluation on the host, then a copy back. Three such round trips per step (_tau_to_t twice, _t_to_tau once). Independently reproduced: 32 iterations of a busy stream cost ~379 ms more with the round trip than without, against ~515 ms attributed to this event at steps=32 batch=1.",
-          "share_of_on_wall": 0.35691987163221
+          "share_of_on_wall": 0.34232641666074953
         },
         {
           "name": "flow_map_forward",
           "calls": 32,
-          "seconds": 0.6243198070526123,
+          "seconds": 0.6354079961776734,
           "description": "begins before model(...); includes the double-time model call, its return, and log_D_st_pred.exp(); ends after the exp result exists. The exponential is part of producing D_st_pred, not a later stage.",
-          "share_of_on_wall": 0.41201360632128403
+          "share_of_on_wall": 0.41825891171788615
         },
         {
           "name": "state_update",
           "calls": 31,
-          "seconds": 0.3624221439361572,
+          "seconds": 0.3726423377990723,
           "description": "begins at the weight computation; includes z_tilde composition, the gamma churn arithmetic and torch.randn_like(z); ends after the new z exists. NOT reached on the final step.",
-          "share_of_on_wall": 0.2391768655214938
+          "share_of_on_wall": 0.234238892884861
         },
         {
           "name": "endpoint_decode",
           "calls": 1,
           "seconds": 0.00013312000036239623,
           "description": "the terminal argmax over the vocabulary axis.",
-          "share_of_on_wall": 8.785121151567029e-05
+          "share_of_on_wall": 8.49651252934733e-05
         }
       ],
       "attribution": {
         "denominator": "on_wall_median",
-        "attributed_seconds": 1.5144256255030633,
-        "unattributed_seconds": 0.0008636694960295621,
+        "attributed_seconds": 1.5566937553435563,
+        "unattributed_seconds": 0.0008275677822531247,
+        "coverage_ratio": 0.9994722873537224,
+        "coverage_basis": "median of per-trial (sum of event seconds / wall)",
+        "coverage_note": "the per-event `share_of_on_wall` values are per-trial medians and do NOT sum to this ratio: each event's median can come from a different trial, so their sum is not a coverage figure",
         "unattributed_basis": "median of per-trial (wall - attributed)",
         "unattributed_trials": [
-          0.0007513199476527621,
-          0.0014823322677983697,
-          0.0008636694960295621
+          0.0008275677822531247,
+          0.002141488695517335,
+          0.0008016872461884539
         ],
         "unattributed_note": "fork_rng enter/exit, manual_seed, loop control, observer dispatch, result assembly and executed-metadata construction are deliberately left unattributed rather than folded into an adjacent event"
       }
@@ -1388,15 +1448,27 @@
       "status": "ok",
       "timing_attempted": true,
       "latency": {
-        "verdict_seconds": 7.926928348024376,
+        "verdict_seconds": 7.522133736987598,
         "verdict_basis": "instrumentation_off_outer_wall_clock",
         "off_wall_trials": [
-          7.939454184961505,
-          7.926928348024376,
-          7.861598412040621
+          7.565884249983355,
+          7.522133736987598,
+          7.508065469912253
         ],
-        "on_wall_median": 8.065275539993308,
-        "instrumentation_overhead_seconds": 0.13834719196893275
+        "on_wall_median": 8.044311915058643,
+        "on_wall_trials": [
+          8.044311915058643,
+          8.04123581002932,
+          8.05453933402896
+        ],
+        "instrumentation_overhead": {
+          "seconds": 0.5221781780710444,
+          "off_median_seconds": 7.522133736987598,
+          "on_median_seconds": 8.044311915058643,
+          "off_spread_seconds": 0.05781878007110208,
+          "resolvable": true,
+          "basis": "on_wall_median - off_wall_median, compared against the OFF trial spread; `resolvable` is False when the difference is smaller than the spread, in which case the sign carries no information"
+        }
       },
       "peak_memory": {
         "allocated_bytes": 10574079488,
@@ -1407,48 +1479,51 @@
         {
           "name": "grid_init",
           "calls": 1,
-          "seconds": 0.0054249920845031736,
+          "seconds": 0.0043787841796875,
           "description": "begins at the tau linspace; includes the initial randn draw of the [B, L, V] latent; ends once z exists. Does NOT include manual_seed or entry into fork_rng \u2014 those stay unattributed.",
-          "share_of_on_wall": 0.0006726356784219271
+          "share_of_on_wall": 0.0005443329679311147
         },
         {
           "name": "time_schedule",
           "calls": 32,
-          "seconds": 0.6332416000366211,
+          "seconds": 0.6060287963151932,
           "description": "begins at tau_curr/tau_next indexing; includes _tau_to_t, sigma_target, sigma_tilde, t_tilde and the _t_to_tau inverse; ends once tau_tilde exists. NOT cheap scalar arithmetic despite appearances: _tau_to_t/_t_to_tau go through alpha_to_gamma/gamma_to_alpha, which run `lut(x.cpu().numpy())` \u2014 a device-to-host copy that SYNCHRONIZES the stream, a scipy CubicSpline evaluation on the host, then a copy back. Three such round trips per step (_tau_to_t twice, _t_to_tau once). Independently reproduced: 32 iterations of a busy stream cost ~379 ms more with the round trip than without, against ~515 ms attributed to this event at steps=32 batch=1.",
-          "share_of_on_wall": 0.0785145649267113
+          "share_of_on_wall": 0.07524065265344626
         },
         {
           "name": "flow_map_forward",
           "calls": 32,
-          "seconds": 4.408804702758788,
+          "seconds": 4.485432456970216,
           "description": "begins before model(...); includes the double-time model call, its return, and log_D_st_pred.exp(); ends after the exp result exists. The exponential is part of producing D_st_pred, not a later stage.",
-          "share_of_on_wall": 0.546640307686555
+          "share_of_on_wall": 0.5568825566497742
         },
         {
           "name": "state_update",
           "calls": 31,
-          "seconds": 2.967099342346191,
+          "seconds": 2.960153633117675,
           "description": "begins at the weight computation; includes z_tilde composition, the gamma churn arithmetic and torch.randn_like(z); ends after the new z exists. NOT reached on the final step.",
-          "share_of_on_wall": 0.3678856757755176
+          "share_of_on_wall": 0.36798096150105536
         },
         {
           "name": "endpoint_decode",
           "calls": 1,
-          "seconds": 0.0036239359378814695,
+          "seconds": 0.0035819520950317383,
           "description": "the terminal argmax over the vocabulary axis.",
-          "share_of_on_wall": 0.00044932574465825085
+          "share_of_on_wall": 0.000445447960942048
         }
       ],
       "attribution": {
         "denominator": "on_wall_median",
-        "attributed_seconds": 8.060704176068306,
-        "unattributed_seconds": 0.003748516577296357,
+        "attributed_seconds": 8.040525030851365,
+        "unattributed_seconds": 0.002588008868508851,
+        "coverage_ratio": 0.9996781578193141,
+        "coverage_basis": "median of per-trial (sum of event seconds / wall)",
+        "coverage_note": "the per-event `share_of_on_wall` values are per-trial medians and do NOT sum to this ratio: each event's median can come from a different trial, so their sum is not a coverage figure",
         "unattributed_basis": "median of per-trial (wall - attributed)",
         "unattributed_trials": [
-          0.003748516577296357,
-          0.0008969355132446566,
-          0.0045713639250024585
+          0.0037868842072779074,
+          0.002588008868508851,
+          0.0015292570292935181
         ],
         "unattributed_note": "fork_rng enter/exit, manual_seed, loop control, observer dispatch, result assembly and executed-metadata construction are deliberately left unattributed rather than folded into an adjacent event"
       }
@@ -1468,7 +1543,7 @@
       "peak_memory": null,
       "attribution": null,
       "exception_class": "OutOfMemoryError",
-      "exception_message": "CUDA out of memory. Tried to allocate 6.14 GiB. GPU 0 has a total capacity of 47.37 GiB of which 2.17 GiB is free. Process 3683673 has 13.77 GiB memory in use. Process 100179 has 526.00 MiB memory in use. Process 169275 has 5.07 GiB memory in use. Including non-PyTorch memory, this process has 25.75"
+      "exception_message": "CUDA out of memory. Tried to allocate 6.14 GiB. GPU 0 has a total capacity of 47.37 GiB of which 2.29 GiB is free. Process 3683673 has 13.77 GiB memory in use. Process 169275 has 5.47 GiB memory in use. Including non-PyTorch memory, this process has 25.75 GiB memory in use. Of the allocated memory 2"
     }
   ]
 }
