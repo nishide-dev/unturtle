@@ -1105,6 +1105,19 @@ def provenance(
                     "are still recorded, and `direction_consistent` remains as "
                     "diagnostic information that nothing gates on"
                 ),
+                "falsified_hypotheses": [
+                    "a three-sample range represents this device's variance "
+                    "(a comparable workload varies 7.12% run to run; the "
+                    "three-trial spreads here are 0.32-0.75%)",
+                    "the arm running second within a pair is systematically "
+                    "faster (10/15 trials suggested it; running IDENTICAL work "
+                    "in both slots gave +0.34% and 7/12, so it was chance)",
+                ],
+                "disposition": (
+                    "These diagnostics falsified proposed explanations and "
+                    "thresholds; neither is used to classify or adjust the "
+                    "final profile."
+                ),
             },
             {
                 "date": "2026-08-28",

@@ -1079,6 +1079,11 @@ class TestPairedOverhead:
         assert "12.5% of the time" in prov
         assert "7.12%" in prov
         assert "not adopted as a new" in prov
+        # Falsified hypotheses are recorded as such, and explicitly excluded
+        # from classifying or adjusting the profile.
+        assert '"falsified_hypotheses"' in prov
+        assert "7/12" in prov
+        assert "neither is used to classify or adjust" in prov
 
 
 class TestPerTrialGates:
