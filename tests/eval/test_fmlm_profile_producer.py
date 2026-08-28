@@ -103,7 +103,8 @@ class TestFrozenConfiguration:
         producer = _producer()
         assert producer.TRIALS == 3
         assert producer.WARMUP == 2
-        assert producer.SHARE_TOLERANCE == 0.02
+        # No coverage tolerance exists: the gate it served was unreachable.
+        assert not hasattr(producer, "SHARE_TOLERANCE")
 
     def test_the_device_gate_requires_a_single_cuda_device(self):
         """Any single CUDA device is allowed, but it must be MADE CURRENT: the
@@ -433,11 +434,13 @@ class TestStructuralZero:
         return `profile_invalid`."""
         producer = _producer()
         source = inspect.getsource(producer.profile_cell)
-        assert "if coverage_per_trial[index] > 1.0 + SHARE_TOLERANCE:" in source
+        code = _code_only(source)
+        assert "SHARE_TOLERANCE" not in code
+        assert "coverage_per_trial [ index ] >" not in code
         guard = source.split("if trial_problems:")[1]
         head = guard[: guard.index("problems=")]
         assert 'status="profile_invalid"' in head
-        assert 'reason_code="per_trial_coverage_or_residual_invalid"' in head
+        assert 'reason_code="negative_residual_or_invalid_event"' in head
         assert "cleanup()" in head
 
     def test_over_coverage_and_negative_residual_are_separate_gates(self):
@@ -445,10 +448,12 @@ class TestStructuralZero:
         the per-event coverage still exceeds the wall."""
         producer = _producer()
         source = inspect.getsource(producer.profile_cell)
-        # Coverage, residual, wall positivity and finiteness are each checked
-        # per trial in the same block; the resolvable-negative-overhead gate is
-        # separate.
-        assert "coverage_per_trial[index] > 1.0 + SHARE_TOLERANCE" in source
+        # Coverage was NEVER an independent gate: with
+        # `coverage = attributed / wall` and `residual = wall - attributed`,
+        # `coverage > 1` and `residual < 0` are the same condition, so the
+        # coverage branch could never fire and has been removed.
+        for attributed in (0.95, 1.0, 1.05, 1.5):
+            assert (attributed / 1.0 > 1.0) == (1.0 - attributed < 0)
         assert "residuals[index] < 0" in source
         # Exactly ONE profile_invalid path remains: the per-trial structural
         # checks. The overhead-sign gate was removed as unsound at n=3.
@@ -460,7 +465,8 @@ class TestStructuralZero:
         producer = _producer()
         source = inspect.getsource(producer.profile_cell)
         assert "coverage_per_trial" in source
-        assert "per_trial_coverage_or_residual_invalid" in source
+        assert "negative_residual_or_invalid_event" in source
+        assert '"coverage_disposition": "descriptive_only"' in source
         assert (
             'sum(trial["event_seconds"].values()) / trial["on_wall_seconds"]' in source
         )
@@ -572,7 +578,7 @@ class TestVerdictBasis:
         assert "resolvable_negative_overhead" not in source
         assert 'overhead["resolvable"]' not in source
         # Invalidation is by direct structural evidence only.
-        assert "per_trial_coverage_or_residual_invalid" in source
+        assert "negative_residual_or_invalid_event" in source
 
     def test_the_overhead_basis_states_it_is_descriptive(self):
         estimate = _estimate(_producer(), [1.0], [1.0])
@@ -878,7 +884,7 @@ class TestTypedFailures:
         source = inspect.getsource(producer.profile_cell)
         block = source.split("if trial_problems:")[1].split("return cell |")[1]
         assert 'status="profile_invalid"' in block
-        assert 'reason_code="per_trial_coverage_or_residual_invalid"' in block
+        assert 'reason_code="negative_residual_or_invalid_event"' in block
         assert "cleanup()" in source.split("if trial_problems:")[1][:200]
 
     def test_the_residual_is_a_median_of_per_trial_residuals(self):
@@ -1090,12 +1096,16 @@ class TestPerTrialGates:
     """A median-only gate hides one broken trial: coverage [1.05, 0.99, 0.98]
     and residuals [-3ms, +1ms, +2ms] both pass while a trial is plainly wrong."""
 
-    def test_every_trial_is_checked_for_coverage(self):
+    def test_coverage_is_computed_but_never_gated(self):
+        """It stays in the artifact as a descriptive figure; the gate it once
+        fed was strictly subsumed by the residual check."""
         producer = _producer()
         source = inspect.getsource(producer.profile_cell)
         block = source.split("trial_problems: list[str] = []")[1]
         assert "for index, trial in enumerate(trials):" in block
-        assert "coverage_per_trial[index] > 1.0 + SHARE_TOLERANCE" in block
+        assert "coverage_per_trial[index]" not in block
+        assert "coverage_per_trial" in source
+        assert '"coverage_disposition": "descriptive_only"' in source
 
     def test_every_trial_is_checked_for_a_negative_residual(self):
         producer = _producer()

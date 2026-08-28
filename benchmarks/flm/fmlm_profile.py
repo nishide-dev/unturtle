@@ -75,12 +75,6 @@ from typing import Any
 
 REPO = pathlib.Path(__file__).resolve().parent.parent.parent
 
-#: How far the summed event shares may exceed 1.0 before the cell is invalid.
-#: Small positive slack only: CUDA event pairs are measured independently, so
-#: rounding across five events can land marginally above the wall without
-#: meaning the spans overlap.
-SHARE_TOLERANCE = 0.02
-
 #: Frozen measurement window. MODULE CONSTANTS, never CLI-settable: a verdict
 #: that moves with a command-line flag is not a verdict. Three #166 gates failed
 #: for exactly this reason.
@@ -836,9 +830,11 @@ def profile_cell(model, steps: int, batch: int) -> dict[str, Any]:
     on_walls = [trial["on_wall_seconds"] for trial in trials]
     events = assemble_events(steps, trials)
 
-    # EVERY trial is gated, not only the median. A median hides one broken trial
-    # entirely: coverage [1.05, 0.99, 0.98] and residuals [-3ms, +1ms, +2ms] both
-    # pass a median-only check while a trial is plainly wrong.
+    # EVERY trial is gated, not only the median: residuals [-3ms, +1ms, +2ms]
+    # pass a median-only check while a trial is plainly wrong. The ONLY validity
+    # conditions are a non-positive wall, a NEGATIVE residual, and a non-finite
+    # or negative event value. Coverage is computed and reported but never gated
+    # on — see `coverage_disposition`.
     coverage_per_trial = [
         sum(trial["event_seconds"].values()) / trial["on_wall_seconds"]
         if trial["on_wall_seconds"] > 0
@@ -855,11 +851,6 @@ def profile_cell(model, steps: int, batch: int) -> dict[str, Any]:
     for index, trial in enumerate(trials):
         if trial["on_wall_seconds"] <= 0 or trial["off_wall_seconds"] <= 0:
             trial_problems.append(f"trial[{index}]: non-positive wall clock")
-        if coverage_per_trial[index] > 1.0 + SHARE_TOLERANCE:
-            trial_problems.append(
-                f"trial[{index}]: coverage {coverage_per_trial[index]:.4f} exceeds "
-                f"1 + {SHARE_TOLERANCE}"
-            )
         if residuals[index] < 0:
             trial_problems.append(
                 f"trial[{index}]: residual {residuals[index]:.6f}s is negative"
@@ -871,7 +862,7 @@ def profile_cell(model, steps: int, batch: int) -> dict[str, Any]:
         cleanup()
         return cell | failure_record(
             stage="paired_trials",
-            reason_code="per_trial_coverage_or_residual_invalid",
+            reason_code="negative_residual_or_invalid_event",
             timing_attempted=True,
             status="profile_invalid",
             problems=trial_problems
@@ -930,8 +921,13 @@ def profile_cell(model, steps: int, batch: int) -> dict[str, Any]:
             "unattributed_seconds": statistics.median(residuals),
             "unattributed_seconds_trials": residuals,
             "unattributed_basis": "median of per-trial (wall - attributed)",
+            # DESCRIPTIVE. Coverage never classifies a cell: `coverage > 1` is
+            # exactly `residual < 0`, since both derive from the same attributed
+            # sum and the same wall, so a coverage gate is strictly subsumed by
+            # the residual gate and can never fire.
             "coverage_ratio": statistics.median(coverage_per_trial),
             "coverage_ratio_trials": coverage_per_trial,
+            "coverage_disposition": "descriptive_only",
             "coverage_basis": "median of per-trial (sum of event seconds / wall)",
             "coverage_note": (
                 "the per-event `share_of_on_wall` values are per-trial medians "
