@@ -286,6 +286,8 @@ class Recorder:
         self.forward_calls: dict[str, int] = {"rollout": 0, "endpoint": 0}
         #: "rollout" while a solver step is open, "endpoint" inside decode.
         self.phase: str | None = None
+        self._open_step_id: int | None = None
+        self.per_step_exclusive: list[float] = []
 
     def _mark(self):
         if self.mode != "time":
@@ -297,8 +299,21 @@ class Recorder:
     @contextlib.contextmanager
     def solver_step(self, name: str):
         self.step_calls[name] = self.step_calls.get(name, 0) + 1
-        record: dict[str, Any] = {"name": name, "forwards": []}
+        step_id = len(self.steps)
+        record: dict[str, Any] = {
+            "name": name,
+            "step_id": step_id,
+            "forwards": [],
+            # The id of the step that was OPEN when each child was recorded, so
+            # a child attributed to the wrong parent is detectable even when
+            # every count is right.
+            "forwards_step_id": [],
+        }
         self.steps.append(record)
+        previous_step, self._open_step_id = (
+            getattr(self, "_open_step_id", None),
+            step_id,
+        )
         previous, self.phase = self.phase, "rollout"
         start = self._mark()
         try:
@@ -306,6 +321,7 @@ class Recorder:
         finally:
             record["inclusive"] = (start, self._mark())
             self.phase = previous
+            self._open_step_id = previous_step
 
     @contextlib.contextmanager
     def endpoint_projection(self):
@@ -332,7 +348,19 @@ class Recorder:
         finally:
             end = self._mark()
             if phase == "rollout" and self.steps:
-                self.steps[-1]["forwards"].append((start, end))
+                open_id = getattr(self, "_open_step_id", None)
+                target = self.steps[open_id] if open_id is not None else self.steps[-1]
+                target["forwards"].append((start, end))
+                target["forwards_step_id"].append(open_id)
+
+
+class InstrumentationError(RuntimeError):
+    """A benchmark-local instrumentation invariant was violated.
+
+    Distinct from a measurement failure: the harness itself is in a state where
+    attribution would be wrong, so the cell must be typed rather than the
+    numbers trusted.
+    """
 
 
 @contextlib.contextmanager
@@ -376,7 +404,11 @@ def instrumented(model, recorder: Recorder | None):
     # leakage while the patch is live. Same lesson as the #166 FMLM
     # module-global observer.
     if "forward" in model.__dict__:
-        raise SystemExit(
+        # A RuntimeError, not SystemExit: this is an invariant violation the
+        # caller can type and record as a failed cell, whereas SystemExit
+        # slips past `except Exception` and would kill the producer before it
+        # could write an artifact for the other cells.
+        raise InstrumentationError(
             "the model already carries an instance-level `forward` override; "
             "refusing to nest instrumentation, which would make attribution "
             "depend on install order"
@@ -408,10 +440,64 @@ def elapsed(pair) -> float:
     return start.elapsed_time(end) / 1000.0
 
 
+def classify_random_call(stack) -> str:
+    """Classify a `randn` callsite by its calling module AND function.
+
+    Shape alone is insufficient: the initial latent and the SDE churn draw the
+    SAME `[B, L, d_model]` shape, so a shape-keyed classifier would merge them.
+    An unrecognised callsite is reported as `unknown` and FAILS the preflight
+    rather than being ignored — a new random op inside the model would
+    otherwise be absorbed into a matching total.
+    """
+    for frame in stack:
+        module = frame.filename.replace("\\", "/")
+        function = frame.function
+        if module.endswith("_reference/sampling_utils.py"):
+            if function == "sample_timesteps":
+                return "time_grid"
+            if function in ("_sde_step", "sde_step"):
+                return "sde_churn"
+        if module.endswith("unturtle_elf/sampler.py") and function in (
+            "run_generation_request",
+            "_generate",
+        ):
+            return "initial_latent"
+    return "unknown"
+
+
+def check_span_ordering(recorder: Recorder) -> list[str]:
+    """Structural checks on the nested spans, independent of any timing value.
+
+    The dangerous regression is not a wrong COUNT — it is subtracting a forward
+    that belongs to a DIFFERENT step. Each parent must own exactly one child,
+    recorded while that parent was the open step.
+    """
+    problems: list[str] = []
+    for index, record in enumerate(recorder.steps):
+        if "inclusive" not in record:
+            problems.append(f"solver step {index}: parent span never closed")
+            continue
+        forwards = record["forwards"]
+        if len(forwards) != 1:
+            problems.append(
+                f"solver step {index} ({record['name']}) has {len(forwards)} "
+                "rollout forwards, expected exactly 1"
+            )
+            continue
+        if record.get("step_id") != record["forwards_step_id"][0]:
+            problems.append(
+                f"solver step {index}: its child forward was recorded against "
+                f"step id {record['forwards_step_id'][0]}, not {record.get('step_id')}"
+            )
+    return problems
+
+
 def step_exclusive_seconds(recorder: Recorder) -> tuple[float, float, list[str]]:
     """Per-step exclusive time, summed within the trial.
 
-    Returns (denoiser_seconds, state_update_seconds, problems). A step whose
+    Returns (denoiser_seconds, state_update_seconds, problems); the per-step
+    exclusive values are attached to the recorder for the artifact's audit
+    fields. A step whose
     child forward count is not exactly one is a pairing failure: the counts can
     still add up while the parent/child correspondence is broken, and the
     exclusive time would then be attributed to the wrong event.
@@ -419,6 +505,7 @@ def step_exclusive_seconds(recorder: Recorder) -> tuple[float, float, list[str]]
     problems: list[str] = []
     denoiser = 0.0
     state_update = 0.0
+    per_step: list[float] = []
     for index, record in enumerate(recorder.steps):
         forwards = record["forwards"]
         if len(forwards) != 1:
@@ -429,8 +516,21 @@ def step_exclusive_seconds(recorder: Recorder) -> tuple[float, float, list[str]]
             continue
         inclusive = elapsed(record["inclusive"])
         child = elapsed(forwards[0])
+        exclusive = inclusive - child
+        if exclusive < 0:
+            # On one stream a correctly nested parent cannot be shorter than
+            # its own child, so a negative exclusive time is direct evidence of
+            # broken pairing or ordering. NEVER clamped: clamping would hide it.
+            problems.append(
+                f"solver step {index} ({record['name']}): exclusive time "
+                f"{exclusive:.6f}s is negative, so the parent span is shorter "
+                "than the child it contains"
+            )
+            continue
         denoiser += child
         # PER-STEP difference. `median(inclusive) - median(forward)` would
         # subtract series whose medians can come from different steps.
-        state_update += inclusive - child
+        state_update += exclusive
+        per_step.append(exclusive)
+    recorder.per_step_exclusive = per_step
     return denoiser, state_update, problems

@@ -65,8 +65,13 @@ class StubModel(torch.nn.Module):
 
 
 def _open_step(recorder, name="_sde_step"):
-    recorder.phase = "rollout"
-    recorder.steps.append({"name": name, "forwards": []})
+    """Open a solver step through the RECORDER's own API.
+
+    An earlier version hand-built the step dict, which silently diverged when
+    the record grew `step_id` / `forwards_step_id` fields — a fixture that
+    fabricates the structure under test cannot detect a change to it.
+    """
+    return recorder.solver_step(name)
 
 
 class TestInstanceLocalPatching:
@@ -78,8 +83,7 @@ class TestInstanceLocalPatching:
         producer = _producer()
         target, bystander = StubModel(), StubModel()
         recorder = producer.Recorder(torch, mode="count")
-        with producer.instrumented(target, recorder):
-            _open_step(recorder)
+        with producer.instrumented(target, recorder), _open_step(recorder):
             bystander(torch.zeros(1))
             assert recorder.forward_calls["rollout"] == 0, (
                 "an unrelated instance of the same class was attributed"
@@ -116,8 +120,8 @@ class TestInstanceLocalPatching:
         with (
             pytest.raises(RuntimeError, match="forward exploded"),
             producer.instrumented(model, recorder),
+            _open_step(recorder),
         ):
-            _open_step(recorder)
             model(torch.zeros(1))
         assert "forward" not in model.__dict__
 
@@ -132,11 +136,18 @@ class TestInstanceLocalPatching:
             model, producer.Recorder(torch, mode="count")
         ):
             with (
-                pytest.raises(SystemExit, match="refusing to nest"),
+                pytest.raises(producer.InstrumentationError, match="refusing to nest"),
                 producer.instrumented(model, producer.Recorder(torch, mode="count")),
             ):
                 pass
         assert "forward" not in model.__dict__
+
+    def test_nesting_raises_a_catchable_error_not_system_exit(self):
+        """`SystemExit` slips past `except Exception` and would kill the
+        producer before the remaining cells could be written."""
+        producer = _producer()
+        assert issubclass(producer.InstrumentationError, RuntimeError)
+        assert not issubclass(producer.InstrumentationError, SystemExit)
 
     def test_the_producer_never_assigns_to_the_class(self):
         producer = _producer()
@@ -178,9 +189,8 @@ class TestPhaseAttribution:
         model = StubModel()
         recorder = producer.Recorder(torch, mode="count")
         with producer.instrumented(model, recorder):
-            _open_step(recorder)
-            model(torch.zeros(1))
-            recorder.phase = None
+            with _open_step(recorder):
+                model(torch.zeros(1))
             with recorder.endpoint_projection():
                 model(torch.zeros(1))
         assert recorder.forward_calls == {"rollout": 1, "endpoint": 1}
@@ -308,6 +318,144 @@ class TestStepExclusiveArithmetic:
         )
         _, _, problems = producer.step_exclusive_seconds(recorder)
         assert problems and "2 rollout forwards" in problems[0]
+
+
+class TestStepIdentityPairing:
+    """The most dangerous ELF regression is not a wrong count — it is
+    subtracting a forward that belongs to a DIFFERENT step while every count
+    still adds up."""
+
+    def test_a_child_recorded_against_another_step_is_caught(self):
+        producer = _producer()
+        recorder = producer.Recorder(torch, mode="count")
+        model = StubModel()
+        with producer.instrumented(model, recorder):
+            for _ in range(3):
+                with recorder.solver_step("_sde_step"):
+                    model(torch.zeros(1))
+        assert producer.check_span_ordering(recorder) == []
+        # Counts stay correct while the pairing is corrupted.
+        recorder.steps[1]["forwards_step_id"] = [2]
+        problems = producer.check_span_ordering(recorder)
+        assert problems and "step id 2, not 1" in problems[0]
+        assert all(len(step["forwards"]) == 1 for step in recorder.steps)
+
+    def test_each_child_records_the_step_that_was_open(self):
+        producer = _producer()
+        recorder = producer.Recorder(torch, mode="count")
+        model = StubModel()
+        with producer.instrumented(model, recorder):
+            for _ in range(4):
+                with recorder.solver_step("_sde_step"):
+                    model(torch.zeros(1))
+        assert [s["step_id"] for s in recorder.steps] == [0, 1, 2, 3]
+        assert [s["forwards_step_id"] for s in recorder.steps] == [[0], [1], [2], [3]]
+
+    def test_an_unclosed_parent_span_is_caught(self):
+        producer = _producer()
+        recorder = producer.Recorder(torch, mode="count")
+        recorder.steps.append(
+            {"name": "_sde_step", "step_id": 0, "forwards": [], "forwards_step_id": []}
+        )
+        problems = producer.check_span_ordering(recorder)
+        assert problems and "never closed" in problems[0]
+
+
+class TestNegativeExclusiveTime:
+    @staticmethod
+    def _pair(seconds):
+        class Event:
+            def __init__(self, value=0.0):
+                self.value = value
+
+            def elapsed_time(self, other):
+                return other.value
+
+        return (Event(), Event(seconds * 1000.0))
+
+    def test_a_parent_shorter_than_its_child_fails_the_cell(self):
+        """On one stream a correctly nested parent cannot be shorter than the
+        child it contains."""
+        producer = _producer()
+        recorder = producer.Recorder(torch, mode="time")
+        recorder.steps.append(
+            {
+                "name": "_sde_step",
+                "step_id": 0,
+                "inclusive": self._pair(0.5),
+                "forwards": [self._pair(0.9)],
+                "forwards_step_id": [0],
+            }
+        )
+        _, _, problems = producer.step_exclusive_seconds(recorder)
+        assert problems and "is negative" in problems[0]
+
+    def test_the_negative_exclusive_is_not_clamped(self):
+        producer = _producer()
+        code = _code_only(inspect.getsource(producer.step_exclusive_seconds))
+        for clamping in ("max ( 0", "abs ("):
+            assert clamping not in code, clamping
+
+    def test_per_step_values_are_retained_for_audit(self):
+        """So a later regression to median-of-medians is detectable from the
+        artifact alone."""
+        producer = _producer()
+        recorder = producer.Recorder(torch, mode="time")
+        for inclusive, child in ((1.0, 0.6), (2.0, 0.5)):
+            recorder.steps.append(
+                {
+                    "name": "_sde_step",
+                    "step_id": len(recorder.steps),
+                    "inclusive": self._pair(inclusive),
+                    "forwards": [self._pair(child)],
+                    "forwards_step_id": [len(recorder.steps)],
+                }
+            )
+        producer.step_exclusive_seconds(recorder)
+        assert recorder.per_step_exclusive == pytest.approx([0.4, 1.5])
+
+
+class TestRandomCallClassification:
+    def test_the_three_callsites_are_distinguished(self):
+        producer = _producer()
+
+        class Frame:
+            def __init__(self, filename, function):
+                self.filename, self.function = filename, function
+
+        cases = {
+            "time_grid": Frame(
+                "/x/unturtle_elf/_reference/sampling_utils.py", "sample_timesteps"
+            ),
+            "sde_churn": Frame(
+                "/x/unturtle_elf/_reference/sampling_utils.py", "_sde_step"
+            ),
+            "initial_latent": Frame(
+                "/x/unturtle_elf/sampler.py", "run_generation_request"
+            ),
+        }
+        for expected, frame in cases.items():
+            assert producer.classify_random_call([frame]) == expected
+
+    def test_an_unrecognised_callsite_is_unknown_not_absorbed(self):
+        """A new random op inside the model must not be silently folded into a
+        matching total."""
+        producer = _producer()
+
+        class Frame:
+            filename = "/x/unturtle_elf/_reference/model.py"
+            function = "forward"
+
+        assert producer.classify_random_call([Frame()]) == "unknown"
+
+    def test_shape_alone_would_not_separate_the_callsites(self):
+        """The initial latent and the SDE churn draw the same [B, L, d] shape,
+        which is why the classifier keys on module AND function."""
+        producer = _producer()
+        source = inspect.getsource(producer.classify_random_call)
+        assert "frame.function" in source
+        assert "frame.filename" in source
+        assert "SAME" in source
 
 
 class TestTaxonomy:
