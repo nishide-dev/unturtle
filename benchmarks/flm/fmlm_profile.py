@@ -33,6 +33,12 @@ requests interleave their draws. Measured with no observer installed anywhere.
 That is the sampler's execution contract, not a defect of this profile, and it
 is why everything here runs sequentially in one thread.
 
+OVERHEAD IS DESCRIPTIVE, NOT ADJUDICATED. At TRIALS=3 the window is enough to
+report the ON/OFF difference and its per-trial range, and NOT enough to estimate
+a noise floor and declare the difference resolved. No significance test is
+performed and nothing is invalidated on the strength of one. Cells are
+invalidated only by direct evidence of broken clocks or boundaries.
+
 THE VERDICT IS THE INSTRUMENTATION-OFF OUTER WALL CLOCK. The ON pass only
 attributes it; `covered_seconds` never substitutes for the verdict, and operation
 shares are computed against the ON pass's own wall so an OFF measurement never
@@ -571,31 +577,51 @@ def paired_trials(model, steps: int, batch: int) -> list[dict[str, Any]]:
 def overhead_estimate(trials: list[dict]) -> dict[str, Any]:
     """Instrumentation overhead as the MEDIAN OF PER-TRIAL PAIRED DELTAS.
 
-    Each delta comes from an OFF and an ON run executed adjacently within one
-    trial, so the pair shares thermal state and allocator condition. A difference
-    of medians would pair an OFF trial with an unrelated ON trial — the same
-    error this cell already made twice, in the residual and in the shares.
+    DESCRIPTIVE ONLY. The frozen window is three trials, which is enough to
+    report a value and its range but NOT enough to estimate a noise floor and
+    declare a difference resolved. This function therefore performs no
+    significance test.
 
-    A signed point estimate is still not publishable alone: with TRIALS=3 the OFF
-    walls spread by up to 16%, so a delta below that spread has a noise-determined
-    sign. `resolvable` reports whether the MAGNITUDE clears the spread, because a
-    large negative delta means the clock is wrong and must be flagged rather than
-    dismissed as a quiet non-result.
+    An earlier version compared the magnitude against the OFF trial spread and
+    called the result `resolvable`. That was unsound: a three-sample range
+    systematically understates true variance — measured on this device, a
+    comparable workload varies 7.12% run to run while the three-trial OFF
+    spreads were 0.32-0.75% — so the criterion fired on noise. Requiring a
+    consistent sign across three trials does not rescue it either: with a true
+    overhead of zero, all three land negative 12.5% of the time.
+
+    `direction_consistent` is retained as DIAGNOSTIC information; it is not a
+    verdict and nothing gates on it.
+
+    Each delta comes from an OFF and an ON run executed adjacently within one
+    trial, so the pair shares thermal state and allocator condition. A
+    difference of medians would pair an OFF trial with an unrelated ON trial.
     """
     deltas = [trial["paired_overhead_seconds"] for trial in trials]
     off_walls = [trial["off_wall_seconds"] for trial in trials]
     median_delta = statistics.median(deltas) if deltas else 0.0
-    off_spread = (max(off_walls) - min(off_walls)) if off_walls else 0.0
     return {
         "paired_delta_trials": deltas,
         "median_paired_delta": median_delta,
-        "off_trial_spread": off_spread,
-        "resolvable": abs(median_delta) > off_spread,
+        "off_wall_trials": off_walls,
+        "off_trial_spread": (max(off_walls) - min(off_walls)) if off_walls else 0.0,
+        # Diagnostic, not a verdict: see the docstring on why a consistent sign
+        # is not evidence at n=3.
+        "direction_consistent": bool(deltas)
+        and (all(x > 0 for x in deltas) or all(x < 0 for x in deltas)),
+        # No significance test is performed, so `resolvable` would be
+        # misleading in either state — `false` reads as "tested and found
+        # unresolvable".
+        "resolvable": None,
+        "resolution_status": "not_assessed",
+        "resolution_reason": (
+            "the frozen three-trial window is insufficient to estimate the noise floor"
+        ),
         "basis": (
             "median of per-trial (on_wall - off_wall), from OFF/ON pairs run "
-            "adjacently with the order reversed each trial, compared against the "
-            "OFF trial spread. `resolvable` is False when the magnitude is below "
-            "the spread, in which case the sign carries no information"
+            "adjacently with the order reversed each trial. Reported as a "
+            "descriptive value with its per-trial range; negative values are "
+            "left as measured, neither clamped nor reinterpreted"
         ),
     }
 
@@ -855,23 +881,12 @@ def profile_cell(model, steps: int, batch: int) -> dict[str, Any]:
             ],
         )
 
+    # NO validity gate on the overhead sign. A cell is invalidated only by
+    # direct evidence of a broken clock or broken boundaries — coverage,
+    # residual, wall positivity, event finiteness, scope balance, call counts
+    # and order — none of which depend on estimating a noise floor. A negative
+    # median delta at n=3 is not such evidence.
     overhead = overhead_estimate(trials)
-    # A resolvable NEGATIVE overhead means instrumentation made the run faster,
-    # which cannot happen: the clock is wrong.
-    if overhead["resolvable"] and overhead["median_paired_delta"] < 0:
-        cleanup()
-        return cell | failure_record(
-            stage="paired_trials",
-            reason_code="resolvable_negative_overhead",
-            timing_attempted=True,
-            status="profile_invalid",
-            problems=[
-                f"median paired delta {overhead['median_paired_delta']:.6f}s is "
-                f"negative and exceeds the OFF spread "
-                f"{overhead['off_trial_spread']:.6f}s",
-                "instrumentation cannot accelerate the measured code",
-            ],
-        )
 
     allocated = [trial["peak_allocated_bytes"] for trial in trials]
     reserved = [trial["peak_reserved_bytes"] for trial in trials]
@@ -956,7 +971,9 @@ def environment() -> dict[str, Any]:
     }
 
 
-def provenance(args: argparse.Namespace) -> dict[str, Any]:
+def provenance(
+    args: argparse.Namespace, occupancy_at_start: dict[str, Any]
+) -> dict[str, Any]:
     from unturtle_flm.loader import FMLM_CHECKPOINT, FMLM_REVISION
 
     def git(*command: str) -> str | None:
@@ -980,9 +997,14 @@ def provenance(args: argparse.Namespace) -> dict[str, Any]:
         "worktree_dirty_paths": [line[3:] for line in dirty.splitlines()],
         "command": " ".join(sys.argv),
         "environment": environment(),
-        # Recorded so a reader can see the device was idle when the run began;
-        # each cell additionally carries its own `device_occupancy_before`.
-        "device_occupancy_at_start": device_occupancy(args.device),
+        # Captured in `main` BEFORE the first cell. This function runs after
+        # the cell loop, so reading occupancy here would have produced a
+        # write-time snapshot under a field named "at_start" — both are
+        # recorded now, under names that say when they were taken. The
+        # decision-grade evidence remains each cell's own
+        # `device_occupancy_before`.
+        "device_occupancy_at_start": occupancy_at_start,
+        "device_occupancy_at_artifact_write": device_occupancy(args.device),
         "exclusivity_contract": (
             "the run is refused if any unrelated CUDA process holds memory on "
             "the target device, checked before every cell via nvidia-smi "
@@ -1032,6 +1054,81 @@ def provenance(args: argparse.Namespace) -> dict[str, Any]:
             ),
         },
         "event_taxonomy": EVENT_TAXONOMY,
+        # Conclusions this producer published and later WITHDREW, kept as dated
+        # errata rather than silently deleted. Both were measured on a SHARED
+        # GPU; the retraction history lives here so the taxonomy can stay a
+        # description of event boundaries.
+        "overhead_contract": (
+            "instrumentation overhead is DESCRIPTIVE ONLY at TRIALS=3: the "
+            "value and its per-trial range are reported, no significance test "
+            "is performed, and no cell is invalidated on the basis of the "
+            "overhead sign. Negative values are left as measured"
+        ),
+        "measurement_errata": [
+            {
+                "date": "2026-08-28",
+                "withdrawn": "32-step x batch-32 is a typed CUDA OOM",
+                "reason": (
+                    "recorded with 1.77 GiB free of 47.37 GiB while three "
+                    "unrelated processes held ~19.8 GiB. On an exclusive device "
+                    "the cell completes; it is not a capacity limit of the cell"
+                ),
+                "superseded_by": "this run's 32x32 cell",
+            },
+            {
+                "date": "2026-08-28",
+                "withdrawn": (
+                    "the `resolvable` significance test on instrumentation "
+                    "overhead, and the `profile_invalid` gate built on it"
+                ),
+                "reason": (
+                    "a three-sample range systematically understates variance, "
+                    "so the criterion fired on noise. It produced a false "
+                    "`profile_invalid` on the 32x32 cell whose sibling clean run "
+                    "passed with the same negative median delta and a wider "
+                    "spread. Requiring a consistent sign across three trials "
+                    "does not rescue it: with a true overhead of zero, all three "
+                    "land negative 12.5% of the time"
+                ),
+                "diagnostic_evidence": (
+                    "on this device (RTX 6000 Ada, cuda:1) a comparable "
+                    "workload - 90 iterations of an 8192x8192 matmul, ~3.9 s - "
+                    "varied 7.12% run to run over 10 samples, while the "
+                    "three-trial OFF spreads in this artifact are 0.32-0.75%. "
+                    "This figure is EVIDENCE THAT THREE SAMPLES DO NOT ESTIMATE "
+                    "THE NOISE FLOOR; it is deliberately not adopted as a new "
+                    "threshold, which would only substitute one post-hoc cutoff "
+                    "for another"
+                ),
+                "retained": (
+                    "the overhead value, its per-trial deltas and the OFF spread "
+                    "are still recorded, and `direction_consistent` remains as "
+                    "diagnostic information that nothing gates on"
+                ),
+            },
+            {
+                "date": "2026-08-28",
+                "withdrawn": (
+                    "time_schedule dominates small-batch decoding (28.7% at "
+                    "steps=32 batch=1)"
+                ),
+                "reason": (
+                    "353.53 ms on a shared GPU against 8.44 ms on an exclusive "
+                    "one, a 42x drop far outside any trial spread. The "
+                    "supporting experiment offered as independent confirmation "
+                    "(~379 ms per 32 iterations) was itself measuring contention "
+                    "on the shared device. Re-measured idle: the LUT round trip "
+                    "adds nothing detectable to a busy stream and costs 0.036 ms "
+                    "per call"
+                ),
+                "retained": (
+                    "the MECHANISM is real and still documented: three "
+                    "lut(x.cpu().numpy()) host round trips per solver step, each "
+                    "synchronizing the stream for a scipy spline. Only the "
+                    "magnitude claim is withdrawn"
+                ),
+            },
+        ],
     }
 
 
@@ -1046,6 +1143,9 @@ def main() -> None:
     DEVICE_UNDER_TEST[0] = args.device
     out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+
+    # Before anything is loaded, so "at_start" means what it says.
+    occupancy_at_start = require_idle_device(args.device)
 
     from unturtle_flm.loader import load_fmlm_model
 
@@ -1066,7 +1166,7 @@ def main() -> None:
                 )
             )
 
-    payload = {"run": provenance(args), "cells": cells}
+    payload = {"run": provenance(args, occupancy_at_start), "cells": cells}
     target = out / "166-fmlm-profile.json"
     target.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n")
     print(f"wrote {len(cells)} cells to {target}")

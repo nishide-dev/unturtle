@@ -450,8 +450,9 @@ class TestStructuralZero:
         # separate.
         assert "coverage_per_trial[index] > 1.0 + SHARE_TOLERANCE" in source
         assert "residuals[index] < 0" in source
-        assert "resolvable_negative_overhead" in source
-        assert source.count('status="profile_invalid"') == 2
+        # Exactly ONE profile_invalid path remains: the per-trial structural
+        # checks. The overhead-sign gate was removed as unsound at n=3.
+        assert source.count('status="profile_invalid"') == 1
 
     def test_coverage_is_gated_per_trial(self):
         """The gate must not use the sum of per-event medians, which is not a
@@ -522,58 +523,61 @@ class TestVerdictBasis:
         producer = _producer()
         assert "instrumentation_overhead" in inspect.getsource(producer.profile_cell)
 
-    def test_an_overhead_inside_the_noise_is_not_resolvable(self):
+    def test_no_significance_test_is_performed(self):
+        """DESCRIPTIVE ONLY. A three-sample range systematically understates
+        variance — measured on this device, a comparable workload varies 7.12%
+        run to run while the three-trial OFF spreads are 0.32-0.75% — so any
+        `resolvable` verdict built on it fires on noise."""
         producer = _producer()
-        # OFF spreads by 20 ms; the difference is 5 ms.
         estimate = _estimate(producer, [1.00, 1.01, 1.02], [1.015, 1.02, 1.025])
-        assert estimate["resolvable"] is False
-        assert estimate["off_trial_spread"] == pytest.approx(0.02)
+        assert estimate["resolvable"] is None
+        assert estimate["resolution_status"] == "not_assessed"
+        assert "insufficient" in estimate["resolution_reason"]
 
-    def test_an_overhead_larger_than_the_noise_is_resolvable(self):
+    def test_a_large_difference_is_also_not_adjudicated(self):
+        """Even an obviously large delta gets no verdict: the point is that this
+        window cannot support one, not that small deltas are hard."""
         producer = _producer()
         estimate = _estimate(producer, [1.00, 1.001, 1.002], [1.50, 1.51, 1.52])
-        assert estimate["resolvable"] is True
+        assert estimate["resolvable"] is None
         assert estimate["median_paired_delta"] > 0
 
-    def test_a_negative_difference_inside_the_noise_is_not_a_speedup(self):
-        """Instrumentation cannot make the code faster; a negative difference
-        inside the spread must not be published as one."""
+    def test_a_negative_delta_is_reported_as_measured(self):
+        """Not clamped, not reinterpreted, and not grounds for invalidating the
+        cell."""
         producer = _producer()
         estimate = _estimate(producer, [1.00, 1.05, 1.10], [1.02, 1.03, 1.04])
         assert estimate["median_paired_delta"] < 0
-        assert estimate["resolvable"] is False
+        assert estimate["resolvable"] is None
 
-    def test_a_large_negative_difference_is_still_flagged_resolvable(self):
-        """The magnitude decides resolvability, not the direction: an
-        unsigned comparison is required, since a big negative difference means
-        the measurement is broken and must not be silently unresolvable."""
+    def test_direction_consistency_is_diagnostic_only(self):
+        """All three deltas sharing a sign is NOT evidence: with a true overhead
+        of zero it happens 25% of the time, and all-negative 12.5% of the
+        time."""
         producer = _producer()
-        estimate = _estimate(producer, [2.00, 2.001, 2.002], [1.00, 1.01, 1.02])
-        assert estimate["median_paired_delta"] < 0
-        assert abs(estimate["median_paired_delta"]) > estimate["off_trial_spread"]
-        assert estimate["resolvable"] is True
+        consistent = _estimate(producer, [1.00, 1.00, 1.00], [0.99, 0.99, 0.99])
+        assert consistent["direction_consistent"] is True
+        # ... and it still yields no verdict.
+        assert consistent["resolvable"] is None
+        assert consistent["resolution_status"] == "not_assessed"
+        mixed = _estimate(producer, [1.00, 1.00, 1.00], [1.01, 0.99, 1.02])
+        assert mixed["direction_consistent"] is False
 
-    def test_the_overhead_is_a_structured_estimate_not_a_bare_number(self):
-        """A bare `instrumentation_overhead_seconds` float is what published the
-        unresolvable signs in the first place."""
+    def test_the_overhead_sign_never_invalidates_a_cell(self):
+        """The gate that did this produced a false `profile_invalid` on a 32x32
+        cell whose sibling clean run passed with the SAME negative median delta
+        and a wider spread."""
         producer = _producer()
         source = inspect.getsource(producer.profile_cell)
-        assert '"instrumentation_overhead": overhead' in source
-        assert '"instrumentation_overhead_seconds"' not in source
-        estimate = _estimate(producer, [1.0, 1.0, 1.0], [1.0, 1.0, 1.0])
-        for key in (
-            "median_paired_delta",
-            "paired_delta_trials",
-            "off_trial_spread",
-            "resolvable",
-            "basis",
-        ):
-            assert key in estimate, key
+        assert "resolvable_negative_overhead" not in source
+        assert 'overhead["resolvable"]' not in source
+        # Invalidation is by direct structural evidence only.
+        assert "per_trial_coverage_or_residual_invalid" in source
 
-    def test_the_overhead_basis_explains_the_sign_caveat(self):
-        doc = _estimate(_producer(), [1.0], [1.0])["basis"]
-        assert "spread" in doc
-        assert "sign carries no information" in doc
+    def test_the_overhead_basis_states_it_is_descriptive(self):
+        estimate = _estimate(_producer(), [1.0], [1.0])
+        assert "descriptive" in estimate["basis"]
+        assert "neither clamped nor reinterpreted" in estimate["basis"]
 
 
 class TestDiagnosticsAreSeparateFromTiming:
@@ -1034,26 +1038,47 @@ class TestPairedOverhead:
         ]
         estimate = producer.overhead_estimate(trials)
         assert estimate["median_paired_delta"] == pytest.approx(0.05)
-        # The OFF spread is huge, so it is honestly reported as unresolvable
-        # rather than the delta being inflated by the drift.
+        # The OFF spread is huge, and is reported alongside so a reader can see
+        # the delta is small relative to the baseline's own movement. No verdict
+        # is drawn from the comparison.
         assert estimate["off_trial_spread"] == pytest.approx(8.0)
-        assert estimate["resolvable"] is False
+        assert estimate["resolvable"] is None
 
-    def test_a_resolvable_negative_overhead_invalidates_the_cell(self):
-        """Instrumentation cannot accelerate the measured code, so this is a
-        broken clock, not a result."""
+    def test_a_negative_overhead_does_not_invalidate_the_cell(self):
+        """Instrumentation cannot accelerate code, but at n=3 a negative median
+        is far more likely to be noise than a broken clock — and a broken clock
+        is already caught by the structural gates (coverage, residual, wall
+        positivity, finiteness) that need no noise-floor estimate."""
         producer = _producer()
         source = inspect.getsource(producer.profile_cell)
-        assert (
-            'overhead["resolvable"] and overhead["median_paired_delta"] < 0' in source
-        )
-        guard = source.split(
-            'if overhead["resolvable"] and overhead["median_paired_delta"] < 0:'
-        )[1]
-        head = guard[: guard.index("problems=")]
-        assert 'status="profile_invalid"' in head
-        assert 'reason_code="resolvable_negative_overhead"' in head
-        assert "cannot accelerate" in guard
+        assert "resolvable_negative_overhead" not in source
+        assert "overhead cannot" not in source
+        # The overhead is computed and recorded, never branched on.
+        assert "overhead = overhead_estimate(trials)" in source
+        after = source.split("overhead = overhead_estimate(trials)")[1]
+        assert "profile_invalid" not in after
+
+    def test_the_protocol_note_states_overhead_is_not_adjudicated(self):
+        producer = _producer()
+        doc = producer.__doc__ or ""
+        assert "DESCRIPTIVE, NOT ADJUDICATED" in doc
+        assert "no significance test" in doc.lower()
+
+    def test_the_artifact_carries_the_overhead_contract(self):
+        producer = _producer()
+        prov = inspect.getsource(producer.provenance)
+        assert '"overhead_contract"' in prov
+        assert "DESCRIPTIVE ONLY" in prov
+
+    def test_the_withdrawn_resolvability_test_is_recorded_as_an_erratum(self):
+        """Including the 7.12% variance diagnostic as EVIDENCE, explicitly not
+        adopted as a replacement threshold."""
+        producer = _producer()
+        prov = inspect.getsource(producer.provenance)
+        assert "the `resolvable` significance test" in prov
+        assert "12.5% of the time" in prov
+        assert "7.12%" in prov
+        assert "not adopted as a new" in prov
 
 
 class TestPerTrialGates:
@@ -1228,6 +1253,37 @@ class TestDeviceExclusivity:
         producer = _producer()
         source = inspect.getsource(producer.profile_cell)
         assert 'cell["device_occupancy_before"] = require_idle_device(' in source
+
+    def test_the_start_occupancy_is_captured_before_the_cells(self):
+        """`provenance()` runs AFTER the cell loop, so reading occupancy inside
+        it would produce a write-time snapshot under a field named "at_start"."""
+        producer = _producer()
+        main_source = inspect.getsource(producer.main)
+        assert "occupancy_at_start = require_idle_device(args.device)" in main_source
+        # Captured before the model is even loaded.
+        assert main_source.index("occupancy_at_start =") < main_source.index(
+            "load_fmlm_model"
+        )
+        # And passed in rather than re-read.
+        prov = inspect.getsource(producer.provenance)
+        assert '"device_occupancy_at_start": occupancy_at_start' in prov
+
+    def test_the_write_time_occupancy_is_named_for_when_it_is_taken(self):
+        producer = _producer()
+        prov = inspect.getsource(producer.provenance)
+        assert '"device_occupancy_at_artifact_write": device_occupancy(' in prov
+
+    def test_the_withdrawn_conclusions_are_recorded_as_errata(self):
+        """Retractions belong in a structured record, not deleted silently and
+        not buried in a taxonomy description."""
+        producer = _producer()
+        prov = inspect.getsource(producer.provenance)
+        assert '"measurement_errata"' in prov
+        assert "typed CUDA OOM" in prov
+        assert "dominates small-batch decoding" in prov
+        # The mechanism is explicitly retained, so a future reader does not
+        # over-read the retraction.
+        assert '"retained"' in prov
 
     def test_the_artifact_records_the_exclusivity_contract(self):
         producer = _producer()
