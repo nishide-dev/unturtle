@@ -1413,11 +1413,20 @@ class TestArtifactSemantics:
             assert not found, f"{name} quotes a measurement: {found}"
 
     def test_the_time_schedule_description_stays_qualitative(self):
-        """The mechanism must still be named — it is what makes the number
-        believable — without pinning a figure to it."""
+        """The mechanism is named without a figure pinned to it."""
         text = _producer().EVENT_TAXONOMY["time_schedule"]
-        assert "same order as this" in text
+        assert "cpu()" in text
+        assert "CubicSpline" in text
         assert "run-specific figure" in text
+
+    def test_the_description_records_that_the_dominance_claim_was_refuted(self):
+        """An earlier run on a SHARED GPU attributed ~354 ms (28.7%) to this
+        event; on an idle device the same cell attributes ~8 ms. The mechanism
+        is real, the dominance was contention. A future reader must not
+        resurrect the retracted claim from the mechanism's presence."""
+        text = _producer().EVENT_TAXONOMY["time_schedule"]
+        assert "SHARED GPU" in text
+        assert "did not survive re-measurement" in text
 
     def test_grid_init_excludes_manual_seed(self):
         """The description must match the real boundary, not absorb adjacent
