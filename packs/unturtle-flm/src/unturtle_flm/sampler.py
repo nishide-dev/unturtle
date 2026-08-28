@@ -35,7 +35,134 @@ CPU runs route the oracle's `use_jvp_attn=True` pure-torch attention path
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from typing import Any
+
+# --- private profiling seam (#166 Stage 1) -----------------------------------
+#
+# DEFAULT OFF. `_OBSERVER` is None in every normal run, so the only cost on the
+# production path is one `is not None` test per event boundary — no allocation,
+# no state mutation, no branch whose RESULT differs.
+#
+# The observer receives an event NAME and a phase ("enter"/"exit") and nothing
+# else: never `z`, never the model output. Handing it a tensor would invite a
+# fingerprint, a `.item()` or a `.cpu()` inside the timed window, and any of
+# those would change what is being measured.
+#
+# Why the terminal RNG state is captured INSIDE `fork_rng`: the sampling loops
+# are wrapped in `torch.random.fork_rng`, which RESTORES the outer generator on
+# exit. Verified — an extra `randn` drawn inside the fork leaves the outer state
+# bit-identical, so an outer pre/post fingerprint cannot detect an observer that
+# perturbs the internal stream. The check has to read the state before the fork
+# closes or it proves nothing.
+#: Observer state, scoped by EXECUTION CONTEXT. Independently established
+#: contexts do not leak events, and nested installation restores via ContextVar
+#: tokens.
+#:
+#: A plain module global did leak — MEASURED: with an observer installed on the
+#: profiling thread, 26 events from an unrelated thread's ordinary
+#: `run_fmlm_request` were captured.
+#:
+#: NOT claimed: that no child task can ever see the observer. A task created
+#: INSIDE an observed context inherits the context, so it inherits the observer
+#: — verified. That is standard ContextVar copy-on-spawn semantics, not a leak,
+#: and it is irrelevant to the profiler, which spawns nothing and runs one
+#: request at a time.
+_OBSERVER_CONTEXT: ContextVar[Any] = ContextVar("_FMLM_OBSERVER", default=None)
+
+#: Frozen event boundaries. `flow_map_forward` spans the double-time model call
+#: AND the `.exp()` that follows it — the name alone would suggest only the
+#: model body.
+_FMLM_EVENTS = (
+    "grid_init",
+    "time_schedule",
+    "flow_map_forward",
+    "state_update",
+    "endpoint_decode",
+)
+
+
+class _Scope:
+    """Enter/exit notifier. Instantiated ONLY when an observer is installed."""
+
+    __slots__ = ("_name", "_observer")
+
+    def __init__(self, observer, name: str) -> None:
+        self._observer = observer
+        self._name = name
+
+    def __enter__(self):
+        self._observer(self._name, "enter")
+        return self
+
+    def __exit__(self, *_exc) -> bool:
+        # Always fires, so a raising body cannot leave a scope unclosed and make
+        # the next window absorb this one's time.
+        self._observer(self._name, "exit")
+        return False
+
+
+class _Off:
+    """Zero-work stand-in used when no observer is installed."""
+
+    __slots__ = ()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc) -> bool:
+        return False
+
+
+_OFF = _Off()
+
+
+def _scope(observer, name: str):
+    """The hot path is a single `is not None` test; the observer is resolved
+    ONCE per request at the function entry, not re-read per boundary."""
+    return _Scope(observer, name) if observer is not None else _OFF
+
+
+def _install_observer(callback):
+    """Install an observer in THIS execution context. PRIVATE — profiling only.
+
+    Returns the token needed to restore the previous value. Nesting restores as
+    a stack via the token, so a nested install cannot clobber an outer one.
+    """
+    return _OBSERVER_CONTEXT.set(callback)
+
+
+def _restore_observer(token) -> None:
+    _OBSERVER_CONTEXT.reset(token)
+
+
+#: Private diagnostic flags, read from a PRIVATE attribute on the request
+#: object rather than from `request.kwargs` — the documented kwargs surface is
+#: unchanged and `_common` never sees these.
+_DIAGNOSTIC_ATTR = "_unturtle_profile_diagnostics"
+
+
+def _diagnostics(request: Any) -> frozenset[str]:
+    value = getattr(request, _DIAGNOSTIC_ATTR, None)
+    return frozenset(value) if value else frozenset()
+
+
+def _capture_terminal_rng(request: Any) -> bool:
+    return "terminal_rng" in _diagnostics(request)
+
+
+def _capture_final_latent(request: Any) -> bool:
+    return "final_latent" in _diagnostics(request)
+
+
+def _capture_rng_state(device) -> dict[str, Any]:
+    """Terminal RNG state, read INSIDE `fork_rng` (see the note above)."""
+    import torch
+
+    state: dict[str, Any] = {"cpu": torch.get_rng_state()}
+    if device is not None and device.type == "cuda":
+        state["cuda"] = torch.cuda.get_rng_state(device)
+    return state
 
 
 def _common(model: Any, request: Any, *, default_steps: int) -> dict[str, Any]:
@@ -135,59 +262,81 @@ def run_fmlm_request(model: Any, request: Any) -> dict[str, Any]:
     dtype = next(model.parameters()).dtype
     use_jvp = _use_jvp_attn(model)
     flow_map_calls = 0
+    # Resolved ONCE per request: a per-boundary lookup would put a ContextVar
+    # read on the hot path for no isolation benefit.
+    observer = _OBSERVER_CONTEXT.get()
 
     fork_devices = [device] if device.type == "cuda" else []
     with torch.random.fork_rng(devices=fork_devices):
         torch.manual_seed(params["seed"])
-        # algo.py:1529-1532
-        tau_vals = torch.linspace(0.0, 1.0, num_steps + 1, device=device)
-        z = torch.randn((B, L, V), device=device, dtype=dtype)
+        with _scope(observer, "grid_init"):
+            # algo.py:1529-1532
+            tau_vals = torch.linspace(0.0, 1.0, num_steps + 1, device=device)
+            z = torch.randn((B, L, V), device=device, dtype=dtype)
 
         with torch.no_grad():
             for i in range(num_steps):  # algo.py:1534-1564
-                tau_curr = tau_vals[i]
-                tau_next = tau_vals[i + 1]
+                with _scope(observer, "time_schedule"):
+                    tau_curr = tau_vals[i]
+                    tau_next = tau_vals[i + 1]
 
-                t_curr = model._tau_to_t(tau_curr.expand(B))
-                t_next = model._tau_to_t(tau_next.expand(B))
-                sigma_target = 1.0 - t_next
+                    t_curr = model._tau_to_t(tau_curr.expand(B))
+                    t_next = model._tau_to_t(tau_next.expand(B))
+                    sigma_target = 1.0 - t_next
 
-                sigma_tilde = sigma_target * torch.sqrt(torch.tensor(1.0 - gamma**2))
-                t_tilde = 1.0 - sigma_tilde
-                tau_tilde = model._t_to_tau(t_tilde)
+                    sigma_tilde = sigma_target * torch.sqrt(
+                        torch.tensor(1.0 - gamma**2)
+                    )
+                    t_tilde = 1.0 - sigma_tilde
+                    tau_tilde = model._t_to_tau(t_tilde)
 
-                log_D_st_pred = model(
-                    z, tau_curr.expand(B), tau_tilde, use_jvp_attn=use_jvp
-                )
-                flow_map_calls += 1
-                D_st_pred = log_D_st_pred.exp()
+                # Spans the model call AND the `.exp()`: the exponential is part
+                # of producing D_st_pred, not a separate stage.
+                with _scope(observer, "flow_map_forward"):
+                    log_D_st_pred = model(
+                        z, tau_curr.expand(B), tau_tilde, use_jvp_attn=use_jvp
+                    )
+                    flow_map_calls += 1
+                    D_st_pred = log_D_st_pred.exp()
 
+                # The final step exits BEFORE the state update, which is why
+                # `state_update` has a structural count of 0 at steps=1.
                 if i == num_steps - 1:
                     z = D_st_pred
                     break
 
-                weight_z = (1.0 - t_tilde.view(-1, 1, 1)) / (
-                    1.0 - t_curr.view(-1, 1, 1)
-                )
-                weight_D = (t_tilde.view(-1, 1, 1) - t_curr.view(-1, 1, 1)) / (
-                    1.0 - t_curr.view(-1, 1, 1)
-                )
-                z_tilde = weight_z * z + weight_D * D_st_pred
-
-                if gamma > 0:
-                    noise_std = gamma * sigma_target.view(-1, 1, 1)
-                    mean_adjustment = sigma_tilde.view(-1, 1, 1) - sigma_target.view(
-                        -1, 1, 1
+                with _scope(observer, "state_update"):
+                    weight_z = (1.0 - t_tilde.view(-1, 1, 1)) / (
+                        1.0 - t_curr.view(-1, 1, 1)
                     )
-                    z = (
-                        z_tilde
-                        + mean_adjustment * D_st_pred
-                        + noise_std * torch.randn_like(z)
+                    weight_D = (t_tilde.view(-1, 1, 1) - t_curr.view(-1, 1, 1)) / (
+                        1.0 - t_curr.view(-1, 1, 1)
                     )
-                else:
-                    z = z_tilde
+                    z_tilde = weight_z * z + weight_D * D_st_pred
 
-        tokens = z.argmax(dim=-1)  # algo.py:1566
+                    if gamma > 0:
+                        noise_std = gamma * sigma_target.view(-1, 1, 1)
+                        mean_adjustment = sigma_tilde.view(
+                            -1, 1, 1
+                        ) - sigma_target.view(-1, 1, 1)
+                        z = (
+                            z_tilde
+                            + mean_adjustment * D_st_pred
+                            + noise_std * torch.randn_like(z)
+                        )
+                    else:
+                        z = z_tilde
+
+        with _scope(observer, "endpoint_decode"):
+            tokens = z.argmax(dim=-1)  # algo.py:1566
+
+        # Read INSIDE the fork: `fork_rng` restores the outer generator on exit,
+        # so a state read after the `with` block cannot see observer
+        # perturbation of the internal stream.
+        terminal_rng = (
+            _capture_rng_state(device) if _capture_terminal_rng(request) else None
+        )
+        final_latent = z if _capture_final_latent(request) else None
 
     return {
         "method": "fmlm",
@@ -203,6 +352,10 @@ def run_fmlm_request(model: Any, request: Any) -> dict[str, Any]:
             "max_length": L,
             "use_jvp_attn": use_jvp,
         },
+        # Present only under the private diagnostic flags; absent in every
+        # normal run, so the public result shape is unchanged.
+        **({"_terminal_rng": terminal_rng} if terminal_rng is not None else {}),
+        **({"_final_latent": final_latent} if final_latent is not None else {}),
     }
 
 

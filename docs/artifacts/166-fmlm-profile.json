@@ -1,0 +1,2422 @@
+{
+  "run": {
+    "head_sha": "7e5ec890eb2c53b7b474baf18e536712d3e87ab2",
+    "worktree_clean": true,
+    "worktree_dirty_paths": [],
+    "command": "/home/nishide.21066/.claude/jobs/1492d35a/tmp/wt-fmlm-f3/benchmarks/flm/fmlm_profile.py --device cuda:1 --out /home/nishide.21066/.claude/jobs/1492d35a/tmp/fmlm-f3",
+    "environment": {
+      "torch": "2.10.0+cu128",
+      "cuda": "12.8",
+      "gpu_name": "NVIDIA RTX 6000 Ada Generation",
+      "device_index": 1,
+      "transformers": "5.15.0"
+    },
+    "device_occupancy_at_start": {
+      "device": "cuda:1",
+      "uuid": "GPU-a0a92b0b-7f00-3cb4-2f3d-5dd28cceaac3",
+      "free_bytes": 50396659712,
+      "total_bytes": 50867404800,
+      "free_fraction": 0.9907456437014849,
+      "compute_processes": [
+        {
+          "pid": 3574434,
+          "used_mib": 426
+        }
+      ],
+      "foreign_process_count": 0,
+      "source": "nvidia-smi compute-apps scoped by gpu_uuid"
+    },
+    "device_occupancy_at_artifact_write": {
+      "device": "cuda:1",
+      "uuid": "GPU-a0a92b0b-7f00-3cb4-2f3d-5dd28cceaac3",
+      "free_bytes": 49551507456,
+      "total_bytes": 50867404800,
+      "free_fraction": 0.9741308338969948,
+      "compute_processes": [
+        {
+          "pid": 3574434,
+          "used_mib": 1232
+        }
+      ],
+      "foreign_process_count": 0,
+      "source": "nvidia-smi compute-apps scoped by gpu_uuid"
+    },
+    "exclusivity_contract": "the run is refused if any unrelated CUDA process holds memory on the target device, checked before every cell via nvidia-smi compute-app data scoped by gpu_uuid. A typed `oom` is therefore attributable to the cell rather than to a co-resident workload",
+    "execution_scope": {
+      "request_concurrency": 1,
+      "execution_mode": "single_threaded_sequential",
+      "observer_isolation": "ContextVar",
+      "observer_concurrency_contract": "event isolation only",
+      "rng_concurrency_contract": "not deterministic across concurrent CPU-thread requests: run_fmlm_request seeds inside torch.random.fork_rng, which forks the process-global CPU generator that threads share. Measured with no observer installed. This is the sampler's execution contract, not a defect of this profile."
+    },
+    "fixture": {
+      "checkpoint": "david3684/FMLM-B-OWT@483ea1b38bba56632cd40dc5a3c70a2340bb4946",
+      "gamma": 1.0,
+      "seed": 100,
+      "max_length": 1024,
+      "steps_cells": [
+        1,
+        32
+      ],
+      "batch_sizes": [
+        1,
+        8,
+        32
+      ],
+      "official_cells": [
+        "benchmarks/results/fmlm_owt_1",
+        "benchmarks/results/fmlm_owt_32"
+      ]
+    },
+    "frozen_constants": {
+      "TRIALS": 3,
+      "WARMUP": 2
+    },
+    "gamma_semantics": {
+      "gamma": 1.0,
+      "sqrt_one_minus_gamma_squared": 0.0,
+      "sigma_tilde": 0.0,
+      "t_tilde": 1.0,
+      "weight_z": 0.0,
+      "weight_D": 1.0,
+      "note": "the z_tilde expression ALGEBRAICALLY reduces to D_st_pred at gamma=1. This is a property of the formula, not an asserted bit-identity of the computed tensors. The state update is NOT degenerate bookkeeping: it still performs (steps-1) randn_like draws and full-size [B, L, V] latent arithmetic, which is why it is measured rather than assumed free."
+    },
+    "event_taxonomy": {
+      "grid_init": "begins at the tau linspace; includes the initial randn draw of the [B, L, V] latent; ends once z exists. Does NOT include manual_seed or entry into fork_rng \u2014 those stay unattributed.",
+      "time_schedule": "begins at tau_curr/tau_next indexing; includes _tau_to_t, sigma_target, sigma_tilde, t_tilde and the _t_to_tau inverse; ends once tau_tilde exists. NOT cheap scalar arithmetic despite appearances: _tau_to_t/_t_to_tau go through alpha_to_gamma/gamma_to_alpha, which run `lut(x.cpu().numpy())` \u2014 a device-to-host copy that SYNCHRONIZES the stream, a scipy CubicSpline evaluation on the host, then a copy back. Three such round trips per step (_tau_to_t twice, _t_to_tau once). The host round trip is a REAL structural property of the implementation, but on an exclusive device its cost is small: an earlier claim that it dominated small-batch decoding was measured on a SHARED GPU and did not survive re-measurement on an idle one. Treat the mechanism as documented and the magnitude as whatever this run's cells report. No run-specific figure is quoted here: a taxonomy description must not carry measurements from a run other than the one that produced the artifact around it.",
+      "flow_map_forward": "begins before model(...); includes the double-time model call, its return, and log_D_st_pred.exp(); ends after the exp result exists. The exponential is part of producing D_st_pred, not a later stage.",
+      "state_update": "begins at the weight computation; includes z_tilde composition, the gamma churn arithmetic and torch.randn_like(z); ends after the new z exists. NOT reached on the final step.",
+      "endpoint_decode": "the terminal argmax over the vocabulary axis."
+    },
+    "overhead_contract": "instrumentation overhead is DESCRIPTIVE ONLY at TRIALS=3: the value and its per-trial range are reported, no significance test is performed, and no cell is invalidated on the basis of the overhead sign. Negative values are left as measured",
+    "measurement_errata": [
+      {
+        "date": "2026-08-28",
+        "withdrawn": "32-step x batch-32 is a typed CUDA OOM",
+        "reason": "recorded with 1.77 GiB free of 47.37 GiB while three unrelated processes held ~19.8 GiB. On an exclusive device the cell completes; it is not a capacity limit of the cell",
+        "superseded_by": "this run's 32x32 cell"
+      },
+      {
+        "date": "2026-08-28",
+        "withdrawn": "the `resolvable` significance test on instrumentation overhead, and the `profile_invalid` gate built on it",
+        "reason": "a three-sample range systematically understates variance, so the criterion fired on noise. It produced a false `profile_invalid` on the 32x32 cell whose sibling clean run passed with the same negative median delta and a wider spread. Requiring a consistent sign across three trials does not rescue it: with a true overhead of zero, all three land negative 12.5% of the time",
+        "diagnostic_evidence": "on this device (RTX 6000 Ada, cuda:1) a comparable workload - 90 iterations of an 8192x8192 matmul, ~3.9 s - varied 7.12% run to run over 10 samples, while the three-trial OFF spreads in this artifact are 0.32-0.75%. This figure is EVIDENCE THAT THREE SAMPLES DO NOT ESTIMATE THE NOISE FLOOR; it is deliberately not adopted as a new threshold, which would only substitute one post-hoc cutoff for another",
+        "retained": "the overhead value, its per-trial deltas and the OFF spread are still recorded, and `direction_consistent` remains as diagnostic information that nothing gates on",
+        "falsified_hypotheses": [
+          "a three-sample range represents this device's variance (a comparable workload varies 7.12% run to run; the three-trial spreads here are 0.32-0.75%)",
+          "the arm running second within a pair is systematically faster (10/15 trials suggested it; running IDENTICAL work in both slots gave +0.34% and 7/12, so it was chance)"
+        ],
+        "disposition": "These diagnostics falsified proposed explanations and thresholds; neither is used to classify or adjust the final profile."
+      },
+      {
+        "date": "2026-08-28",
+        "withdrawn": "time_schedule dominates small-batch decoding (28.7% at steps=32 batch=1)",
+        "reason": "353.53 ms on a shared GPU against 8.44 ms on an exclusive one, a 42x drop far outside any trial spread. The supporting experiment offered as independent confirmation (~379 ms per 32 iterations) was itself measuring contention on the shared device. Re-measured idle: the LUT round trip adds nothing detectable to a busy stream and costs 0.036 ms per call",
+        "retained": "the MECHANISM is real and still documented: three lut(x.cpu().numpy()) host round trips per solver step, each synchronizing the stream for a scipy spline. Only the magnitude claim is withdrawn"
+      }
+    ]
+  },
+  "cells": [
+    {
+      "steps": 1,
+      "batch_size": 1,
+      "gamma": 1.0,
+      "seed": 100,
+      "max_length": 1024,
+      "device_occupancy_before": {
+        "device": "cuda:1",
+        "uuid": "GPU-a0a92b0b-7f00-3cb4-2f3d-5dd28cceaac3",
+        "free_bytes": 49664753664,
+        "total_bytes": 50867404800,
+        "free_fraction": 0.9763571359551647,
+        "compute_processes": [
+          {
+            "pid": 3574434,
+            "used_mib": 1124
+          }
+        ],
+        "foreign_process_count": 0,
+        "source": "nvidia-smi compute-apps scoped by gpu_uuid"
+      },
+      "non_interference": {
+        "off": {
+          "tokens": {
+            "sha256": "a39c188b8bf8486ed5110cb03d6e25248462310c212e8f9aba32b7a884bf4874",
+            "shape": [
+              1,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "final_latent": {
+            "sha256": "f8245be096fa876cf2afcce29fd91f3a143c020bbcabe27fbabbf540c1d9d383",
+            "shape": [
+              1,
+              1024,
+              50258
+            ],
+            "dtype": "torch.bfloat16",
+            "device": "cuda:1"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed": {
+            "solver": "flow_map",
+            "steps_requested": 1,
+            "steps_executed": 1,
+            "nfe": 1,
+            "gamma": 1.0,
+            "tau_grid": [
+              0.0,
+              1.0
+            ],
+            "seed": 100,
+            "max_length": 1024,
+            "use_jvp_attn": false
+          },
+          "terminal_rng_cuda": {
+            "sha256": "0aa0829b038fad17d013ceea7b511b8bfa008523629f72172759a871fb97c70a",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on": {
+          "tokens": {
+            "sha256": "a39c188b8bf8486ed5110cb03d6e25248462310c212e8f9aba32b7a884bf4874",
+            "shape": [
+              1,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "final_latent": {
+            "sha256": "f8245be096fa876cf2afcce29fd91f3a143c020bbcabe27fbabbf540c1d9d383",
+            "shape": [
+              1,
+              1024,
+              50258
+            ],
+            "dtype": "torch.bfloat16",
+            "device": "cuda:1"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed": {
+            "solver": "flow_map",
+            "steps_requested": 1,
+            "steps_executed": 1,
+            "nfe": 1,
+            "gamma": 1.0,
+            "tau_grid": [
+              0.0,
+              1.0
+            ],
+            "seed": 100,
+            "max_length": 1024,
+            "use_jvp_attn": false
+          },
+          "terminal_rng_cuda": {
+            "sha256": "0aa0829b038fad17d013ceea7b511b8bfa008523629f72172759a871fb97c70a",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on_events": {
+          "counts": {
+            "grid_init": 1,
+            "time_schedule": 1,
+            "flow_map_forward": 1,
+            "endpoint_decode": 1
+          },
+          "order": [
+            "grid_init",
+            "time_schedule",
+            "flow_map_forward",
+            "endpoint_decode"
+          ],
+          "balanced": true
+        },
+        "matches": {
+          "tokens": true,
+          "final_latent": true,
+          "terminal_rng_cpu": true,
+          "executed_metadata": true,
+          "terminal_rng_cuda": true
+        },
+        "status": "ok"
+      },
+      "random_calls": {
+        "observed": {
+          "randn": 1,
+          "randn_like": 0
+        },
+        "expected": {
+          "randn": 1,
+          "randn_like": 0
+        },
+        "matches": true
+      },
+      "event_order": {
+        "observed_length": 4,
+        "matches_expected": true
+      },
+      "status": "ok",
+      "timing_attempted": true,
+      "latency": {
+        "verdict_seconds": 0.01397377101238817,
+        "verdict_basis": "instrumentation_off_outer_wall_clock",
+        "off_wall_trials": [
+          0.013801168068312109,
+          0.014485251042060554,
+          0.01397377101238817
+        ],
+        "on_wall_median": 0.014362622052431107,
+        "on_wall_trials": [
+          0.01435589394532144,
+          0.014362622052431107,
+          0.014401225023902953
+        ],
+        "instrumentation_overhead": {
+          "paired_delta_trials": [
+            0.0005547258770093322,
+            -0.00012262898962944746,
+            0.0004274540115147829
+          ],
+          "median_paired_delta": 0.0004274540115147829,
+          "off_wall_trials": [
+            0.013801168068312109,
+            0.014485251042060554,
+            0.01397377101238817
+          ],
+          "off_trial_spread": 0.0006840829737484455,
+          "direction_consistent": false,
+          "resolvable": null,
+          "resolution_status": "not_assessed",
+          "resolution_reason": "the frozen three-trial window is insufficient to estimate the noise floor",
+          "basis": "median of per-trial (on_wall - off_wall), from OFF/ON pairs run adjacently with the order reversed each trial. Reported as a descriptive value with its per-trial range; negative values are left as measured, neither clamped nor reinterpreted"
+        }
+      },
+      "trials": [
+        {
+          "trial": 0,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 0.013801168068312109,
+          "on_wall_seconds": 0.01435589394532144,
+          "paired_overhead_seconds": 0.0005547258770093322
+        },
+        {
+          "trial": 1,
+          "order": [
+            "on",
+            "off"
+          ],
+          "off_wall_seconds": 0.014485251042060554,
+          "on_wall_seconds": 0.014362622052431107,
+          "paired_overhead_seconds": -0.00012262898962944746
+        },
+        {
+          "trial": 2,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 0.01397377101238817,
+          "on_wall_seconds": 0.014401225023902953,
+          "paired_overhead_seconds": 0.0004274540115147829
+        }
+      ],
+      "peak_memory": {
+        "allocated_bytes_trials": [
+          1286337024,
+          1286337024,
+          1286337024
+        ],
+        "reserved_bytes_trials": [
+          1549795328,
+          1549795328,
+          1549795328
+        ],
+        "max_allocated_bytes": 1286337024,
+        "max_reserved_bytes": 1549795328,
+        "basis": "instrumentation_off_trials"
+      },
+      "events": [
+        {
+          "name": "grid_init",
+          "calls": 1,
+          "seconds": 0.00024214400351047516,
+          "description": "begins at the tau linspace; includes the initial randn draw of the [B, L, V] latent; ends once z exists. Does NOT include manual_seed or entry into fork_rng \u2014 those stay unattributed.",
+          "share_of_on_wall": 0.016867218748811492
+        },
+        {
+          "name": "time_schedule",
+          "calls": 1,
+          "seconds": 0.0002672640085220337,
+          "description": "begins at tau_curr/tau_next indexing; includes _tau_to_t, sigma_target, sigma_tilde, t_tilde and the _t_to_tau inverse; ends once tau_tilde exists. NOT cheap scalar arithmetic despite appearances: _tau_to_t/_t_to_tau go through alpha_to_gamma/gamma_to_alpha, which run `lut(x.cpu().numpy())` \u2014 a device-to-host copy that SYNCHRONIZES the stream, a scipy CubicSpline evaluation on the host, then a copy back. Three such round trips per step (_tau_to_t twice, _t_to_tau once). The host round trip is a REAL structural property of the implementation, but on an exclusive device its cost is small: an earlier claim that it dominated small-batch decoding was measured on a SHARED GPU and did not survive re-measurement on an idle one. Treat the mechanism as documented and the magnitude as whatever this run's cells report. No run-specific figure is quoted here: a taxonomy description must not carry measurements from a run other than the one that produced the artifact around it.",
+          "share_of_on_wall": 0.01855842180636943
+        },
+        {
+          "name": "flow_map_forward",
+          "calls": 1,
+          "seconds": 0.01345740795135498,
+          "description": "begins before model(...); includes the double-time model call, its return, and log_D_st_pred.exp(); ends after the exp result exists. The exponential is part of producing D_st_pred, not a later stage.",
+          "share_of_on_wall": 0.9353871124698894
+        },
+        {
+          "name": "state_update",
+          "calls": 0,
+          "seconds": 0.0,
+          "description": "begins at the weight computation; includes z_tilde composition, the gamma churn arithmetic and torch.randn_like(z); ends after the new z exists. NOT reached on the final step.",
+          "structural_zero": true,
+          "reason": "final-step branch exits before state update"
+        },
+        {
+          "name": "endpoint_decode",
+          "calls": 1,
+          "seconds": 0.0001361919939517975,
+          "description": "the terminal argmax over the vocabulary axis.",
+          "share_of_on_wall": 0.00948239071212939
+        }
+      ],
+      "attribution": {
+        "denominator": "per_trial_on_wall_seconds",
+        "aggregation": "median_of_per_trial_ratios",
+        "attributed_seconds": 0.014079551935195923,
+        "unattributed_seconds": 0.0002869847351685169,
+        "unattributed_seconds_trials": [
+          0.0002885655965656035,
+          0.0002830701172351832,
+          0.0002869847351685169
+        ],
+        "unattributed_basis": "median of per-trial (wall - attributed)",
+        "coverage_ratio": 0.9800721997821585,
+        "coverage_ratio_trials": [
+          0.9798991551717581,
+          0.9802911950059099,
+          0.9800721997821585
+        ],
+        "coverage_basis": "median of per-trial (sum of event seconds / wall)",
+        "coverage_note": "the per-event `share_of_on_wall` values are per-trial medians and do NOT sum to this ratio: each event's median can come from a different trial, so their sum is not a coverage figure",
+        "unattributed_note": "fork_rng enter/exit, manual_seed, loop control, observer dispatch, result assembly and executed-metadata construction are deliberately left unattributed rather than folded into an adjacent event"
+      }
+    },
+    {
+      "steps": 1,
+      "batch_size": 8,
+      "gamma": 1.0,
+      "seed": 100,
+      "max_length": 1024,
+      "device_occupancy_before": {
+        "device": "cuda:1",
+        "uuid": "GPU-a0a92b0b-7f00-3cb4-2f3d-5dd28cceaac3",
+        "free_bytes": 49551507456,
+        "total_bytes": 50867404800,
+        "free_fraction": 0.9741308338969948,
+        "compute_processes": [
+          {
+            "pid": 3574434,
+            "used_mib": 1232
+          }
+        ],
+        "foreign_process_count": 0,
+        "source": "nvidia-smi compute-apps scoped by gpu_uuid"
+      },
+      "non_interference": {
+        "off": {
+          "tokens": {
+            "sha256": "fccc8fbe861c99289bef3b0a90f4032620aa1433c8744297336aaa1282753779",
+            "shape": [
+              8,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "final_latent": {
+            "sha256": "a3f528b1cbab1fc7eb1445970440eed3a34e9becdf4459c0925808ccb730dad9",
+            "shape": [
+              8,
+              1024,
+              50258
+            ],
+            "dtype": "torch.bfloat16",
+            "device": "cuda:1"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed": {
+            "solver": "flow_map",
+            "steps_requested": 1,
+            "steps_executed": 1,
+            "nfe": 1,
+            "gamma": 1.0,
+            "tau_grid": [
+              0.0,
+              1.0
+            ],
+            "seed": 100,
+            "max_length": 1024,
+            "use_jvp_attn": false
+          },
+          "terminal_rng_cuda": {
+            "sha256": "ea3db5698de611c0c73d27770f9c316fcece47da1c49f4eb7960a22bd74b5411",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on": {
+          "tokens": {
+            "sha256": "fccc8fbe861c99289bef3b0a90f4032620aa1433c8744297336aaa1282753779",
+            "shape": [
+              8,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "final_latent": {
+            "sha256": "a3f528b1cbab1fc7eb1445970440eed3a34e9becdf4459c0925808ccb730dad9",
+            "shape": [
+              8,
+              1024,
+              50258
+            ],
+            "dtype": "torch.bfloat16",
+            "device": "cuda:1"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed": {
+            "solver": "flow_map",
+            "steps_requested": 1,
+            "steps_executed": 1,
+            "nfe": 1,
+            "gamma": 1.0,
+            "tau_grid": [
+              0.0,
+              1.0
+            ],
+            "seed": 100,
+            "max_length": 1024,
+            "use_jvp_attn": false
+          },
+          "terminal_rng_cuda": {
+            "sha256": "ea3db5698de611c0c73d27770f9c316fcece47da1c49f4eb7960a22bd74b5411",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on_events": {
+          "counts": {
+            "grid_init": 1,
+            "time_schedule": 1,
+            "flow_map_forward": 1,
+            "endpoint_decode": 1
+          },
+          "order": [
+            "grid_init",
+            "time_schedule",
+            "flow_map_forward",
+            "endpoint_decode"
+          ],
+          "balanced": true
+        },
+        "matches": {
+          "tokens": true,
+          "final_latent": true,
+          "terminal_rng_cpu": true,
+          "executed_metadata": true,
+          "terminal_rng_cuda": true
+        },
+        "status": "ok"
+      },
+      "random_calls": {
+        "observed": {
+          "randn": 1,
+          "randn_like": 0
+        },
+        "expected": {
+          "randn": 1,
+          "randn_like": 0
+        },
+        "matches": true
+      },
+      "event_order": {
+        "observed_length": 4,
+        "matches_expected": true
+      },
+      "status": "ok",
+      "timing_attempted": true,
+      "latency": {
+        "verdict_seconds": 0.06688133405987173,
+        "verdict_basis": "instrumentation_off_outer_wall_clock",
+        "off_wall_trials": [
+          0.06744065193925053,
+          0.06680363591294736,
+          0.06688133405987173
+        ],
+        "on_wall_median": 0.06699321209453046,
+        "on_wall_trials": [
+          0.06838930200319737,
+          0.06699321209453046,
+          0.06581216491758823
+        ],
+        "instrumentation_overhead": {
+          "paired_delta_trials": [
+            0.0009486500639468431,
+            0.00018957618158310652,
+            -0.0010691691422834992
+          ],
+          "median_paired_delta": 0.00018957618158310652,
+          "off_wall_trials": [
+            0.06744065193925053,
+            0.06680363591294736,
+            0.06688133405987173
+          ],
+          "off_trial_spread": 0.0006370160263031721,
+          "direction_consistent": false,
+          "resolvable": null,
+          "resolution_status": "not_assessed",
+          "resolution_reason": "the frozen three-trial window is insufficient to estimate the noise floor",
+          "basis": "median of per-trial (on_wall - off_wall), from OFF/ON pairs run adjacently with the order reversed each trial. Reported as a descriptive value with its per-trial range; negative values are left as measured, neither clamped nor reinterpreted"
+        }
+      },
+      "trials": [
+        {
+          "trial": 0,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 0.06744065193925053,
+          "on_wall_seconds": 0.06838930200319737,
+          "paired_overhead_seconds": 0.0009486500639468431
+        },
+        {
+          "trial": 1,
+          "order": [
+            "on",
+            "off"
+          ],
+          "off_wall_seconds": 0.06680363591294736,
+          "on_wall_seconds": 0.06699321209453046,
+          "paired_overhead_seconds": 0.00018957618158310652
+        },
+        {
+          "trial": 2,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 0.06688133405987173,
+          "on_wall_seconds": 0.06581216491758823,
+          "paired_overhead_seconds": -0.0010691691422834992
+        }
+      ],
+      "peak_memory": {
+        "allocated_bytes_trials": [
+          4810842624,
+          4810842624,
+          4810842624
+        ],
+        "reserved_bytes_trials": [
+          5370806272,
+          5370806272,
+          5370806272
+        ],
+        "max_allocated_bytes": 4810842624,
+        "max_reserved_bytes": 5370806272,
+        "basis": "instrumentation_off_trials"
+      },
+      "events": [
+        {
+          "name": "grid_init",
+          "calls": 1,
+          "seconds": 0.0020110719203948976,
+          "description": "begins at the tau linspace; includes the initial randn draw of the [B, L, V] latent; ends once z exists. Does NOT include manual_seed or entry into fork_rng \u2014 those stay unattributed.",
+          "share_of_on_wall": 0.030305160708433636
+        },
+        {
+          "name": "time_schedule",
+          "calls": 1,
+          "seconds": 0.0003012799918651581,
+          "description": "begins at tau_curr/tau_next indexing; includes _tau_to_t, sigma_target, sigma_tilde, t_tilde and the _t_to_tau inverse; ends once tau_tilde exists. NOT cheap scalar arithmetic despite appearances: _tau_to_t/_t_to_tau go through alpha_to_gamma/gamma_to_alpha, which run `lut(x.cpu().numpy())` \u2014 a device-to-host copy that SYNCHRONIZES the stream, a scipy CubicSpline evaluation on the host, then a copy back. Three such round trips per step (_tau_to_t twice, _t_to_tau once). The host round trip is a REAL structural property of the implementation, but on an exclusive device its cost is small: an earlier claim that it dominated small-batch decoding was measured on a SHARED GPU and did not survive re-measurement on an idle one. Treat the mechanism as documented and the magnitude as whatever this run's cells report. No run-specific figure is quoted here: a taxonomy description must not carry measurements from a run other than the one that produced the artifact around it.",
+          "share_of_on_wall": 0.00457025416786924
+        },
+        {
+          "name": "flow_map_forward",
+          "calls": 1,
+          "seconds": 0.0632883186340332,
+          "description": "begins before model(...); includes the double-time model call, its return, and log_D_st_pred.exp(); ends after the exp result exists. The exponential is part of producing D_st_pred, not a later stage.",
+          "share_of_on_wall": 0.9446974798690128
+        },
+        {
+          "name": "state_update",
+          "calls": 0,
+          "seconds": 0.0,
+          "description": "begins at the weight computation; includes z_tilde composition, the gamma churn arithmetic and torch.randn_like(z); ends after the new z exists. NOT reached on the final step.",
+          "structural_zero": true,
+          "reason": "final-step branch exits before state update"
+        },
+        {
+          "name": "endpoint_decode",
+          "calls": 1,
+          "seconds": 0.0010342400074005128,
+          "description": "the terminal argmax over the vocabulary axis.",
+          "share_of_on_wall": 0.015392126332944959
+        }
+      ],
+      "attribution": {
+        "denominator": "per_trial_on_wall_seconds",
+        "aggregation": "median_of_per_trial_ratios",
+        "attributed_seconds": 0.06665590268373489,
+        "unattributed_seconds": 0.000329060241580012,
+        "unattributed_seconds_trials": [
+          0.0003095905361697182,
+          0.0003373094107955721,
+          0.000329060241580012
+        ],
+        "unattributed_basis": "median of per-trial (wall - attributed)",
+        "coverage_ratio": 0.9950000088586651,
+        "coverage_ratio_trials": [
+          0.9954731145500616,
+          0.9949650210782607,
+          0.9950000088586651
+        ],
+        "coverage_basis": "median of per-trial (sum of event seconds / wall)",
+        "coverage_note": "the per-event `share_of_on_wall` values are per-trial medians and do NOT sum to this ratio: each event's median can come from a different trial, so their sum is not a coverage figure",
+        "unattributed_note": "fork_rng enter/exit, manual_seed, loop control, observer dispatch, result assembly and executed-metadata construction are deliberately left unattributed rather than folded into an adjacent event"
+      }
+    },
+    {
+      "steps": 1,
+      "batch_size": 32,
+      "gamma": 1.0,
+      "seed": 100,
+      "max_length": 1024,
+      "device_occupancy_before": {
+        "device": "cuda:1",
+        "uuid": "GPU-a0a92b0b-7f00-3cb4-2f3d-5dd28cceaac3",
+        "free_bytes": 49551507456,
+        "total_bytes": 50867404800,
+        "free_fraction": 0.9741308338969948,
+        "compute_processes": [
+          {
+            "pid": 3574434,
+            "used_mib": 1232
+          }
+        ],
+        "foreign_process_count": 0,
+        "source": "nvidia-smi compute-apps scoped by gpu_uuid"
+      },
+      "non_interference": {
+        "off": {
+          "tokens": {
+            "sha256": "76e4af673a2a84aae8808d3de8a2f32136546d039633e28cda38c311a92c8bd3",
+            "shape": [
+              32,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "final_latent": {
+            "sha256": "b85a31b380158c38c07a8d883424407a99c52161498acee60eda0f63b528a9e5",
+            "shape": [
+              32,
+              1024,
+              50258
+            ],
+            "dtype": "torch.bfloat16",
+            "device": "cuda:1"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed": {
+            "solver": "flow_map",
+            "steps_requested": 1,
+            "steps_executed": 1,
+            "nfe": 1,
+            "gamma": 1.0,
+            "tau_grid": [
+              0.0,
+              1.0
+            ],
+            "seed": 100,
+            "max_length": 1024,
+            "use_jvp_attn": false
+          },
+          "terminal_rng_cuda": {
+            "sha256": "970fa8fd811bb5c866ce542217358fc95d9d4e7df764efcb07ab965cafde108a",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on": {
+          "tokens": {
+            "sha256": "76e4af673a2a84aae8808d3de8a2f32136546d039633e28cda38c311a92c8bd3",
+            "shape": [
+              32,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "final_latent": {
+            "sha256": "b85a31b380158c38c07a8d883424407a99c52161498acee60eda0f63b528a9e5",
+            "shape": [
+              32,
+              1024,
+              50258
+            ],
+            "dtype": "torch.bfloat16",
+            "device": "cuda:1"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed": {
+            "solver": "flow_map",
+            "steps_requested": 1,
+            "steps_executed": 1,
+            "nfe": 1,
+            "gamma": 1.0,
+            "tau_grid": [
+              0.0,
+              1.0
+            ],
+            "seed": 100,
+            "max_length": 1024,
+            "use_jvp_attn": false
+          },
+          "terminal_rng_cuda": {
+            "sha256": "970fa8fd811bb5c866ce542217358fc95d9d4e7df764efcb07ab965cafde108a",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on_events": {
+          "counts": {
+            "grid_init": 1,
+            "time_schedule": 1,
+            "flow_map_forward": 1,
+            "endpoint_decode": 1
+          },
+          "order": [
+            "grid_init",
+            "time_schedule",
+            "flow_map_forward",
+            "endpoint_decode"
+          ],
+          "balanced": true
+        },
+        "matches": {
+          "tokens": true,
+          "final_latent": true,
+          "terminal_rng_cpu": true,
+          "executed_metadata": true,
+          "terminal_rng_cuda": true
+        },
+        "status": "ok"
+      },
+      "random_calls": {
+        "observed": {
+          "randn": 1,
+          "randn_like": 0
+        },
+        "expected": {
+          "randn": 1,
+          "randn_like": 0
+        },
+        "matches": true
+      },
+      "event_order": {
+        "observed_length": 4,
+        "matches_expected": true
+      },
+      "status": "ok",
+      "timing_attempted": true,
+      "latency": {
+        "verdict_seconds": 0.28064284403808415,
+        "verdict_basis": "instrumentation_off_outer_wall_clock",
+        "off_wall_trials": [
+          0.2785489250672981,
+          0.28256511501967907,
+          0.28064284403808415
+        ],
+        "on_wall_median": 0.27948354999534786,
+        "on_wall_trials": [
+          0.27873694396112114,
+          0.27948354999534786,
+          0.28031705704052
+        ],
+        "instrumentation_overhead": {
+          "paired_delta_trials": [
+            0.0001880188938230276,
+            -0.003081565024331212,
+            -0.000325786997564137
+          ],
+          "median_paired_delta": -0.000325786997564137,
+          "off_wall_trials": [
+            0.2785489250672981,
+            0.28256511501967907,
+            0.28064284403808415
+          ],
+          "off_trial_spread": 0.004016189952380955,
+          "direction_consistent": false,
+          "resolvable": null,
+          "resolution_status": "not_assessed",
+          "resolution_reason": "the frozen three-trial window is insufficient to estimate the noise floor",
+          "basis": "median of per-trial (on_wall - off_wall), from OFF/ON pairs run adjacently with the order reversed each trial. Reported as a descriptive value with its per-trial range; negative values are left as measured, neither clamped nor reinterpreted"
+        }
+      },
+      "trials": [
+        {
+          "trial": 0,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 0.2785489250672981,
+          "on_wall_seconds": 0.27873694396112114,
+          "paired_overhead_seconds": 0.0001880188938230276
+        },
+        {
+          "trial": 1,
+          "order": [
+            "on",
+            "off"
+          ],
+          "off_wall_seconds": 0.28256511501967907,
+          "on_wall_seconds": 0.27948354999534786,
+          "paired_overhead_seconds": -0.003081565024331212
+        },
+        {
+          "trial": 2,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 0.28064284403808415,
+          "on_wall_seconds": 0.28031705704052,
+          "paired_overhead_seconds": -0.000325786997564137
+        }
+      ],
+      "peak_memory": {
+        "allocated_bytes_trials": [
+          17162740224,
+          17162740224,
+          17162740224
+        ],
+        "reserved_bytes_trials": [
+          18689818624,
+          18689818624,
+          18689818624
+        ],
+        "max_allocated_bytes": 17162740224,
+        "max_reserved_bytes": 18689818624,
+        "basis": "instrumentation_off_trials"
+      },
+      "events": [
+        {
+          "name": "grid_init",
+          "calls": 1,
+          "seconds": 0.007985055923461914,
+          "description": "begins at the tau linspace; includes the initial randn draw of the [B, L, V] latent; ends once z exists. Does NOT include manual_seed or entry into fork_rng \u2014 those stay unattributed.",
+          "share_of_on_wall": 0.028601782992547526
+        },
+        {
+          "name": "time_schedule",
+          "calls": 1,
+          "seconds": 0.0003932160139083862,
+          "description": "begins at tau_curr/tau_next indexing; includes _tau_to_t, sigma_target, sigma_tilde, t_tilde and the _t_to_tau inverse; ends once tau_tilde exists. NOT cheap scalar arithmetic despite appearances: _tau_to_t/_t_to_tau go through alpha_to_gamma/gamma_to_alpha, which run `lut(x.cpu().numpy())` \u2014 a device-to-host copy that SYNCHRONIZES the stream, a scipy CubicSpline evaluation on the host, then a copy back. Three such round trips per step (_tau_to_t twice, _t_to_tau once). The host round trip is a REAL structural property of the implementation, but on an exclusive device its cost is small: an earlier claim that it dominated small-batch decoding was measured on a SHARED GPU and did not survive re-measurement on an idle one. Treat the mechanism as documented and the magnitude as whatever this run's cells report. No run-specific figure is quoted here: a taxonomy description must not carry measurements from a run other than the one that produced the artifact around it.",
+          "share_of_on_wall": 0.0014107064830388356
+        },
+        {
+          "name": "flow_map_forward",
+          "calls": 1,
+          "seconds": 0.2667745361328125,
+          "description": "begins before model(...); includes the double-time model call, its return, and log_D_st_pred.exp(); ends after the exp result exists. The exponential is part of producing D_st_pred, not a later stage.",
+          "share_of_on_wall": 0.9545267910660684
+        },
+        {
+          "name": "state_update",
+          "calls": 0,
+          "seconds": 0.0,
+          "description": "begins at the weight computation; includes z_tilde composition, the gamma churn arithmetic and torch.randn_like(z); ends after the new z exists. NOT reached on the final step.",
+          "structural_zero": true,
+          "reason": "final-step branch exits before state update"
+        },
+        {
+          "name": "endpoint_decode",
+          "calls": 1,
+          "seconds": 0.0038727679252624513,
+          "description": "the terminal argmax over the vocabulary axis.",
+          "share_of_on_wall": 0.013864200382889913
+        }
+      ],
+      "attribution": {
+        "denominator": "per_trial_on_wall_seconds",
+        "aggregation": "median_of_per_trial_ratios",
+        "attributed_seconds": 0.27902103185653687,
+        "unattributed_seconds": 0.00046741750556977824,
+        "unattributed_seconds_trials": [
+          0.0005049775848164906,
+          0.0004625181388109856,
+          0.00046741750556977824
+        ],
+        "unattributed_basis": "median of per-trial (wall - attributed)",
+        "coverage_ratio": 0.9983325399085429,
+        "coverage_ratio_trials": [
+          0.9981883363660364,
+          0.9983450970949143,
+          0.9983325399085429
+        ],
+        "coverage_basis": "median of per-trial (sum of event seconds / wall)",
+        "coverage_note": "the per-event `share_of_on_wall` values are per-trial medians and do NOT sum to this ratio: each event's median can come from a different trial, so their sum is not a coverage figure",
+        "unattributed_note": "fork_rng enter/exit, manual_seed, loop control, observer dispatch, result assembly and executed-metadata construction are deliberately left unattributed rather than folded into an adjacent event"
+      }
+    },
+    {
+      "steps": 32,
+      "batch_size": 1,
+      "gamma": 1.0,
+      "seed": 100,
+      "max_length": 1024,
+      "device_occupancy_before": {
+        "device": "cuda:1",
+        "uuid": "GPU-a0a92b0b-7f00-3cb4-2f3d-5dd28cceaac3",
+        "free_bytes": 49551507456,
+        "total_bytes": 50867404800,
+        "free_fraction": 0.9741308338969948,
+        "compute_processes": [
+          {
+            "pid": 3574434,
+            "used_mib": 1232
+          }
+        ],
+        "foreign_process_count": 0,
+        "source": "nvidia-smi compute-apps scoped by gpu_uuid"
+      },
+      "non_interference": {
+        "off": {
+          "tokens": {
+            "sha256": "8c30cfdad338ca51cc165dd863969cfb677f9793be87cb418e7e8cae5a39a819",
+            "shape": [
+              1,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "final_latent": {
+            "sha256": "f967cbbd1c9d6084c411204319b917e86a0d872dfc1d161482a131c70fed60a0",
+            "shape": [
+              1,
+              1024,
+              50258
+            ],
+            "dtype": "torch.bfloat16",
+            "device": "cuda:1"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed": {
+            "solver": "flow_map",
+            "steps_requested": 32,
+            "steps_executed": 32,
+            "nfe": 32,
+            "gamma": 1.0,
+            "tau_grid": [
+              0.0,
+              0.03125,
+              0.0625,
+              0.09375,
+              0.125,
+              0.15625,
+              0.1875,
+              0.21875,
+              0.25,
+              0.28125,
+              0.3125,
+              0.34375,
+              0.375,
+              0.40625,
+              0.4375,
+              0.46875,
+              0.5,
+              0.53125,
+              0.5625,
+              0.59375,
+              0.625,
+              0.65625,
+              0.6875,
+              0.71875,
+              0.75,
+              0.78125,
+              0.8125,
+              0.84375,
+              0.875,
+              0.90625,
+              0.9375,
+              0.96875,
+              1.0
+            ],
+            "seed": 100,
+            "max_length": 1024,
+            "use_jvp_attn": false
+          },
+          "terminal_rng_cuda": {
+            "sha256": "8336c77c668de61bfd2205806a42115b26f8ff31bcf26b263e286fcb1e8a171f",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on": {
+          "tokens": {
+            "sha256": "8c30cfdad338ca51cc165dd863969cfb677f9793be87cb418e7e8cae5a39a819",
+            "shape": [
+              1,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "final_latent": {
+            "sha256": "f967cbbd1c9d6084c411204319b917e86a0d872dfc1d161482a131c70fed60a0",
+            "shape": [
+              1,
+              1024,
+              50258
+            ],
+            "dtype": "torch.bfloat16",
+            "device": "cuda:1"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed": {
+            "solver": "flow_map",
+            "steps_requested": 32,
+            "steps_executed": 32,
+            "nfe": 32,
+            "gamma": 1.0,
+            "tau_grid": [
+              0.0,
+              0.03125,
+              0.0625,
+              0.09375,
+              0.125,
+              0.15625,
+              0.1875,
+              0.21875,
+              0.25,
+              0.28125,
+              0.3125,
+              0.34375,
+              0.375,
+              0.40625,
+              0.4375,
+              0.46875,
+              0.5,
+              0.53125,
+              0.5625,
+              0.59375,
+              0.625,
+              0.65625,
+              0.6875,
+              0.71875,
+              0.75,
+              0.78125,
+              0.8125,
+              0.84375,
+              0.875,
+              0.90625,
+              0.9375,
+              0.96875,
+              1.0
+            ],
+            "seed": 100,
+            "max_length": 1024,
+            "use_jvp_attn": false
+          },
+          "terminal_rng_cuda": {
+            "sha256": "8336c77c668de61bfd2205806a42115b26f8ff31bcf26b263e286fcb1e8a171f",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on_events": {
+          "counts": {
+            "grid_init": 1,
+            "time_schedule": 32,
+            "flow_map_forward": 32,
+            "state_update": 31,
+            "endpoint_decode": 1
+          },
+          "order": [
+            "grid_init",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "endpoint_decode"
+          ],
+          "balanced": true
+        },
+        "matches": {
+          "tokens": true,
+          "final_latent": true,
+          "terminal_rng_cpu": true,
+          "executed_metadata": true,
+          "terminal_rng_cuda": true
+        },
+        "status": "ok"
+      },
+      "random_calls": {
+        "observed": {
+          "randn": 1,
+          "randn_like": 31
+        },
+        "expected": {
+          "randn": 1,
+          "randn_like": 31
+        },
+        "matches": true
+      },
+      "event_order": {
+        "observed_length": 97,
+        "matches_expected": true
+      },
+      "status": "ok",
+      "timing_attempted": true,
+      "latency": {
+        "verdict_seconds": 0.5591753449989483,
+        "verdict_basis": "instrumentation_off_outer_wall_clock",
+        "off_wall_trials": [
+          0.5677635829197243,
+          0.5565511051099747,
+          0.5591753449989483
+        ],
+        "on_wall_median": 0.5655491049401462,
+        "on_wall_trials": [
+          0.5801695929840207,
+          0.5655491049401462,
+          0.5579624309903011
+        ],
+        "instrumentation_overhead": {
+          "paired_delta_trials": [
+            0.012406010064296424,
+            0.008997999830171466,
+            -0.0012129140086472034
+          ],
+          "median_paired_delta": 0.008997999830171466,
+          "off_wall_trials": [
+            0.5677635829197243,
+            0.5565511051099747,
+            0.5591753449989483
+          ],
+          "off_trial_spread": 0.011212477809749544,
+          "direction_consistent": false,
+          "resolvable": null,
+          "resolution_status": "not_assessed",
+          "resolution_reason": "the frozen three-trial window is insufficient to estimate the noise floor",
+          "basis": "median of per-trial (on_wall - off_wall), from OFF/ON pairs run adjacently with the order reversed each trial. Reported as a descriptive value with its per-trial range; negative values are left as measured, neither clamped nor reinterpreted"
+        }
+      },
+      "trials": [
+        {
+          "trial": 0,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 0.5677635829197243,
+          "on_wall_seconds": 0.5801695929840207,
+          "paired_overhead_seconds": 0.012406010064296424
+        },
+        {
+          "trial": 1,
+          "order": [
+            "on",
+            "off"
+          ],
+          "off_wall_seconds": 0.5565511051099747,
+          "on_wall_seconds": 0.5655491049401462,
+          "paired_overhead_seconds": 0.008997999830171466
+        },
+        {
+          "trial": 2,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 0.5591753449989483,
+          "on_wall_seconds": 0.5579624309903011,
+          "paired_overhead_seconds": -0.0012129140086472034
+        }
+      ],
+      "peak_memory": {
+        "allocated_bytes_trials": [
+          1926587904,
+          1926587904,
+          1926587904
+        ],
+        "reserved_bytes_trials": [
+          2587885568,
+          2587885568,
+          2587885568
+        ],
+        "max_allocated_bytes": 1926587904,
+        "max_reserved_bytes": 2587885568,
+        "basis": "instrumentation_off_trials"
+      },
+      "events": [
+        {
+          "name": "grid_init",
+          "calls": 1,
+          "seconds": 0.00024352000653743745,
+          "description": "begins at the tau linspace; includes the initial randn draw of the [B, L, V] latent; ends once z exists. Does NOT include manual_seed or entry into fork_rng \u2014 those stay unattributed.",
+          "share_of_on_wall": 0.0004265164630051612
+        },
+        {
+          "name": "time_schedule",
+          "calls": 32,
+          "seconds": 0.008445823937654497,
+          "description": "begins at tau_curr/tau_next indexing; includes _tau_to_t, sigma_target, sigma_tilde, t_tilde and the _t_to_tau inverse; ends once tau_tilde exists. NOT cheap scalar arithmetic despite appearances: _tau_to_t/_t_to_tau go through alpha_to_gamma/gamma_to_alpha, which run `lut(x.cpu().numpy())` \u2014 a device-to-host copy that SYNCHRONIZES the stream, a scipy CubicSpline evaluation on the host, then a copy back. Three such round trips per step (_tau_to_t twice, _t_to_tau once). The host round trip is a REAL structural property of the implementation, but on an exclusive device its cost is small: an earlier claim that it dominated small-batch decoding was measured on a SHARED GPU and did not survive re-measurement on an idle one. Treat the mechanism as documented and the magnitude as whatever this run's cells report. No run-specific figure is quoted here: a taxonomy description must not carry measurements from a run other than the one that produced the artifact around it.",
+          "share_of_on_wall": 0.014933847236038583
+        },
+        {
+          "name": "flow_map_forward",
+          "calls": 32,
+          "seconds": 0.4227019195556641,
+          "description": "begins before model(...); includes the double-time model call, its return, and log_D_st_pred.exp(); ends after the exp result exists. The exponential is part of producing D_st_pred, not a later stage.",
+          "share_of_on_wall": 0.7474185987800298
+        },
+        {
+          "name": "state_update",
+          "calls": 31,
+          "seconds": 0.13300019311904906,
+          "description": "begins at the weight computation; includes z_tilde composition, the gamma churn arithmetic and torch.randn_like(z); ends after the new z exists. NOT reached on the final step.",
+          "share_of_on_wall": 0.23510647546251578
+        },
+        {
+          "name": "endpoint_decode",
+          "calls": 1,
+          "seconds": 0.00013312000036239623,
+          "description": "the terminal argmax over the vocabulary axis.",
+          "share_of_on_wall": 0.0002385823721610214
+        }
+      ],
+      "attribution": {
+        "denominator": "per_trial_on_wall_seconds",
+        "aggregation": "median_of_per_trial_ratios",
+        "attributed_seconds": 0.5644883842617274,
+        "unattributed_seconds": 0.0010573036000132152,
+        "unattributed_seconds_trials": [
+          0.0010573036000132152,
+          0.0010607206784187806,
+          0.0010256640380248427
+        ],
+        "unattributed_basis": "median of per-trial (wall - attributed)",
+        "coverage_ratio": 0.9981617686405796,
+        "coverage_ratio_trials": [
+          0.9981775956327268,
+          0.9981244410624059,
+          0.9981617686405796
+        ],
+        "coverage_basis": "median of per-trial (sum of event seconds / wall)",
+        "coverage_note": "the per-event `share_of_on_wall` values are per-trial medians and do NOT sum to this ratio: each event's median can come from a different trial, so their sum is not a coverage figure",
+        "unattributed_note": "fork_rng enter/exit, manual_seed, loop control, observer dispatch, result assembly and executed-metadata construction are deliberately left unattributed rather than folded into an adjacent event"
+      }
+    },
+    {
+      "steps": 32,
+      "batch_size": 8,
+      "gamma": 1.0,
+      "seed": 100,
+      "max_length": 1024,
+      "device_occupancy_before": {
+        "device": "cuda:1",
+        "uuid": "GPU-a0a92b0b-7f00-3cb4-2f3d-5dd28cceaac3",
+        "free_bytes": 49551507456,
+        "total_bytes": 50867404800,
+        "free_fraction": 0.9741308338969948,
+        "compute_processes": [
+          {
+            "pid": 3574434,
+            "used_mib": 1232
+          }
+        ],
+        "foreign_process_count": 0,
+        "source": "nvidia-smi compute-apps scoped by gpu_uuid"
+      },
+      "non_interference": {
+        "off": {
+          "tokens": {
+            "sha256": "1e64f59b55938d2ff67c4628602562209faff3078b7c240fb6f8bef14d5c0c9d",
+            "shape": [
+              8,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "final_latent": {
+            "sha256": "50875adf5b6a070910e98b9a3d06ef9d6d66a33186f88262ce7359f9bc374891",
+            "shape": [
+              8,
+              1024,
+              50258
+            ],
+            "dtype": "torch.bfloat16",
+            "device": "cuda:1"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed": {
+            "solver": "flow_map",
+            "steps_requested": 32,
+            "steps_executed": 32,
+            "nfe": 32,
+            "gamma": 1.0,
+            "tau_grid": [
+              0.0,
+              0.03125,
+              0.0625,
+              0.09375,
+              0.125,
+              0.15625,
+              0.1875,
+              0.21875,
+              0.25,
+              0.28125,
+              0.3125,
+              0.34375,
+              0.375,
+              0.40625,
+              0.4375,
+              0.46875,
+              0.5,
+              0.53125,
+              0.5625,
+              0.59375,
+              0.625,
+              0.65625,
+              0.6875,
+              0.71875,
+              0.75,
+              0.78125,
+              0.8125,
+              0.84375,
+              0.875,
+              0.90625,
+              0.9375,
+              0.96875,
+              1.0
+            ],
+            "seed": 100,
+            "max_length": 1024,
+            "use_jvp_attn": false
+          },
+          "terminal_rng_cuda": {
+            "sha256": "4a7e2bcd5e2d6598f61838ba773d66d7a704298dc54e16927dffcd2b63129992",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on": {
+          "tokens": {
+            "sha256": "1e64f59b55938d2ff67c4628602562209faff3078b7c240fb6f8bef14d5c0c9d",
+            "shape": [
+              8,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "final_latent": {
+            "sha256": "50875adf5b6a070910e98b9a3d06ef9d6d66a33186f88262ce7359f9bc374891",
+            "shape": [
+              8,
+              1024,
+              50258
+            ],
+            "dtype": "torch.bfloat16",
+            "device": "cuda:1"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed": {
+            "solver": "flow_map",
+            "steps_requested": 32,
+            "steps_executed": 32,
+            "nfe": 32,
+            "gamma": 1.0,
+            "tau_grid": [
+              0.0,
+              0.03125,
+              0.0625,
+              0.09375,
+              0.125,
+              0.15625,
+              0.1875,
+              0.21875,
+              0.25,
+              0.28125,
+              0.3125,
+              0.34375,
+              0.375,
+              0.40625,
+              0.4375,
+              0.46875,
+              0.5,
+              0.53125,
+              0.5625,
+              0.59375,
+              0.625,
+              0.65625,
+              0.6875,
+              0.71875,
+              0.75,
+              0.78125,
+              0.8125,
+              0.84375,
+              0.875,
+              0.90625,
+              0.9375,
+              0.96875,
+              1.0
+            ],
+            "seed": 100,
+            "max_length": 1024,
+            "use_jvp_attn": false
+          },
+          "terminal_rng_cuda": {
+            "sha256": "4a7e2bcd5e2d6598f61838ba773d66d7a704298dc54e16927dffcd2b63129992",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on_events": {
+          "counts": {
+            "grid_init": 1,
+            "time_schedule": 32,
+            "flow_map_forward": 32,
+            "state_update": 31,
+            "endpoint_decode": 1
+          },
+          "order": [
+            "grid_init",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "endpoint_decode"
+          ],
+          "balanced": true
+        },
+        "matches": {
+          "tokens": true,
+          "final_latent": true,
+          "terminal_rng_cpu": true,
+          "executed_metadata": true,
+          "terminal_rng_cuda": true
+        },
+        "status": "ok"
+      },
+      "random_calls": {
+        "observed": {
+          "randn": 1,
+          "randn_like": 31
+        },
+        "expected": {
+          "randn": 1,
+          "randn_like": 31
+        },
+        "matches": true
+      },
+      "event_order": {
+        "observed_length": 97,
+        "matches_expected": true
+      },
+      "status": "ok",
+      "timing_attempted": true,
+      "latency": {
+        "verdict_seconds": 3.1234893980436027,
+        "verdict_basis": "instrumentation_off_outer_wall_clock",
+        "off_wall_trials": [
+          3.1883086940506473,
+          3.1234893980436027,
+          3.059117608005181
+        ],
+        "on_wall_median": 3.1066400059498847,
+        "on_wall_trials": [
+          3.177146532922052,
+          3.1066400059498847,
+          3.064920531003736
+        ],
+        "instrumentation_overhead": {
+          "paired_delta_trials": [
+            -0.011162161128595471,
+            -0.016849392093718052,
+            0.005802922998555005
+          ],
+          "median_paired_delta": -0.011162161128595471,
+          "off_wall_trials": [
+            3.1883086940506473,
+            3.1234893980436027,
+            3.059117608005181
+          ],
+          "off_trial_spread": 0.12919108604546636,
+          "direction_consistent": false,
+          "resolvable": null,
+          "resolution_status": "not_assessed",
+          "resolution_reason": "the frozen three-trial window is insufficient to estimate the noise floor",
+          "basis": "median of per-trial (on_wall - off_wall), from OFF/ON pairs run adjacently with the order reversed each trial. Reported as a descriptive value with its per-trial range; negative values are left as measured, neither clamped nor reinterpreted"
+        }
+      },
+      "trials": [
+        {
+          "trial": 0,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 3.1883086940506473,
+          "on_wall_seconds": 3.177146532922052,
+          "paired_overhead_seconds": -0.011162161128595471
+        },
+        {
+          "trial": 1,
+          "order": [
+            "on",
+            "off"
+          ],
+          "off_wall_seconds": 3.1234893980436027,
+          "on_wall_seconds": 3.1066400059498847,
+          "paired_overhead_seconds": -0.016849392093718052
+        },
+        {
+          "trial": 2,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 3.059117608005181,
+          "on_wall_seconds": 3.064920531003736,
+          "paired_overhead_seconds": 0.005802922998555005
+        }
+      ],
+      "peak_memory": {
+        "allocated_bytes_trials": [
+          10574079488,
+          10574079488,
+          10574079488
+        ],
+        "reserved_bytes_trials": [
+          13612613632,
+          13612613632,
+          13612613632
+        ],
+        "max_allocated_bytes": 10574079488,
+        "max_reserved_bytes": 13612613632,
+        "basis": "instrumentation_off_trials"
+      },
+      "events": [
+        {
+          "name": "grid_init",
+          "calls": 1,
+          "seconds": 0.0020573439598083497,
+          "description": "begins at the tau linspace; includes the initial randn draw of the [B, L, V] latent; ends once z exists. Does NOT include manual_seed or entry into fork_rng \u2014 those stay unattributed.",
+          "share_of_on_wall": 0.0006622408633984282
+        },
+        {
+          "name": "time_schedule",
+          "calls": 32,
+          "seconds": 0.010763615965843201,
+          "description": "begins at tau_curr/tau_next indexing; includes _tau_to_t, sigma_target, sigma_tilde, t_tilde and the _t_to_tau inverse; ends once tau_tilde exists. NOT cheap scalar arithmetic despite appearances: _tau_to_t/_t_to_tau go through alpha_to_gamma/gamma_to_alpha, which run `lut(x.cpu().numpy())` \u2014 a device-to-host copy that SYNCHRONIZES the stream, a scipy CubicSpline evaluation on the host, then a copy back. Three such round trips per step (_tau_to_t twice, _t_to_tau once). The host round trip is a REAL structural property of the implementation, but on an exclusive device its cost is small: an earlier claim that it dominated small-batch decoding was measured on a SHARED GPU and did not survive re-measurement on an idle one. Treat the mechanism as documented and the magnitude as whatever this run's cells report. No run-specific figure is quoted here: a taxonomy description must not carry measurements from a run other than the one that produced the artifact around it.",
+          "share_of_on_wall": 0.003464712984197898
+        },
+        {
+          "name": "flow_map_forward",
+          "calls": 32,
+          "seconds": 2.0239192390441896,
+          "description": "begins before model(...); includes the double-time model call, its return, and log_D_st_pred.exp(); ends after the exp result exists. The exponential is part of producing D_st_pred, not a later stage.",
+          "share_of_on_wall": 0.6514817407771575
+        },
+        {
+          "name": "state_update",
+          "calls": 31,
+          "seconds": 1.0658510131835939,
+          "description": "begins at the weight computation; includes z_tilde composition, the gamma churn arithmetic and torch.randn_like(z); ends after the new z exists. NOT reached on the final step.",
+          "share_of_on_wall": 0.3430880343851427
+        },
+        {
+          "name": "endpoint_decode",
+          "calls": 1,
+          "seconds": 0.0010383360385894775,
+          "description": "the terminal argmax over the vocabulary axis.",
+          "share_of_on_wall": 0.00033423120689904216
+        }
+      ],
+      "attribution": {
+        "denominator": "per_trial_on_wall_seconds",
+        "aggregation": "median_of_per_trial_ratios",
+        "attributed_seconds": 3.1036295481920244,
+        "unattributed_seconds": 0.003010457757860241,
+        "unattributed_seconds_trials": [
+          0.003819808541796643,
+          0.003010457757860241,
+          0.001090038328431131
+        ],
+        "unattributed_basis": "median of per-trial (wall - attributed)",
+        "coverage_ratio": 0.9990309602167955,
+        "coverage_ratio_trials": [
+          0.9987977235225964,
+          0.9990309602167955,
+          0.9996443502148246
+        ],
+        "coverage_basis": "median of per-trial (sum of event seconds / wall)",
+        "coverage_note": "the per-event `share_of_on_wall` values are per-trial medians and do NOT sum to this ratio: each event's median can come from a different trial, so their sum is not a coverage figure",
+        "unattributed_note": "fork_rng enter/exit, manual_seed, loop control, observer dispatch, result assembly and executed-metadata construction are deliberately left unattributed rather than folded into an adjacent event"
+      }
+    },
+    {
+      "steps": 32,
+      "batch_size": 32,
+      "gamma": 1.0,
+      "seed": 100,
+      "max_length": 1024,
+      "device_occupancy_before": {
+        "device": "cuda:1",
+        "uuid": "GPU-a0a92b0b-7f00-3cb4-2f3d-5dd28cceaac3",
+        "free_bytes": 49551507456,
+        "total_bytes": 50867404800,
+        "free_fraction": 0.9741308338969948,
+        "compute_processes": [
+          {
+            "pid": 3574434,
+            "used_mib": 1232
+          }
+        ],
+        "foreign_process_count": 0,
+        "source": "nvidia-smi compute-apps scoped by gpu_uuid"
+      },
+      "non_interference": {
+        "off": {
+          "tokens": {
+            "sha256": "4448e72b10ccfaf04761cced702b240d7d17a97405ca1b14c12b4362a306b99b",
+            "shape": [
+              32,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "final_latent": {
+            "sha256": "b5225dde8740604f5d0f5f0c7b949710ab995e413c12a155c736b5821ed64c23",
+            "shape": [
+              32,
+              1024,
+              50258
+            ],
+            "dtype": "torch.bfloat16",
+            "device": "cuda:1"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed": {
+            "solver": "flow_map",
+            "steps_requested": 32,
+            "steps_executed": 32,
+            "nfe": 32,
+            "gamma": 1.0,
+            "tau_grid": [
+              0.0,
+              0.03125,
+              0.0625,
+              0.09375,
+              0.125,
+              0.15625,
+              0.1875,
+              0.21875,
+              0.25,
+              0.28125,
+              0.3125,
+              0.34375,
+              0.375,
+              0.40625,
+              0.4375,
+              0.46875,
+              0.5,
+              0.53125,
+              0.5625,
+              0.59375,
+              0.625,
+              0.65625,
+              0.6875,
+              0.71875,
+              0.75,
+              0.78125,
+              0.8125,
+              0.84375,
+              0.875,
+              0.90625,
+              0.9375,
+              0.96875,
+              1.0
+            ],
+            "seed": 100,
+            "max_length": 1024,
+            "use_jvp_attn": false
+          },
+          "terminal_rng_cuda": {
+            "sha256": "4588a260d6f1f26e13498d7deadb9817f44a1c7c073204f29338d94f2bdb3b55",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on": {
+          "tokens": {
+            "sha256": "4448e72b10ccfaf04761cced702b240d7d17a97405ca1b14c12b4362a306b99b",
+            "shape": [
+              32,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "final_latent": {
+            "sha256": "b5225dde8740604f5d0f5f0c7b949710ab995e413c12a155c736b5821ed64c23",
+            "shape": [
+              32,
+              1024,
+              50258
+            ],
+            "dtype": "torch.bfloat16",
+            "device": "cuda:1"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed": {
+            "solver": "flow_map",
+            "steps_requested": 32,
+            "steps_executed": 32,
+            "nfe": 32,
+            "gamma": 1.0,
+            "tau_grid": [
+              0.0,
+              0.03125,
+              0.0625,
+              0.09375,
+              0.125,
+              0.15625,
+              0.1875,
+              0.21875,
+              0.25,
+              0.28125,
+              0.3125,
+              0.34375,
+              0.375,
+              0.40625,
+              0.4375,
+              0.46875,
+              0.5,
+              0.53125,
+              0.5625,
+              0.59375,
+              0.625,
+              0.65625,
+              0.6875,
+              0.71875,
+              0.75,
+              0.78125,
+              0.8125,
+              0.84375,
+              0.875,
+              0.90625,
+              0.9375,
+              0.96875,
+              1.0
+            ],
+            "seed": 100,
+            "max_length": 1024,
+            "use_jvp_attn": false
+          },
+          "terminal_rng_cuda": {
+            "sha256": "4588a260d6f1f26e13498d7deadb9817f44a1c7c073204f29338d94f2bdb3b55",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on_events": {
+          "counts": {
+            "grid_init": 1,
+            "time_schedule": 32,
+            "flow_map_forward": 32,
+            "state_update": 31,
+            "endpoint_decode": 1
+          },
+          "order": [
+            "grid_init",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "state_update",
+            "time_schedule",
+            "flow_map_forward",
+            "endpoint_decode"
+          ],
+          "balanced": true
+        },
+        "matches": {
+          "tokens": true,
+          "final_latent": true,
+          "terminal_rng_cpu": true,
+          "executed_metadata": true,
+          "terminal_rng_cuda": true
+        },
+        "status": "ok"
+      },
+      "random_calls": {
+        "observed": {
+          "randn": 1,
+          "randn_like": 31
+        },
+        "expected": {
+          "randn": 1,
+          "randn_like": 31
+        },
+        "matches": true
+      },
+      "event_order": {
+        "observed_length": 97,
+        "matches_expected": true
+      },
+      "status": "ok",
+      "timing_attempted": true,
+      "latency": {
+        "verdict_seconds": 12.558394006919116,
+        "verdict_basis": "instrumentation_off_outer_wall_clock",
+        "off_wall_trials": [
+          12.54736818105448,
+          12.558394006919116,
+          12.573575687943958
+        ],
+        "on_wall_median": 12.583669030922465,
+        "on_wall_trials": [
+          12.541639036964625,
+          12.583669030922465,
+          12.722132093040273
+        ],
+        "instrumentation_overhead": {
+          "paired_delta_trials": [
+            -0.005729144089855254,
+            0.025275024003349245,
+            0.14855640509631485
+          ],
+          "median_paired_delta": 0.025275024003349245,
+          "off_wall_trials": [
+            12.54736818105448,
+            12.558394006919116,
+            12.573575687943958
+          ],
+          "off_trial_spread": 0.026207506889477372,
+          "direction_consistent": false,
+          "resolvable": null,
+          "resolution_status": "not_assessed",
+          "resolution_reason": "the frozen three-trial window is insufficient to estimate the noise floor",
+          "basis": "median of per-trial (on_wall - off_wall), from OFF/ON pairs run adjacently with the order reversed each trial. Reported as a descriptive value with its per-trial range; negative values are left as measured, neither clamped nor reinterpreted"
+        }
+      },
+      "trials": [
+        {
+          "trial": 0,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 12.54736818105448,
+          "on_wall_seconds": 12.541639036964625,
+          "paired_overhead_seconds": -0.005729144089855254
+        },
+        {
+          "trial": 1,
+          "order": [
+            "on",
+            "off"
+          ],
+          "off_wall_seconds": 12.558394006919116,
+          "on_wall_seconds": 12.583669030922465,
+          "paired_overhead_seconds": 0.025275024003349245
+        },
+        {
+          "trial": 2,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 12.573575687943958,
+          "on_wall_seconds": 12.722132093040273,
+          "paired_overhead_seconds": 0.14855640509631485
+        }
+      ],
+      "peak_memory": {
+        "allocated_bytes_trials": [
+          40215946752,
+          40215946752,
+          40215946752
+        ],
+        "reserved_bytes_trials": [
+          40292581376,
+          40292581376,
+          40292581376
+        ],
+        "max_allocated_bytes": 40215946752,
+        "max_reserved_bytes": 40292581376,
+        "basis": "instrumentation_off_trials"
+      },
+      "events": [
+        {
+          "name": "grid_init",
+          "calls": 1,
+          "seconds": 0.008112031936645508,
+          "description": "begins at the tau linspace; includes the initial randn draw of the [B, L, V] latent; ends once z exists. Does NOT include manual_seed or entry into fork_rng \u2014 those stay unattributed.",
+          "share_of_on_wall": 0.0006413043643611012
+        },
+        {
+          "name": "time_schedule",
+          "calls": 32,
+          "seconds": 0.013830367982387543,
+          "description": "begins at tau_curr/tau_next indexing; includes _tau_to_t, sigma_target, sigma_tilde, t_tilde and the _t_to_tau inverse; ends once tau_tilde exists. NOT cheap scalar arithmetic despite appearances: _tau_to_t/_t_to_tau go through alpha_to_gamma/gamma_to_alpha, which run `lut(x.cpu().numpy())` \u2014 a device-to-host copy that SYNCHRONIZES the stream, a scipy CubicSpline evaluation on the host, then a copy back. Three such round trips per step (_tau_to_t twice, _t_to_tau once). The host round trip is a REAL structural property of the implementation, but on an exclusive device its cost is small: an earlier claim that it dominated small-batch decoding was measured on a SHARED GPU and did not survive re-measurement on an idle one. Treat the mechanism as documented and the magnitude as whatever this run's cells report. No run-specific figure is quoted here: a taxonomy description must not carry measurements from a run other than the one that produced the artifact around it.",
+          "share_of_on_wall": 0.0010916142137695614
+        },
+        {
+          "name": "flow_map_forward",
+          "calls": 32,
+          "seconds": 8.32827671813965,
+          "description": "begins before model(...); includes the double-time model call, its return, and log_D_st_pred.exp(); ends after the exp result exists. The exponential is part of producing D_st_pred, not a later stage.",
+          "share_of_on_wall": 0.6618321490873741
+        },
+        {
+          "name": "state_update",
+          "calls": 31,
+          "seconds": 4.226226608276367,
+          "description": "begins at the weight computation; includes z_tilde composition, the gamma churn arithmetic and torch.randn_like(z); ends after the new z exists. NOT reached on the final step.",
+          "share_of_on_wall": 0.335889850941037
+        },
+        {
+          "name": "endpoint_decode",
+          "calls": 1,
+          "seconds": 0.0039075839519500735,
+          "description": "the terminal argmax over the vocabulary axis.",
+          "share_of_on_wall": 0.0003089820649817301
+        }
+      ],
+      "attribution": {
+        "denominator": "per_trial_on_wall_seconds",
+        "aggregation": "median_of_per_trial_ratios",
+        "attributed_seconds": 12.580748329669238,
+        "unattributed_seconds": 0.004082733105867931,
+        "unattributed_seconds_trials": [
+          0.004082733105867931,
+          0.00292070125322752,
+          0.004230427650734114
+        ],
+        "unattributed_basis": "median of per-trial (wall - attributed)",
+        "coverage_ratio": 0.9996744657461569,
+        "coverage_ratio_trials": [
+          0.9996744657461569,
+          0.9997678974831545,
+          0.9996674749468253
+        ],
+        "coverage_basis": "median of per-trial (sum of event seconds / wall)",
+        "coverage_note": "the per-event `share_of_on_wall` values are per-trial medians and do NOT sum to this ratio: each event's median can come from a different trial, so their sum is not a coverage figure",
+        "unattributed_note": "fork_rng enter/exit, manual_seed, loop control, observer dispatch, result assembly and executed-metadata construction are deliberately left unattributed rather than folded into an adjacent event"
+      }
+    }
+  ]
+}
