@@ -1,0 +1,3811 @@
+{
+  "run": {
+    "head_sha": "9a6dbf967194264cc1652fee834a90118f904305",
+    "worktree_clean": true,
+    "worktree_dirty_paths": [],
+    "command": "/home/nishide.21066/.claude/jobs/1492d35a/tmp/wt-elf/benchmarks/elf/generation_profile.py --device cuda:1 --out /home/nishide.21066/.claude/jobs/1492d35a/tmp/elf-out",
+    "environment": {
+      "torch": "2.10.0+cu128",
+      "cuda": "12.8",
+      "gpu_name": "NVIDIA RTX 6000 Ada Generation",
+      "device_index": 1,
+      "transformers": "5.15.0"
+    },
+    "device_occupancy_at_start": {
+      "device": "cuda:1",
+      "uuid": "GPU-a0a92b0b-7f00-3cb4-2f3d-5dd28cceaac3",
+      "free_bytes": 50396659712,
+      "total_bytes": 50867404800,
+      "compute_processes": [
+        {
+          "pid": 3940971,
+          "used_mib": 426
+        }
+      ],
+      "foreign_process_count": 0,
+      "source": "nvidia-smi compute-apps scoped by gpu_uuid"
+    },
+    "device_occupancy_at_artifact_write": {
+      "device": "cuda:1",
+      "uuid": "GPU-a0a92b0b-7f00-3cb4-2f3d-5dd28cceaac3",
+      "free_bytes": 49840914432,
+      "total_bytes": 50867404800,
+      "compute_processes": [
+        {
+          "pid": 3940971,
+          "used_mib": 956
+        }
+      ],
+      "foreign_process_count": 0,
+      "source": "nvidia-smi compute-apps scoped by gpu_uuid"
+    },
+    "exclusivity_contract": "the run is refused if any unrelated CUDA process holds memory on the target device, checked before every cell via nvidia-smi compute-app data scoped by gpu_uuid",
+    "instrumentation_contract": "benchmark-local only: no production or reference source is edited. `generation_utils` module globals and the TARGET INSTANCE's `forward` are patched for one request and restored in `finally`. The forward wrapper is instance-local because a class-level patch instruments every instance of the class while it is live",
+    "overhead_contract": "instrumentation overhead is DESCRIPTIVE ONLY at TRIALS=3: no significance test is performed and no cell is invalidated on the basis of the overhead sign",
+    "fixture": {
+      "checkpoint": "embedded-language-flows/ELF-B-owt-torch@146f84133c1389bfd4ef47f14ec7a955da22faa7",
+      "solver": "sde",
+      "max_length": 1024,
+      "cfg_scale": 1.0,
+      "self_cond_cfg_scale": 3.0,
+      "time_schedule": "logit_normal",
+      "seed": 100,
+      "steps_cells": [
+        32,
+        64
+      ],
+      "batch_sizes": [
+        1,
+        8,
+        32
+      ],
+      "sde_gamma": {
+        "32": 1.5,
+        "64": 1.0
+      }
+    },
+    "frozen_constants": {
+      "TRIALS": 3,
+      "WARMUP": 2
+    },
+    "event_taxonomy": {
+      "denoiser_forward": "the rollout model call inside a solver step, attributed by an execution-phase-aware forward hook. Includes the SC-CFG token's own attention/prefix cost, which the frozen protocol does NOT decompose into a separate event. EXCLUDES the endpoint decoder forward.",
+      "solver_state_update": "everything in a solver step that is not the rollout model call: noise draw, conditional restore and the Euler/SDE update. Computed as a PER-STEP difference (step_inclusive - its own child forward) summed within a trial, never as a difference of medians.",
+      "endpoint_projection": "the whole of _dlm_decode_batch: the endpoint decoder forward and the argmax. Its model call is recorded here and NOT in denoiser_forward.",
+      "solver_step_inclusive": "AUDIT PARENT, excluded from coverage. The full solver step including its child denoiser_forward; retained so the parent/child pairing can be checked, and because subtracting it from coverage would double-count its children."
+    },
+    "coverage_events": [
+      "denoiser_forward",
+      "solver_state_update",
+      "endpoint_projection"
+    ]
+  },
+  "cells": [
+    {
+      "steps": 32,
+      "batch_size": 1,
+      "solver": "sde",
+      "sde_gamma": 1.5,
+      "cfg_scale": 1.0,
+      "self_cond_cfg_scale": 3.0,
+      "time_schedule": "logit_normal",
+      "seed": 100,
+      "max_length": 1024,
+      "device_occupancy_before": {
+        "device": "cuda:1",
+        "uuid": "GPU-a0a92b0b-7f00-3cb4-2f3d-5dd28cceaac3",
+        "free_bytes": 49952063488,
+        "total_bytes": 50867404800,
+        "compute_processes": [
+          {
+            "pid": 3940971,
+            "used_mib": 850
+          }
+        ],
+        "foreign_process_count": 0,
+        "source": "nvidia-smi compute-apps scoped by gpu_uuid"
+      },
+      "non_interference": {
+        "off": {
+          "final_latent": {
+            "sha256": "9bb4e2d885944d7fc3f41ca18e915d28e1ace9d28e4c0805e11f9705445c1f2f",
+            "shape": [
+              1,
+              1024,
+              512
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:1"
+          },
+          "raw_endpoint_tokens": {
+            "sha256": "a2d1527cc68780b28513df3ce82c42b63fec6c0cb02f8bfe88be4f91ba8e9268",
+            "shape": [
+              1,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "masked_public_tokens": {
+            "sha256": "d3118304223c03d49e052739d3008cf00d09cc3b6be2365fd9421e1eddacfa7d",
+            "shape": [
+              1,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed_metadata": {
+            "solver": "sde",
+            "steps_requested": 32,
+            "steps_executed": 32,
+            "nfe": 32,
+            "t_grid": [
+              0.0,
+              0.026127193123102188,
+              0.035730887204408646,
+              0.06305988878011703,
+              0.0690842792391777,
+              0.07385404407978058,
+              0.07997187227010727,
+              0.08524680137634277,
+              0.10452447086572647,
+              0.12253063172101974,
+              0.13394269347190857,
+              0.13742710649967194,
+              0.14114470779895782,
+              0.14469745755195618,
+              0.15325649082660675,
+              0.1612458974123001,
+              0.17313218116760254,
+              0.1796674132347107,
+              0.1802721470594406,
+              0.21232815086841583,
+              0.2242165356874466,
+              0.2254725694656372,
+              0.22985807061195374,
+              0.23529326915740967,
+              0.23705266416072845,
+              0.265727698802948,
+              0.31979382038116455,
+              0.35987529158592224,
+              0.41289570927619934,
+              0.43497538566589355,
+              0.4492417275905609,
+              0.4911094903945923,
+              1.0
+            ],
+            "sde_gamma": 1.5,
+            "self_cond_cfg_scale": 3.0,
+            "cfg_scale": 1.0,
+            "time_schedule": "logit_normal",
+            "schedule_p_mean": -1.5,
+            "schedule_p_std": 0.8,
+            "seed": 100,
+            "eos_token_id": 1,
+            "pad_token_id": 0,
+            "max_length": 1024
+          },
+          "terminal_rng_cuda": {
+            "sha256": "5348249ece8b20fbf4d8d2a56f77cd159e636be16974952d5e3e8a69104d1cc8",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on": {
+          "final_latent": {
+            "sha256": "9bb4e2d885944d7fc3f41ca18e915d28e1ace9d28e4c0805e11f9705445c1f2f",
+            "shape": [
+              1,
+              1024,
+              512
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:1"
+          },
+          "raw_endpoint_tokens": {
+            "sha256": "a2d1527cc68780b28513df3ce82c42b63fec6c0cb02f8bfe88be4f91ba8e9268",
+            "shape": [
+              1,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "masked_public_tokens": {
+            "sha256": "d3118304223c03d49e052739d3008cf00d09cc3b6be2365fd9421e1eddacfa7d",
+            "shape": [
+              1,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed_metadata": {
+            "solver": "sde",
+            "steps_requested": 32,
+            "steps_executed": 32,
+            "nfe": 32,
+            "t_grid": [
+              0.0,
+              0.026127193123102188,
+              0.035730887204408646,
+              0.06305988878011703,
+              0.0690842792391777,
+              0.07385404407978058,
+              0.07997187227010727,
+              0.08524680137634277,
+              0.10452447086572647,
+              0.12253063172101974,
+              0.13394269347190857,
+              0.13742710649967194,
+              0.14114470779895782,
+              0.14469745755195618,
+              0.15325649082660675,
+              0.1612458974123001,
+              0.17313218116760254,
+              0.1796674132347107,
+              0.1802721470594406,
+              0.21232815086841583,
+              0.2242165356874466,
+              0.2254725694656372,
+              0.22985807061195374,
+              0.23529326915740967,
+              0.23705266416072845,
+              0.265727698802948,
+              0.31979382038116455,
+              0.35987529158592224,
+              0.41289570927619934,
+              0.43497538566589355,
+              0.4492417275905609,
+              0.4911094903945923,
+              1.0
+            ],
+            "sde_gamma": 1.5,
+            "self_cond_cfg_scale": 3.0,
+            "cfg_scale": 1.0,
+            "time_schedule": "logit_normal",
+            "schedule_p_mean": -1.5,
+            "schedule_p_std": 0.8,
+            "seed": 100,
+            "eos_token_id": 1,
+            "pad_token_id": 0,
+            "max_length": 1024
+          },
+          "terminal_rng_cuda": {
+            "sha256": "5348249ece8b20fbf4d8d2a56f77cd159e636be16974952d5e3e8a69104d1cc8",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on_structure": {
+          "step_calls": {
+            "_sde_step": 31,
+            "_ode_step": 1
+          },
+          "forward_calls": {
+            "rollout": 32,
+            "endpoint": 1
+          },
+          "pairing_problems": []
+        },
+        "matches": {
+          "final_latent": true,
+          "raw_endpoint_tokens": true,
+          "masked_public_tokens": true,
+          "terminal_rng_cpu": true,
+          "executed_metadata": true,
+          "terminal_rng_cuda": true
+        },
+        "status": "ok"
+      },
+      "random_calls": {
+        "observed": {
+          "time_grid": 1,
+          "initial_latent": 1,
+          "sde_churn": 31
+        },
+        "expected": {
+          "time_grid": 1,
+          "initial_latent": 1,
+          "sde_churn": 31
+        },
+        "unknown": 0,
+        "total_observed": 33,
+        "total_expected": 33,
+        "matches": true
+      },
+      "status": "ok",
+      "timing_attempted": true,
+      "latency": {
+        "verdict_seconds": 0.23276334896218032,
+        "verdict_basis": "instrumentation_off_outer_wall_clock",
+        "off_wall_trials": [
+          0.22988631401676685,
+          0.23276334896218032,
+          0.23799788195174187
+        ],
+        "on_wall_median": 0.2428931250469759,
+        "on_wall_trials": [
+          0.2428931250469759,
+          0.23644945898558944,
+          0.2467405180213973
+        ],
+        "instrumentation_overhead": {
+          "paired_delta_trials": [
+            0.013006811030209064,
+            0.003686110023409128,
+            0.008742636069655418
+          ],
+          "median_paired_delta": 0.008742636069655418,
+          "off_wall_trials": [
+            0.22988631401676685,
+            0.23276334896218032,
+            0.23799788195174187
+          ],
+          "off_trial_spread": 0.008111567934975028,
+          "direction_consistent": true,
+          "resolvable": null,
+          "resolution_status": "not_assessed",
+          "resolution_reason": "the frozen three-trial window is insufficient to estimate the noise floor",
+          "basis": "median of per-trial (on_wall - off_wall), from OFF/ON pairs run adjacently with the order reversed each trial. Descriptive; negative values are left as measured, neither clamped nor reinterpreted"
+        }
+      },
+      "trials": [
+        {
+          "trial": 0,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 0.22988631401676685,
+          "on_wall_seconds": 0.2428931250469759,
+          "paired_overhead_seconds": 0.013006811030209064,
+          "step_calls": {
+            "_sde_step": 31,
+            "_ode_step": 1
+          },
+          "forward_calls": {
+            "rollout": 32,
+            "endpoint": 1
+          }
+        },
+        {
+          "trial": 1,
+          "order": [
+            "on",
+            "off"
+          ],
+          "off_wall_seconds": 0.23276334896218032,
+          "on_wall_seconds": 0.23644945898558944,
+          "paired_overhead_seconds": 0.003686110023409128,
+          "step_calls": {
+            "_sde_step": 31,
+            "_ode_step": 1
+          },
+          "forward_calls": {
+            "rollout": 32,
+            "endpoint": 1
+          }
+        },
+        {
+          "trial": 2,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 0.23799788195174187,
+          "on_wall_seconds": 0.2467405180213973,
+          "paired_overhead_seconds": 0.008742636069655418,
+          "step_calls": {
+            "_sde_step": 31,
+            "_ode_step": 1
+          },
+          "forward_calls": {
+            "rollout": 32,
+            "endpoint": 1
+          }
+        }
+      ],
+      "peak_memory": {
+        "allocated_bytes_trials": [
+          883629056,
+          883629056,
+          883629056
+        ],
+        "reserved_bytes_trials": [
+          950009856,
+          950009856,
+          950009856
+        ],
+        "max_allocated_bytes": 883629056,
+        "max_reserved_bytes": 950009856,
+        "basis": "instrumentation_off_trials"
+      },
+      "events": [
+        {
+          "name": "denoiser_forward",
+          "seconds": 0.22206271934509278,
+          "seconds_trials": [
+            0.22206271934509278,
+            0.2156397752761841,
+            0.22528656053543095
+          ],
+          "share_of_on_wall": 0.9130505291226394,
+          "description": "the rollout model call inside a solver step, attributed by an execution-phase-aware forward hook. Includes the SC-CFG token's own attention/prefix cost, which the frozen protocol does NOT decompose into a separate event. EXCLUDES the endpoint decoder forward."
+        },
+        {
+          "name": "solver_state_update",
+          "seconds": 0.00923136043548584,
+          "seconds_trials": [
+            0.00923136043548584,
+            0.009033344268798827,
+            0.00933215951919556
+          ],
+          "share_of_on_wall": 0.038005853124498605,
+          "description": "everything in a solver step that is not the rollout model call: noise draw, conditional restore and the Euler/SDE update. Computed as a PER-STEP difference (step_inclusive - its own child forward) summed within a trial, never as a difference of medians."
+        },
+        {
+          "name": "endpoint_projection",
+          "seconds": 0.00894803237915039,
+          "seconds_trials": [
+            0.008689536094665527,
+            0.00894803237915039,
+            0.009116415977478027
+          ],
+          "share_of_on_wall": 0.03694738120265863,
+          "description": "the whole of _dlm_decode_batch: the endpoint decoder forward and the argmax. Its model call is recorded here and NOT in denoiser_forward."
+        }
+      ],
+      "audit": {
+        "solver_step_inclusive_seconds_trials": [
+          0.23129407978057862,
+          0.22467311954498292,
+          0.23461872005462647
+        ],
+        "solver_state_update_seconds_trials": [
+          0.00923136043548584,
+          0.009033344268798827,
+          0.00933215951919556
+        ],
+        "per_step_exclusive_seconds": [
+          [
+            0.00028678417205810474,
+            0.000292736053466797,
+            0.0002918081283569329,
+            0.00027747201919555656,
+            0.00027904033660888696,
+            0.0002875843048095704,
+            0.00029356813430786183,
+            0.00030511999130249014,
+            0.000297343730926514,
+            0.0003005757331848149,
+            0.00028070402145385746,
+            0.00026960039138793947,
+            0.00028755187988281205,
+            0.0003009920120239252,
+            0.0002999997138977053,
+            0.00029897594451904364,
+            0.00029257631301879937,
+            0.00029478406906127946,
+            0.0003039040565490725,
+            0.0003022398948669437,
+            0.0002815680503845215,
+            0.00027782392501831104,
+            0.00027955198287963907,
+            0.0002801599502563479,
+            0.000287744045257568,
+            0.0002832322120666503,
+            0.00026918411254882833,
+            0.00028988790512084976,
+            0.0002909116744995114,
+            0.0002924799919128418,
+            0.000330431938171386,
+            0.00022502374649047835
+          ],
+          [
+            0.0002646722793579097,
+            0.0002872319221496585,
+            0.0002907199859619146,
+            0.00029040002822876016,
+            0.0002786879539489742,
+            0.0002870402336120608,
+            0.00028857612609863286,
+            0.00034198427200317436,
+            0.00030211162567138697,
+            0.0002926721572875978,
+            0.0002972798347473139,
+            0.0002831039428710944,
+            0.00026796770095825154,
+            0.00025955200195312486,
+            0.000279520034790039,
+            0.0002971520423889155,
+            0.0002839040756225583,
+            0.00027689599990844693,
+            0.0002713918685913084,
+            0.00026787233352661144,
+            0.0002703676223754885,
+            0.0002600960731506353,
+            0.0002715520858764652,
+            0.0002914237976074218,
+            0.0002800960540771478,
+            0.00028070402145385746,
+            0.00029286432266235375,
+            0.00027513599395751886,
+            0.0002865281105041504,
+            0.0002973756790161132,
+            0.00029568004608154265,
+            0.00022278404235839822
+          ],
+          [
+            0.00029558420181274424,
+            0.00030310392379760773,
+            0.00029683208465576105,
+            0.00029507207870483384,
+            0.00029158401489257774,
+            0.0002796797752380375,
+            0.00028176021575927745,
+            0.00029260826110839855,
+            0.00029606389999389717,
+            0.00029862403869628917,
+            0.0003004159927368164,
+            0.00029295969009399386,
+            0.00029696035385131866,
+            0.0002897281646728521,
+            0.00029478406906127946,
+            0.00029030370712280346,
+            0.0002844796180725105,
+            0.0002855038642883296,
+            0.0002832961082458495,
+            0.0002884478569030761,
+            0.0003024640083312989,
+            0.0002973761558532715,
+            0.00029663991928100507,
+            0.00029529571533203156,
+            0.0002960319519042971,
+            0.00029820823669433633,
+            0.0003006401062011716,
+            0.00030425596237182613,
+            0.0002946877479553219,
+            0.00029382371902465787,
+            0.00029350423812866174,
+            0.00022143983840942384
+          ]
+        ],
+        "note": "retained so a later regression to median-of-medians is detectable from the artifact alone: the reported state update must equal the sum of that trial's per-step exclusive values"
+      },
+      "forward_accounting": {
+        "rollout_forward_count": 32,
+        "endpoint_forward_count": 1,
+        "extra_cfg_forward_count": 0,
+        "total_top_level_model_calls": 33,
+        "sc_cfg_token_cost": "included_in_denoiser_forward"
+      },
+      "attribution": {
+        "denominator": "per_trial_on_wall_seconds",
+        "aggregation": "median_of_per_trial_ratios",
+        "coverage_ratio": 0.9880214428828767,
+        "coverage_ratio_trials": [
+          0.9880214428828767,
+          0.9880384287044256,
+          0.9878196657225461
+        ],
+        "coverage_disposition": "descriptive_only",
+        "unattributed_seconds": 0.0029095091717317723,
+        "unattributed_seconds_trials": [
+          0.0029095091717317723,
+          0.00282830706145612,
+          0.0030053819892927602
+        ],
+        "unattributed_note": "mask_after_eos runs after _dlm_decode_batch in the public entry point, so it is inside the outer wall but outside every event span and is deliberately unattributed; fork_rng enter/exit, the time grid and result assembly are likewise unattributed rather than folded into an adjacent event"
+      }
+    },
+    {
+      "steps": 32,
+      "batch_size": 8,
+      "solver": "sde",
+      "sde_gamma": 1.5,
+      "cfg_scale": 1.0,
+      "self_cond_cfg_scale": 3.0,
+      "time_schedule": "logit_normal",
+      "seed": 100,
+      "max_length": 1024,
+      "device_occupancy_before": {
+        "device": "cuda:1",
+        "uuid": "GPU-a0a92b0b-7f00-3cb4-2f3d-5dd28cceaac3",
+        "free_bytes": 49840914432,
+        "total_bytes": 50867404800,
+        "compute_processes": [
+          {
+            "pid": 3940971,
+            "used_mib": 956
+          }
+        ],
+        "foreign_process_count": 0,
+        "source": "nvidia-smi compute-apps scoped by gpu_uuid"
+      },
+      "non_interference": {
+        "off": {
+          "final_latent": {
+            "sha256": "037a73e44b02356fa882b0d0e67c8dfdb4115a7bff10e2826b9cd51a2f8bee42",
+            "shape": [
+              8,
+              1024,
+              512
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:1"
+          },
+          "raw_endpoint_tokens": {
+            "sha256": "807204f599d913ed716563a3dd4fad3862f7024948045817317cb4049c2c6df4",
+            "shape": [
+              8,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "masked_public_tokens": {
+            "sha256": "ca44f2fc94ec94532377297ebe6caa310ce7a6f257ca4889571ad854dd6b6ae6",
+            "shape": [
+              8,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed_metadata": {
+            "solver": "sde",
+            "steps_requested": 32,
+            "steps_executed": 32,
+            "nfe": 32,
+            "t_grid": [
+              0.0,
+              0.026127193123102188,
+              0.035730887204408646,
+              0.06305988878011703,
+              0.0690842792391777,
+              0.07385404407978058,
+              0.07997187227010727,
+              0.08524680137634277,
+              0.10452447086572647,
+              0.12253063172101974,
+              0.13394269347190857,
+              0.13742710649967194,
+              0.14114470779895782,
+              0.14469745755195618,
+              0.15325649082660675,
+              0.1612458974123001,
+              0.17313218116760254,
+              0.1796674132347107,
+              0.1802721470594406,
+              0.21232815086841583,
+              0.2242165356874466,
+              0.2254725694656372,
+              0.22985807061195374,
+              0.23529326915740967,
+              0.23705266416072845,
+              0.265727698802948,
+              0.31979382038116455,
+              0.35987529158592224,
+              0.41289570927619934,
+              0.43497538566589355,
+              0.4492417275905609,
+              0.4911094903945923,
+              1.0
+            ],
+            "sde_gamma": 1.5,
+            "self_cond_cfg_scale": 3.0,
+            "cfg_scale": 1.0,
+            "time_schedule": "logit_normal",
+            "schedule_p_mean": -1.5,
+            "schedule_p_std": 0.8,
+            "seed": 100,
+            "eos_token_id": 1,
+            "pad_token_id": 0,
+            "max_length": 1024
+          },
+          "terminal_rng_cuda": {
+            "sha256": "755c9a028fdaf220cfd26e8fdba4bcd8504774afc1a03bdfba463485c7388d8c",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on": {
+          "final_latent": {
+            "sha256": "037a73e44b02356fa882b0d0e67c8dfdb4115a7bff10e2826b9cd51a2f8bee42",
+            "shape": [
+              8,
+              1024,
+              512
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:1"
+          },
+          "raw_endpoint_tokens": {
+            "sha256": "807204f599d913ed716563a3dd4fad3862f7024948045817317cb4049c2c6df4",
+            "shape": [
+              8,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "masked_public_tokens": {
+            "sha256": "ca44f2fc94ec94532377297ebe6caa310ce7a6f257ca4889571ad854dd6b6ae6",
+            "shape": [
+              8,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed_metadata": {
+            "solver": "sde",
+            "steps_requested": 32,
+            "steps_executed": 32,
+            "nfe": 32,
+            "t_grid": [
+              0.0,
+              0.026127193123102188,
+              0.035730887204408646,
+              0.06305988878011703,
+              0.0690842792391777,
+              0.07385404407978058,
+              0.07997187227010727,
+              0.08524680137634277,
+              0.10452447086572647,
+              0.12253063172101974,
+              0.13394269347190857,
+              0.13742710649967194,
+              0.14114470779895782,
+              0.14469745755195618,
+              0.15325649082660675,
+              0.1612458974123001,
+              0.17313218116760254,
+              0.1796674132347107,
+              0.1802721470594406,
+              0.21232815086841583,
+              0.2242165356874466,
+              0.2254725694656372,
+              0.22985807061195374,
+              0.23529326915740967,
+              0.23705266416072845,
+              0.265727698802948,
+              0.31979382038116455,
+              0.35987529158592224,
+              0.41289570927619934,
+              0.43497538566589355,
+              0.4492417275905609,
+              0.4911094903945923,
+              1.0
+            ],
+            "sde_gamma": 1.5,
+            "self_cond_cfg_scale": 3.0,
+            "cfg_scale": 1.0,
+            "time_schedule": "logit_normal",
+            "schedule_p_mean": -1.5,
+            "schedule_p_std": 0.8,
+            "seed": 100,
+            "eos_token_id": 1,
+            "pad_token_id": 0,
+            "max_length": 1024
+          },
+          "terminal_rng_cuda": {
+            "sha256": "755c9a028fdaf220cfd26e8fdba4bcd8504774afc1a03bdfba463485c7388d8c",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on_structure": {
+          "step_calls": {
+            "_sde_step": 31,
+            "_ode_step": 1
+          },
+          "forward_calls": {
+            "rollout": 32,
+            "endpoint": 1
+          },
+          "pairing_problems": []
+        },
+        "matches": {
+          "final_latent": true,
+          "raw_endpoint_tokens": true,
+          "masked_public_tokens": true,
+          "terminal_rng_cpu": true,
+          "executed_metadata": true,
+          "terminal_rng_cuda": true
+        },
+        "status": "ok"
+      },
+      "random_calls": {
+        "observed": {
+          "time_grid": 1,
+          "initial_latent": 1,
+          "sde_churn": 31
+        },
+        "expected": {
+          "time_grid": 1,
+          "initial_latent": 1,
+          "sde_churn": 31
+        },
+        "unknown": 0,
+        "total_observed": 33,
+        "total_expected": 33,
+        "matches": true
+      },
+      "status": "ok",
+      "timing_attempted": true,
+      "latency": {
+        "verdict_seconds": 1.044002379057929,
+        "verdict_basis": "instrumentation_off_outer_wall_clock",
+        "off_wall_trials": [
+          1.033111058990471,
+          1.044002379057929,
+          1.046446588006802
+        ],
+        "on_wall_median": 1.0416793359909207,
+        "on_wall_trials": [
+          1.0354232039535418,
+          1.0416793359909207,
+          1.0518398749409243
+        ],
+        "instrumentation_overhead": {
+          "paired_delta_trials": [
+            0.0023121449630707502,
+            -0.002323043067008257,
+            0.005393286934122443
+          ],
+          "median_paired_delta": 0.0023121449630707502,
+          "off_wall_trials": [
+            1.033111058990471,
+            1.044002379057929,
+            1.046446588006802
+          ],
+          "off_trial_spread": 0.013335529016330838,
+          "direction_consistent": false,
+          "resolvable": null,
+          "resolution_status": "not_assessed",
+          "resolution_reason": "the frozen three-trial window is insufficient to estimate the noise floor",
+          "basis": "median of per-trial (on_wall - off_wall), from OFF/ON pairs run adjacently with the order reversed each trial. Descriptive; negative values are left as measured, neither clamped nor reinterpreted"
+        }
+      },
+      "trials": [
+        {
+          "trial": 0,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 1.033111058990471,
+          "on_wall_seconds": 1.0354232039535418,
+          "paired_overhead_seconds": 0.0023121449630707502,
+          "step_calls": {
+            "_sde_step": 31,
+            "_ode_step": 1
+          },
+          "forward_calls": {
+            "rollout": 32,
+            "endpoint": 1
+          }
+        },
+        {
+          "trial": 1,
+          "order": [
+            "on",
+            "off"
+          ],
+          "off_wall_seconds": 1.044002379057929,
+          "on_wall_seconds": 1.0416793359909207,
+          "paired_overhead_seconds": -0.002323043067008257,
+          "step_calls": {
+            "_sde_step": 31,
+            "_ode_step": 1
+          },
+          "forward_calls": {
+            "rollout": 32,
+            "endpoint": 1
+          }
+        },
+        {
+          "trial": 2,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 1.046446588006802,
+          "on_wall_seconds": 1.0518398749409243,
+          "paired_overhead_seconds": 0.005393286934122443,
+          "step_calls": {
+            "_sde_step": 31,
+            "_ode_step": 1
+          },
+          "forward_calls": {
+            "rollout": 32,
+            "endpoint": 1
+          }
+        }
+      ],
+      "peak_memory": {
+        "allocated_bytes_trials": [
+          2825702400,
+          2825702400,
+          2825702400
+        ],
+        "reserved_bytes_trials": [
+          3200253952,
+          3200253952,
+          3200253952
+        ],
+        "max_allocated_bytes": 2825702400,
+        "max_reserved_bytes": 3200253952,
+        "basis": "instrumentation_off_trials"
+      },
+      "events": [
+        {
+          "name": "denoiser_forward",
+          "seconds": 0.9819934730529786,
+          "seconds_trials": [
+            0.9738424377441408,
+            0.9819934730529786,
+            0.9927065601348877
+          ],
+          "share_of_on_wall": 0.9427022684661738,
+          "description": "the rollout model call inside a solver step, attributed by an execution-phase-aware forward hook. Includes the SC-CFG token's own attention/prefix cost, which the frozen protocol does NOT decompose into a separate event. EXCLUDES the endpoint decoder forward."
+        },
+        {
+          "name": "solver_state_update",
+          "seconds": 0.010774179458618173,
+          "seconds_trials": [
+            0.010717149734497073,
+            0.010784982681274414,
+            0.010774179458618173
+          ],
+          "share_of_on_wall": 0.010350501798275267,
+          "description": "everything in a solver step that is not the rollout model call: noise draw, conditional restore and the Euler/SDE update. Computed as a PER-STEP difference (step_inclusive - its own child forward) summed within a trial, never as a difference of medians."
+        },
+        {
+          "name": "endpoint_projection",
+          "seconds": 0.04621311950683594,
+          "seconds_trials": [
+            0.0462479362487793,
+            0.04621311950683594,
+            0.04580966567993164
+          ],
+          "share_of_on_wall": 0.04436405514646662,
+          "description": "the whole of _dlm_decode_batch: the endpoint decoder forward and the argmax. Its model call is recorded here and NOT in denoiser_forward."
+        }
+      ],
+      "audit": {
+        "solver_step_inclusive_seconds_trials": [
+          0.9845595874786377,
+          0.9927784557342529,
+          1.003480739593506
+        ],
+        "solver_state_update_seconds_trials": [
+          0.010717149734497073,
+          0.010784982681274414,
+          0.010774179458618173
+        ],
+        "per_step_exclusive_seconds": [
+          [
+            0.0002938232421875013,
+            0.00034118270874023207,
+            0.0003316802978515637,
+            0.0003403511047363299,
+            0.0003363189697265616,
+            0.0003377285003662092,
+            0.0003311996459960942,
+            0.0003389129638671877,
+            0.0003324813842773451,
+            0.00033977508544921764,
+            0.00033872032165527255,
+            0.0003350715637207048,
+            0.0003391361236572271,
+            0.00033711814880371324,
+            0.00033603096008301067,
+            0.00033884811401367274,
+            0.0003313293457031241,
+            0.00034886360168457156,
+            0.00033724784851074316,
+            0.00034259033203124997,
+            0.00034774398803710804,
+            0.00034092903137206837,
+            0.00033430290222167744,
+            0.000339456558227539,
+            0.0003429756164550768,
+            0.0003414402008056691,
+            0.0003365764617919917,
+            0.00034316825866698847,
+            0.00033910560607910284,
+            0.0003433609008789071,
+            0.00033484840393065846,
+            0.0002648315429687534
+          ],
+          [
+            0.0002989101409912112,
+            0.00033961486816406,
+            0.000332895278930663,
+            0.00033951950073242074,
+            0.0003320007324218756,
+            0.0003396797180175784,
+            0.0003349761962890621,
+            0.0003378562927246094,
+            0.0003374729156494123,
+            0.0003361282348632831,
+            0.00033833503723144573,
+            0.00034278488159179485,
+            0.00033740806579589736,
+            0.00034521484375000036,
+            0.00033763313293457,
+            0.00034678459167480566,
+            0.0003437118530273467,
+            0.0003427829742431651,
+            0.0003370876312255855,
+            0.00035078430175781647,
+            0.00033817481994628806,
+            0.00034694290161132665,
+            0.0003395195007324242,
+            0.0003472633361816385,
+            0.0003471679687499993,
+            0.00034652709960937556,
+            0.00034118270874023554,
+            0.00034470367431641,
+            0.0003391361236572271,
+            0.0003457603454589814,
+            0.0003318710327148422,
+            0.0002651519775390618
+          ],
+          [
+            0.00030073547363280995,
+            0.00034758377075195385,
+            0.0003360633850097647,
+            0.00034275245666504084,
+            0.000334560394287111,
+            0.00033648109436035245,
+            0.00033465576171875025,
+            0.00034860801696777466,
+            0.00033529472351074424,
+            0.0003377265930175795,
+            0.00033702468872070027,
+            0.0003388805389404302,
+            0.00033718490600585793,
+            0.00034428787231445546,
+            0.0003362560272216798,
+            0.00035257720947265425,
+            0.0003451194763183646,
+            0.0003441295623779275,
+            0.00033808135986328203,
+            0.0003438739776611341,
+            0.0003339519500732413,
+            0.00034096145629882585,
+            0.0003374404907226583,
+            0.000340702056884766,
+            0.0003380775451660156,
+            0.0003507499694824223,
+            0.00033977699279785084,
+            0.00034092903137206837,
+            0.000337055206298828,
+            0.00034563255310058466,
+            0.00033619308471680154,
+            0.0002608318328857426
+          ]
+        ],
+        "note": "retained so a later regression to median-of-medians is detectable from the artifact alone: the reported state update must equal the sum of that trial's per-step exclusive values"
+      },
+      "forward_accounting": {
+        "rollout_forward_count": 32,
+        "endpoint_forward_count": 1,
+        "extra_cfg_forward_count": 0,
+        "total_top_level_model_calls": 33,
+        "sc_cfg_token_cost": "included_in_denoiser_forward"
+      },
+      "attribution": {
+        "denominator": "per_trial_on_wall_seconds",
+        "aggregation": "median_of_per_trial_ratios",
+        "coverage_ratio": 0.9974197810622067,
+        "coverage_ratio_trials": [
+          0.9955422283289571,
+          0.9974197810622067,
+          0.9975761808158965
+        ],
+        "coverage_disposition": "descriptive_only",
+        "unattributed_seconds": 0.0026877607498316802,
+        "unattributed_seconds_trials": [
+          0.004615680226124574,
+          0.0026877607498316802,
+          0.0025494696674868145
+        ],
+        "unattributed_note": "mask_after_eos runs after _dlm_decode_batch in the public entry point, so it is inside the outer wall but outside every event span and is deliberately unattributed; fork_rng enter/exit, the time grid and result assembly are likewise unattributed rather than folded into an adjacent event"
+      }
+    },
+    {
+      "steps": 32,
+      "batch_size": 32,
+      "solver": "sde",
+      "sde_gamma": 1.5,
+      "cfg_scale": 1.0,
+      "self_cond_cfg_scale": 3.0,
+      "time_schedule": "logit_normal",
+      "seed": 100,
+      "max_length": 1024,
+      "device_occupancy_before": {
+        "device": "cuda:1",
+        "uuid": "GPU-a0a92b0b-7f00-3cb4-2f3d-5dd28cceaac3",
+        "free_bytes": 49840914432,
+        "total_bytes": 50867404800,
+        "compute_processes": [
+          {
+            "pid": 3940971,
+            "used_mib": 956
+          }
+        ],
+        "foreign_process_count": 0,
+        "source": "nvidia-smi compute-apps scoped by gpu_uuid"
+      },
+      "non_interference": {
+        "off": {
+          "final_latent": {
+            "sha256": "67b1b7aff7549cb4268d46f991ab4c4ce8c20508e5b482e6c4b41423df82d560",
+            "shape": [
+              32,
+              1024,
+              512
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:1"
+          },
+          "raw_endpoint_tokens": {
+            "sha256": "e8950d73b5fa5d897533f96be2d9825bf4473b142c5bdd3eaad09b28f1083163",
+            "shape": [
+              32,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "masked_public_tokens": {
+            "sha256": "49c428c7ba64398b76b087cd1c8b130e7ea743e97b9441ed7717c9aaedd98efb",
+            "shape": [
+              32,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed_metadata": {
+            "solver": "sde",
+            "steps_requested": 32,
+            "steps_executed": 32,
+            "nfe": 32,
+            "t_grid": [
+              0.0,
+              0.026127193123102188,
+              0.035730887204408646,
+              0.06305988878011703,
+              0.0690842792391777,
+              0.07385404407978058,
+              0.07997187227010727,
+              0.08524680137634277,
+              0.10452447086572647,
+              0.12253063172101974,
+              0.13394269347190857,
+              0.13742710649967194,
+              0.14114470779895782,
+              0.14469745755195618,
+              0.15325649082660675,
+              0.1612458974123001,
+              0.17313218116760254,
+              0.1796674132347107,
+              0.1802721470594406,
+              0.21232815086841583,
+              0.2242165356874466,
+              0.2254725694656372,
+              0.22985807061195374,
+              0.23529326915740967,
+              0.23705266416072845,
+              0.265727698802948,
+              0.31979382038116455,
+              0.35987529158592224,
+              0.41289570927619934,
+              0.43497538566589355,
+              0.4492417275905609,
+              0.4911094903945923,
+              1.0
+            ],
+            "sde_gamma": 1.5,
+            "self_cond_cfg_scale": 3.0,
+            "cfg_scale": 1.0,
+            "time_schedule": "logit_normal",
+            "schedule_p_mean": -1.5,
+            "schedule_p_std": 0.8,
+            "seed": 100,
+            "eos_token_id": 1,
+            "pad_token_id": 0,
+            "max_length": 1024
+          },
+          "terminal_rng_cuda": {
+            "sha256": "f7caf6596363166c9954ae7dc3c0d2f7cac58b6a6c359044c88688674a714553",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on": {
+          "final_latent": {
+            "sha256": "67b1b7aff7549cb4268d46f991ab4c4ce8c20508e5b482e6c4b41423df82d560",
+            "shape": [
+              32,
+              1024,
+              512
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:1"
+          },
+          "raw_endpoint_tokens": {
+            "sha256": "e8950d73b5fa5d897533f96be2d9825bf4473b142c5bdd3eaad09b28f1083163",
+            "shape": [
+              32,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "masked_public_tokens": {
+            "sha256": "49c428c7ba64398b76b087cd1c8b130e7ea743e97b9441ed7717c9aaedd98efb",
+            "shape": [
+              32,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed_metadata": {
+            "solver": "sde",
+            "steps_requested": 32,
+            "steps_executed": 32,
+            "nfe": 32,
+            "t_grid": [
+              0.0,
+              0.026127193123102188,
+              0.035730887204408646,
+              0.06305988878011703,
+              0.0690842792391777,
+              0.07385404407978058,
+              0.07997187227010727,
+              0.08524680137634277,
+              0.10452447086572647,
+              0.12253063172101974,
+              0.13394269347190857,
+              0.13742710649967194,
+              0.14114470779895782,
+              0.14469745755195618,
+              0.15325649082660675,
+              0.1612458974123001,
+              0.17313218116760254,
+              0.1796674132347107,
+              0.1802721470594406,
+              0.21232815086841583,
+              0.2242165356874466,
+              0.2254725694656372,
+              0.22985807061195374,
+              0.23529326915740967,
+              0.23705266416072845,
+              0.265727698802948,
+              0.31979382038116455,
+              0.35987529158592224,
+              0.41289570927619934,
+              0.43497538566589355,
+              0.4492417275905609,
+              0.4911094903945923,
+              1.0
+            ],
+            "sde_gamma": 1.5,
+            "self_cond_cfg_scale": 3.0,
+            "cfg_scale": 1.0,
+            "time_schedule": "logit_normal",
+            "schedule_p_mean": -1.5,
+            "schedule_p_std": 0.8,
+            "seed": 100,
+            "eos_token_id": 1,
+            "pad_token_id": 0,
+            "max_length": 1024
+          },
+          "terminal_rng_cuda": {
+            "sha256": "f7caf6596363166c9954ae7dc3c0d2f7cac58b6a6c359044c88688674a714553",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on_structure": {
+          "step_calls": {
+            "_sde_step": 31,
+            "_ode_step": 1
+          },
+          "forward_calls": {
+            "rollout": 32,
+            "endpoint": 1
+          },
+          "pairing_problems": []
+        },
+        "matches": {
+          "final_latent": true,
+          "raw_endpoint_tokens": true,
+          "masked_public_tokens": true,
+          "terminal_rng_cpu": true,
+          "executed_metadata": true,
+          "terminal_rng_cuda": true
+        },
+        "status": "ok"
+      },
+      "random_calls": {
+        "observed": {
+          "time_grid": 1,
+          "initial_latent": 1,
+          "sde_churn": 31
+        },
+        "expected": {
+          "time_grid": 1,
+          "initial_latent": 1,
+          "sde_churn": 31
+        },
+        "unknown": 0,
+        "total_observed": 33,
+        "total_expected": 33,
+        "matches": true
+      },
+      "status": "ok",
+      "timing_attempted": true,
+      "latency": {
+        "verdict_seconds": 5.058366455021314,
+        "verdict_basis": "instrumentation_off_outer_wall_clock",
+        "off_wall_trials": [
+          5.088397306972183,
+          5.053650985006243,
+          5.058366455021314
+        ],
+        "on_wall_median": 5.063804722041823,
+        "on_wall_trials": [
+          5.073839116026647,
+          5.063804722041823,
+          5.051028037909418
+        ],
+        "instrumentation_overhead": {
+          "paired_delta_trials": [
+            -0.014558190945535898,
+            0.01015373703557998,
+            -0.0073384171118959785
+          ],
+          "median_paired_delta": -0.0073384171118959785,
+          "off_wall_trials": [
+            5.088397306972183,
+            5.053650985006243,
+            5.058366455021314
+          ],
+          "off_trial_spread": 0.0347463219659403,
+          "direction_consistent": false,
+          "resolvable": null,
+          "resolution_status": "not_assessed",
+          "resolution_reason": "the frozen three-trial window is insufficient to estimate the noise floor",
+          "basis": "median of per-trial (on_wall - off_wall), from OFF/ON pairs run adjacently with the order reversed each trial. Descriptive; negative values are left as measured, neither clamped nor reinterpreted"
+        }
+      },
+      "trials": [
+        {
+          "trial": 0,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 5.088397306972183,
+          "on_wall_seconds": 5.073839116026647,
+          "paired_overhead_seconds": -0.014558190945535898,
+          "step_calls": {
+            "_sde_step": 31,
+            "_ode_step": 1
+          },
+          "forward_calls": {
+            "rollout": 32,
+            "endpoint": 1
+          }
+        },
+        {
+          "trial": 1,
+          "order": [
+            "on",
+            "off"
+          ],
+          "off_wall_seconds": 5.053650985006243,
+          "on_wall_seconds": 5.063804722041823,
+          "paired_overhead_seconds": 0.01015373703557998,
+          "step_calls": {
+            "_sde_step": 31,
+            "_ode_step": 1
+          },
+          "forward_calls": {
+            "rollout": 32,
+            "endpoint": 1
+          }
+        },
+        {
+          "trial": 2,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 5.058366455021314,
+          "on_wall_seconds": 5.051028037909418,
+          "paired_overhead_seconds": -0.0073384171118959785,
+          "step_calls": {
+            "_sde_step": 31,
+            "_ode_step": 1
+          },
+          "forward_calls": {
+            "rollout": 32,
+            "endpoint": 1
+          }
+        }
+      ],
+      "peak_memory": {
+        "allocated_bytes_trials": [
+          9459272704,
+          9459272704,
+          9459272704
+        ],
+        "reserved_bytes_trials": [
+          10905190400,
+          10905190400,
+          10905190400
+        ],
+        "max_allocated_bytes": 9459272704,
+        "max_reserved_bytes": 10905190400,
+        "basis": "instrumentation_off_trials"
+      },
+      "events": [
+        {
+          "name": "denoiser_forward",
+          "seconds": 4.768080871582031,
+          "seconds_trials": [
+            4.779881500244143,
+            4.768080871582031,
+            4.756311019897461
+          ],
+          "share_of_on_wall": 0.9416520724494061,
+          "description": "the rollout model call inside a solver step, attributed by an execution-phase-aware forward hook. Includes the SC-CFG token's own attention/prefix cost, which the frozen protocol does NOT decompose into a separate event. EXCLUDES the endpoint decoder forward."
+        },
+        {
+          "name": "solver_state_update",
+          "seconds": 0.0747348327636719,
+          "seconds_trials": [
+            0.0747348327636719,
+            0.07478697204589846,
+            0.07459619140624998
+          ],
+          "share_of_on_wall": 0.014768516596301606,
+          "description": "everything in a solver step that is not the rollout model call: noise draw, conditional restore and the Euler/SDE update. Computed as a PER-STEP difference (step_inclusive - its own child forward) summed within a trial, never as a difference of medians."
+        },
+        {
+          "name": "endpoint_projection",
+          "seconds": 0.2152939453125,
+          "seconds_trials": [
+            0.21472665405273436,
+            0.21543833923339845,
+            0.2152939453125
+          ],
+          "share_of_on_wall": 0.04254475657318191,
+          "description": "the whole of _dlm_decode_batch: the endpoint decoder forward and the argmax. Its model call is recorded here and NOT in denoiser_forward."
+        }
+      ],
+      "audit": {
+        "solver_step_inclusive_seconds_trials": [
+          4.8546163330078125,
+          4.842867843627929,
+          4.830907211303711
+        ],
+        "solver_state_update_seconds_trials": [
+          0.0747348327636719,
+          0.07478697204589846,
+          0.07459619140624998
+        ],
+        "per_step_exclusive_seconds": [
+          [
+            0.002351486206054687,
+            0.0023574676513671844,
+            0.0023934783935546655,
+            0.002354217529296876,
+            0.00237635803222655,
+            0.0023518066406250093,
+            0.0023702697753906488,
+            0.002370681762695309,
+            0.0023613739013671753,
+            0.0023558349609374973,
+            0.0023629150390624964,
+            0.0023717651367187453,
+            0.0023748474121093877,
+            0.0023563842773437482,
+            0.0023785858154297124,
+            0.0023521423339843694,
+            0.002360961914062515,
+            0.002358108520507829,
+            0.0023643798828125173,
+            0.0023451843261718675,
+            0.0023967895507812365,
+            0.002364776611328112,
+            0.002359069824218768,
+            0.002346618652343757,
+            0.0023437194824218743,
+            0.0023485412597656075,
+            0.0023741455078125084,
+            0.002346664428710954,
+            0.0023753204345703105,
+            0.002357437133789053,
+            0.0023756408691406328,
+            0.0014778594970702996
+          ],
+          [
+            0.0023472290039062704,
+            0.002353958129882816,
+            0.00235472106933593,
+            0.002350234985351557,
+            0.0023715515136718823,
+            0.002367004394531247,
+            0.002376266479492184,
+            0.0023495788574218746,
+            0.002356613159179677,
+            0.002352035522460938,
+            0.002371109008789063,
+            0.002357696533203113,
+            0.002379364013671892,
+            0.0023601989746093732,
+            0.002386245727539066,
+            0.002350234985351557,
+            0.0023676605224609293,
+            0.0023643798828125173,
+            0.0023725891113281217,
+            0.0023768310546875004,
+            0.002370178222656255,
+            0.002353286743164068,
+            0.002389556884765609,
+            0.0023636779785156103,
+            0.002358276367187495,
+            0.0023574676513671844,
+            0.002367080688476575,
+            0.0023638610839843976,
+            0.0023648681640625058,
+            0.0023566741943359393,
+            0.0023670654296875093,
+            0.0015094757080078014
+          ],
+          [
+            0.0023462677001953036,
+            0.00234591674804685,
+            0.002369476318359376,
+            0.002373214721679673,
+            0.0023793945312499953,
+            0.002356262207031251,
+            0.0023553619384765745,
+            0.002345657348632818,
+            0.0023684539794921744,
+            0.0023580017089843697,
+            0.002361846923828126,
+            0.002359451293945325,
+            0.0023753051757812726,
+            0.0023478088378906248,
+            0.002344223022460956,
+            0.002339492797851561,
+            0.002369857788085933,
+            0.0023423614501953127,
+            0.002378143310546893,
+            0.0023549041748046895,
+            0.002371520996093751,
+            0.002345413208007824,
+            0.0023565826416015734,
+            0.0023570556640624962,
+            0.0023603515625000016,
+            0.0023674926757812353,
+            0.002364700317382812,
+            0.002359756469726554,
+            0.002354080200195313,
+            0.0023443450927734255,
+            0.002361511230468738,
+            0.0014819793701171813
+          ]
+        ],
+        "note": "retained so a later regression to median-of-medians is detectable from the artifact alone: the reported state update must equal the sum of that trial's per-step exclusive values"
+      },
+      "forward_accounting": {
+        "rollout_forward_count": 32,
+        "endpoint_forward_count": 1,
+        "extra_cfg_forward_count": 0,
+        "total_top_level_model_calls": 33,
+        "sc_cfg_token_cost": "included_in_denoiser_forward"
+      },
+      "attribution": {
+        "denominator": "per_trial_on_wall_seconds",
+        "aggregation": "median_of_per_trial_ratios",
+        "coverage_ratio": 0.9990443764602016,
+        "coverage_ratio_trials": [
+          0.9991138605574038,
+          0.9989141486525811,
+          0.9990443764602016
+        ],
+        "coverage_disposition": "descriptive_only",
+        "unattributed_seconds": 0.004826881293207741,
+        "unattributed_seconds_trials": [
+          0.004496128966098745,
+          0.005498539180495143,
+          0.004826881293207741
+        ],
+        "unattributed_note": "mask_after_eos runs after _dlm_decode_batch in the public entry point, so it is inside the outer wall but outside every event span and is deliberately unattributed; fork_rng enter/exit, the time grid and result assembly are likewise unattributed rather than folded into an adjacent event"
+      }
+    },
+    {
+      "steps": 64,
+      "batch_size": 1,
+      "solver": "sde",
+      "sde_gamma": 1.0,
+      "cfg_scale": 1.0,
+      "self_cond_cfg_scale": 3.0,
+      "time_schedule": "logit_normal",
+      "seed": 100,
+      "max_length": 1024,
+      "device_occupancy_before": {
+        "device": "cuda:1",
+        "uuid": "GPU-a0a92b0b-7f00-3cb4-2f3d-5dd28cceaac3",
+        "free_bytes": 49840914432,
+        "total_bytes": 50867404800,
+        "compute_processes": [
+          {
+            "pid": 3940971,
+            "used_mib": 956
+          }
+        ],
+        "foreign_process_count": 0,
+        "source": "nvidia-smi compute-apps scoped by gpu_uuid"
+      },
+      "non_interference": {
+        "off": {
+          "final_latent": {
+            "sha256": "7ee5123c817b5a98ad54b07ecdc7cd51467359d4006f34201cae0f78e10a0eb1",
+            "shape": [
+              1,
+              1024,
+              512
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:1"
+          },
+          "raw_endpoint_tokens": {
+            "sha256": "cd7d139dc6c1eae0260a590cd64e0fc8fc5d405cb9cc52cb392dc24794c42fcf",
+            "shape": [
+              1,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "masked_public_tokens": {
+            "sha256": "bbcedf39ff98b8814ba6f476597d1a56ec24e99197b5d7a28a42191fb6cf52a5",
+            "shape": [
+              1,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed_metadata": {
+            "solver": "sde",
+            "steps_requested": 64,
+            "steps_executed": 64,
+            "nfe": 64,
+            "t_grid": [
+              0.0,
+              0.026127193123102188,
+              0.02813299372792244,
+              0.035730887204408646,
+              0.06305988878011703,
+              0.0690842792391777,
+              0.07128185778856277,
+              0.07385404407978058,
+              0.0762999877333641,
+              0.07835214585065842,
+              0.07997187227010727,
+              0.08210651576519012,
+              0.0842476487159729,
+              0.08524680137634277,
+              0.10452447086572647,
+              0.108139269053936,
+              0.11409135907888412,
+              0.12154626846313477,
+              0.12171777337789536,
+              0.12253063172101974,
+              0.12919938564300537,
+              0.12978455424308777,
+              0.13394269347190857,
+              0.13742710649967194,
+              0.14114470779895782,
+              0.1424504518508911,
+              0.14307521283626556,
+              0.14414222538471222,
+              0.14469745755195618,
+              0.152604877948761,
+              0.15325649082660675,
+              0.1602635383605957,
+              0.1612458974123001,
+              0.17313218116760254,
+              0.1796674132347107,
+              0.1802721470594406,
+              0.1920647919178009,
+              0.2053154557943344,
+              0.2071622610092163,
+              0.21165010333061218,
+              0.21232815086841583,
+              0.21810156106948853,
+              0.2242165356874466,
+              0.2254725694656372,
+              0.22985807061195374,
+              0.23529326915740967,
+              0.23705266416072845,
+              0.24923962354660034,
+              0.265727698802948,
+              0.2841568887233734,
+              0.2974908649921417,
+              0.31429120898246765,
+              0.31979382038116455,
+              0.32371383905410767,
+              0.3333670198917389,
+              0.3475886285305023,
+              0.35987529158592224,
+              0.41289570927619934,
+              0.4329385459423065,
+              0.43497538566589355,
+              0.4492417275905609,
+              0.4623699486255646,
+              0.4911094903945923,
+              0.4984027147293091,
+              1.0
+            ],
+            "sde_gamma": 1.0,
+            "self_cond_cfg_scale": 3.0,
+            "cfg_scale": 1.0,
+            "time_schedule": "logit_normal",
+            "schedule_p_mean": -1.5,
+            "schedule_p_std": 0.8,
+            "seed": 100,
+            "eos_token_id": 1,
+            "pad_token_id": 0,
+            "max_length": 1024
+          },
+          "terminal_rng_cuda": {
+            "sha256": "64a938e0f7b807e15741b9e496dd0bef53c5bcefceb8fde0cc6d051f3582f58e",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on": {
+          "final_latent": {
+            "sha256": "7ee5123c817b5a98ad54b07ecdc7cd51467359d4006f34201cae0f78e10a0eb1",
+            "shape": [
+              1,
+              1024,
+              512
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:1"
+          },
+          "raw_endpoint_tokens": {
+            "sha256": "cd7d139dc6c1eae0260a590cd64e0fc8fc5d405cb9cc52cb392dc24794c42fcf",
+            "shape": [
+              1,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "masked_public_tokens": {
+            "sha256": "bbcedf39ff98b8814ba6f476597d1a56ec24e99197b5d7a28a42191fb6cf52a5",
+            "shape": [
+              1,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed_metadata": {
+            "solver": "sde",
+            "steps_requested": 64,
+            "steps_executed": 64,
+            "nfe": 64,
+            "t_grid": [
+              0.0,
+              0.026127193123102188,
+              0.02813299372792244,
+              0.035730887204408646,
+              0.06305988878011703,
+              0.0690842792391777,
+              0.07128185778856277,
+              0.07385404407978058,
+              0.0762999877333641,
+              0.07835214585065842,
+              0.07997187227010727,
+              0.08210651576519012,
+              0.0842476487159729,
+              0.08524680137634277,
+              0.10452447086572647,
+              0.108139269053936,
+              0.11409135907888412,
+              0.12154626846313477,
+              0.12171777337789536,
+              0.12253063172101974,
+              0.12919938564300537,
+              0.12978455424308777,
+              0.13394269347190857,
+              0.13742710649967194,
+              0.14114470779895782,
+              0.1424504518508911,
+              0.14307521283626556,
+              0.14414222538471222,
+              0.14469745755195618,
+              0.152604877948761,
+              0.15325649082660675,
+              0.1602635383605957,
+              0.1612458974123001,
+              0.17313218116760254,
+              0.1796674132347107,
+              0.1802721470594406,
+              0.1920647919178009,
+              0.2053154557943344,
+              0.2071622610092163,
+              0.21165010333061218,
+              0.21232815086841583,
+              0.21810156106948853,
+              0.2242165356874466,
+              0.2254725694656372,
+              0.22985807061195374,
+              0.23529326915740967,
+              0.23705266416072845,
+              0.24923962354660034,
+              0.265727698802948,
+              0.2841568887233734,
+              0.2974908649921417,
+              0.31429120898246765,
+              0.31979382038116455,
+              0.32371383905410767,
+              0.3333670198917389,
+              0.3475886285305023,
+              0.35987529158592224,
+              0.41289570927619934,
+              0.4329385459423065,
+              0.43497538566589355,
+              0.4492417275905609,
+              0.4623699486255646,
+              0.4911094903945923,
+              0.4984027147293091,
+              1.0
+            ],
+            "sde_gamma": 1.0,
+            "self_cond_cfg_scale": 3.0,
+            "cfg_scale": 1.0,
+            "time_schedule": "logit_normal",
+            "schedule_p_mean": -1.5,
+            "schedule_p_std": 0.8,
+            "seed": 100,
+            "eos_token_id": 1,
+            "pad_token_id": 0,
+            "max_length": 1024
+          },
+          "terminal_rng_cuda": {
+            "sha256": "64a938e0f7b807e15741b9e496dd0bef53c5bcefceb8fde0cc6d051f3582f58e",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on_structure": {
+          "step_calls": {
+            "_sde_step": 63,
+            "_ode_step": 1
+          },
+          "forward_calls": {
+            "rollout": 64,
+            "endpoint": 1
+          },
+          "pairing_problems": []
+        },
+        "matches": {
+          "final_latent": true,
+          "raw_endpoint_tokens": true,
+          "masked_public_tokens": true,
+          "terminal_rng_cpu": true,
+          "executed_metadata": true,
+          "terminal_rng_cuda": true
+        },
+        "status": "ok"
+      },
+      "random_calls": {
+        "observed": {
+          "time_grid": 1,
+          "initial_latent": 1,
+          "sde_churn": 63
+        },
+        "expected": {
+          "time_grid": 1,
+          "initial_latent": 1,
+          "sde_churn": 63
+        },
+        "unknown": 0,
+        "total_observed": 65,
+        "total_expected": 65,
+        "matches": true
+      },
+      "status": "ok",
+      "timing_attempted": true,
+      "latency": {
+        "verdict_seconds": 0.46659936395008117,
+        "verdict_basis": "instrumentation_off_outer_wall_clock",
+        "off_wall_trials": [
+          0.4576053279452026,
+          0.4731670069741085,
+          0.46659936395008117
+        ],
+        "on_wall_median": 0.47628279600758106,
+        "on_wall_trials": [
+          0.47628279600758106,
+          0.48537211306393147,
+          0.47167967597488314
+        ],
+        "instrumentation_overhead": {
+          "paired_delta_trials": [
+            0.018677468062378466,
+            0.012205106089822948,
+            0.0050803120248019695
+          ],
+          "median_paired_delta": 0.012205106089822948,
+          "off_wall_trials": [
+            0.4576053279452026,
+            0.4731670069741085,
+            0.46659936395008117
+          ],
+          "off_trial_spread": 0.015561679028905928,
+          "direction_consistent": true,
+          "resolvable": null,
+          "resolution_status": "not_assessed",
+          "resolution_reason": "the frozen three-trial window is insufficient to estimate the noise floor",
+          "basis": "median of per-trial (on_wall - off_wall), from OFF/ON pairs run adjacently with the order reversed each trial. Descriptive; negative values are left as measured, neither clamped nor reinterpreted"
+        }
+      },
+      "trials": [
+        {
+          "trial": 0,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 0.4576053279452026,
+          "on_wall_seconds": 0.47628279600758106,
+          "paired_overhead_seconds": 0.018677468062378466,
+          "step_calls": {
+            "_sde_step": 63,
+            "_ode_step": 1
+          },
+          "forward_calls": {
+            "rollout": 64,
+            "endpoint": 1
+          }
+        },
+        {
+          "trial": 1,
+          "order": [
+            "on",
+            "off"
+          ],
+          "off_wall_seconds": 0.4731670069741085,
+          "on_wall_seconds": 0.48537211306393147,
+          "paired_overhead_seconds": 0.012205106089822948,
+          "step_calls": {
+            "_sde_step": 63,
+            "_ode_step": 1
+          },
+          "forward_calls": {
+            "rollout": 64,
+            "endpoint": 1
+          }
+        },
+        {
+          "trial": 2,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 0.46659936395008117,
+          "on_wall_seconds": 0.47167967597488314,
+          "paired_overhead_seconds": 0.0050803120248019695,
+          "step_calls": {
+            "_sde_step": 63,
+            "_ode_step": 1
+          },
+          "forward_calls": {
+            "rollout": 64,
+            "endpoint": 1
+          }
+        }
+      ],
+      "peak_memory": {
+        "allocated_bytes_trials": [
+          885070848,
+          885070848,
+          885070848
+        ],
+        "reserved_bytes_trials": [
+          950009856,
+          950009856,
+          950009856
+        ],
+        "max_allocated_bytes": 885070848,
+        "max_reserved_bytes": 950009856,
+        "basis": "instrumentation_off_trials"
+      },
+      "events": [
+        {
+          "name": "denoiser_forward",
+          "seconds": 0.44200710439682006,
+          "seconds_trials": [
+            0.44200710439682006,
+            0.4523670067787169,
+            0.4389649591445923
+          ],
+          "share_of_on_wall": 0.930642089331759,
+          "description": "the rollout model call inside a solver step, attributed by an execution-phase-aware forward hook. Includes the SC-CFG token's own attention/prefix cost, which the frozen protocol does NOT decompose into a separate event. EXCLUDES the endpoint decoder forward."
+        },
+        {
+          "name": "solver_state_update",
+          "seconds": 0.018468385696411134,
+          "seconds_trials": [
+            0.018399744510650632,
+            0.01873616218566895,
+            0.018468385696411134
+          ],
+          "share_of_on_wall": 0.038631973829173875,
+          "description": "everything in a solver step that is not the rollout model call: noise draw, conditional restore and the Euler/SDE update. Computed as a PER-STEP difference (step_inclusive - its own child forward) summed within a trial, never as a difference of medians."
+        },
+        {
+          "name": "endpoint_projection",
+          "seconds": 0.009170880317687988,
+          "seconds_trials": [
+            0.00929587173461914,
+            0.009145343780517578,
+            0.009170880317687988
+          ],
+          "share_of_on_wall": 0.019443026241767383,
+          "description": "the whole of _dlm_decode_batch: the endpoint decoder forward and the argmax. Its model call is recorded here and NOT in denoiser_forward."
+        }
+      ],
+      "audit": {
+        "solver_step_inclusive_seconds_trials": [
+          0.4604068489074707,
+          0.471103168964386,
+          0.4574333448410034
+        ],
+        "solver_state_update_seconds_trials": [
+          0.018399744510650632,
+          0.01873616218566895,
+          0.018468385696411134
+        ],
+        "per_step_exclusive_seconds": [
+          [
+            0.0003038082122802724,
+            0.0002930879592895506,
+            0.0002916159629821778,
+            0.0002909116744995114,
+            0.0002890563011169432,
+            0.00028342390060424796,
+            0.00027043199539184513,
+            0.00026886415481567304,
+            0.00027449607849121087,
+            0.00026943969726562524,
+            0.00025491237640380866,
+            0.0002546238899230951,
+            0.00027980804443359427,
+            0.0002903037071228026,
+            0.0002924799919128418,
+            0.00029564762115478517,
+            0.000303072452545166,
+            0.000291872024536133,
+            0.0003038721084594725,
+            0.0002911677360534666,
+            0.00028611183166503927,
+            0.0002915520668029777,
+            0.00029452800750732425,
+            0.0002936959266662594,
+            0.00027987194061279263,
+            0.00028236818313598627,
+            0.0002826881408691407,
+            0.0002904639244079585,
+            0.00029148769378662103,
+            0.0002925763130187985,
+            0.00029663991928100594,
+            0.0002889919281005857,
+            0.0002966718673706051,
+            0.00029033613204956094,
+            0.0002954559326171875,
+            0.0002928318977355954,
+            0.0002908163070678713,
+            0.00028518438339233433,
+            0.0002878723144531248,
+            0.00029436826705932576,
+            0.00029423999786376987,
+            0.0002991995811462405,
+            0.00030169630050659157,
+            0.00029766368865966845,
+            0.00029705619812011707,
+            0.00029516839981079054,
+            0.00029119968414306665,
+            0.0002874879837036128,
+            0.0002883520126342777,
+            0.00029158401489257774,
+            0.0002929277420043947,
+            0.00029491186141967704,
+            0.0002993917465209965,
+            0.0002947521209716794,
+            0.0002875518798828129,
+            0.0002881922721862792,
+            0.0002866883277893072,
+            0.0002912635803222659,
+            0.0002765440940856933,
+            0.00027129602432251,
+            0.000279488086700439,
+            0.00028054380416870067,
+            0.000293600082397461,
+            0.00022153615951538055
+          ],
+          [
+            0.0003016643524169915,
+            0.0002981762886047363,
+            0.00029264020919799773,
+            0.0002917122840881345,
+            0.00030115175247192455,
+            0.00029888010025024437,
+            0.0002995524406433107,
+            0.00029583978652954115,
+            0.0002892484664916992,
+            0.00029731178283691397,
+            0.00029593563079833955,
+            0.0002954239845275883,
+            0.00029196786880493226,
+            0.00029347181320190426,
+            0.00029478406906127946,
+            0.000297119617462158,
+            0.00029753589630127,
+            0.0003021759986877445,
+            0.0002895684242248536,
+            0.0002953596115112308,
+            0.00029321622848510736,
+            0.00029481601715087864,
+            0.00029612827301025383,
+            0.0002953600883483882,
+            0.00030044794082641647,
+            0.00029312038421630895,
+            0.00028419208526611357,
+            0.00028563213348388634,
+            0.00029609584808349635,
+            0.0002950081825256355,
+            0.0002974720001220699,
+            0.00030291175842285176,
+            0.00029251194000244184,
+            0.00029008007049560573,
+            0.00029446411132812503,
+            0.0002969279289245612,
+            0.00029804801940917953,
+            0.0003032317161560062,
+            0.00029760026931762665,
+            0.0002939200401306146,
+            0.00028851222991943364,
+            0.0002959361076354987,
+            0.0002907199859619146,
+            0.000291039943695069,
+            0.0002877440452575689,
+            0.0002962560653686523,
+            0.0002911038398742674,
+            0.00027635192871093735,
+            0.000294239997863769,
+            0.00029113626480102486,
+            0.00029103994369506815,
+            0.0002922558784484858,
+            0.0002864642143249512,
+            0.0002795519828796382,
+            0.00029366397857666024,
+            0.0002979202270507811,
+            0.00030435228347778284,
+            0.00029507207870483384,
+            0.00028428792953491197,
+            0.00028342390060424796,
+            0.0002931199073791498,
+            0.00029494380950927795,
+            0.00029392004013061544,
+            0.00022240018844604543
+          ],
+          [
+            0.0004218239784240718,
+            0.00029532814025878904,
+            0.0002963199615478515,
+            0.0002853755950927737,
+            0.0002669119834899907,
+            0.0002668800354003907,
+            0.0002665281295776362,
+            0.0002626562118530273,
+            0.00028047990798950144,
+            0.00027871990203857423,
+            0.0002678079605102539,
+            0.00027897596359252944,
+            0.00026918411254882747,
+            0.0002797760963439942,
+            0.0002780799865722654,
+            0.0002639679908752442,
+            0.0002596797943115233,
+            0.0002718076705932621,
+            0.00028777599334716807,
+            0.00028822422027587925,
+            0.00031017589569091834,
+            0.00029753589630127,
+            0.00027968025207519495,
+            0.00027993583679199185,
+            0.000281440258026123,
+            0.0002717761993408204,
+            0.0002834877967834472,
+            0.00030326414108276366,
+            0.00029724788665771475,
+            0.0002959680557250979,
+            0.0002791042327880862,
+            0.0002807679176330567,
+            0.00029987192153930683,
+            0.00029004812240600655,
+            0.00029209613800048814,
+            0.00029622364044189393,
+            0.00029852819442749076,
+            0.00029024028778076166,
+            0.0002924480438232426,
+            0.00029830408096313474,
+            0.0002922878265380858,
+            0.0002923841476440434,
+            0.0002818241119384767,
+            0.00029174423217773453,
+            0.0002964162826538082,
+            0.00029196786880493226,
+            0.00027964782714843747,
+            0.00027756786346435497,
+            0.00029776000976562515,
+            0.00027903985977172866,
+            0.00028332805633544955,
+            0.00029776000976562515,
+            0.0002982401847839355,
+            0.0003112001419067383,
+            0.00029977607727050756,
+            0.0002975678443908692,
+            0.00030511999130249014,
+            0.00030054378509521487,
+            0.0002974081039428707,
+            0.0002954564094543458,
+            0.0003004484176635739,
+            0.00029488039016723616,
+            0.00029958391189575245,
+            0.0002219839096069343
+          ]
+        ],
+        "note": "retained so a later regression to median-of-medians is detectable from the artifact alone: the reported state update must equal the sum of that trial's per-step exclusive values"
+      },
+      "forward_accounting": {
+        "rollout_forward_count": 64,
+        "endpoint_forward_count": 1,
+        "extra_cfg_forward_count": 0,
+        "total_top_level_model_calls": 65,
+        "sc_cfg_token_cost": "included_in_denoiser_forward"
+      },
+      "attribution": {
+        "denominator": "per_trial_on_wall_seconds",
+        "aggregation": "median_of_per_trial_ratios",
+        "coverage_ratio": 0.9892396236795626,
+        "coverage_ratio_trials": [
+          0.9861845201618694,
+          0.9894439746719582,
+          0.9892396236795626
+        ],
+        "coverage_disposition": "descriptive_only",
+        "unattributed_seconds": 0.005123600319028032,
+        "unattributed_seconds_trials": [
+          0.006580075365491211,
+          0.005123600319028032,
+          0.005075450816191707
+        ],
+        "unattributed_note": "mask_after_eos runs after _dlm_decode_batch in the public entry point, so it is inside the outer wall but outside every event span and is deliberately unattributed; fork_rng enter/exit, the time grid and result assembly are likewise unattributed rather than folded into an adjacent event"
+      }
+    },
+    {
+      "steps": 64,
+      "batch_size": 8,
+      "solver": "sde",
+      "sde_gamma": 1.0,
+      "cfg_scale": 1.0,
+      "self_cond_cfg_scale": 3.0,
+      "time_schedule": "logit_normal",
+      "seed": 100,
+      "max_length": 1024,
+      "device_occupancy_before": {
+        "device": "cuda:1",
+        "uuid": "GPU-a0a92b0b-7f00-3cb4-2f3d-5dd28cceaac3",
+        "free_bytes": 49840914432,
+        "total_bytes": 50867404800,
+        "compute_processes": [
+          {
+            "pid": 3940971,
+            "used_mib": 956
+          }
+        ],
+        "foreign_process_count": 0,
+        "source": "nvidia-smi compute-apps scoped by gpu_uuid"
+      },
+      "non_interference": {
+        "off": {
+          "final_latent": {
+            "sha256": "9ed34e2123c25a2278e63557170ba4bdb50f514288b003c583b0de79778df636",
+            "shape": [
+              8,
+              1024,
+              512
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:1"
+          },
+          "raw_endpoint_tokens": {
+            "sha256": "61c467fa8026226a1d2cdc9b285ec41afbbf9ff1eb8097c60a508d5e67c8a0a9",
+            "shape": [
+              8,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "masked_public_tokens": {
+            "sha256": "9e62a39ee4a90fe9a68f5278a939d1c46b744682b10503b3a177e04022fe45ba",
+            "shape": [
+              8,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed_metadata": {
+            "solver": "sde",
+            "steps_requested": 64,
+            "steps_executed": 64,
+            "nfe": 64,
+            "t_grid": [
+              0.0,
+              0.026127193123102188,
+              0.02813299372792244,
+              0.035730887204408646,
+              0.06305988878011703,
+              0.0690842792391777,
+              0.07128185778856277,
+              0.07385404407978058,
+              0.0762999877333641,
+              0.07835214585065842,
+              0.07997187227010727,
+              0.08210651576519012,
+              0.0842476487159729,
+              0.08524680137634277,
+              0.10452447086572647,
+              0.108139269053936,
+              0.11409135907888412,
+              0.12154626846313477,
+              0.12171777337789536,
+              0.12253063172101974,
+              0.12919938564300537,
+              0.12978455424308777,
+              0.13394269347190857,
+              0.13742710649967194,
+              0.14114470779895782,
+              0.1424504518508911,
+              0.14307521283626556,
+              0.14414222538471222,
+              0.14469745755195618,
+              0.152604877948761,
+              0.15325649082660675,
+              0.1602635383605957,
+              0.1612458974123001,
+              0.17313218116760254,
+              0.1796674132347107,
+              0.1802721470594406,
+              0.1920647919178009,
+              0.2053154557943344,
+              0.2071622610092163,
+              0.21165010333061218,
+              0.21232815086841583,
+              0.21810156106948853,
+              0.2242165356874466,
+              0.2254725694656372,
+              0.22985807061195374,
+              0.23529326915740967,
+              0.23705266416072845,
+              0.24923962354660034,
+              0.265727698802948,
+              0.2841568887233734,
+              0.2974908649921417,
+              0.31429120898246765,
+              0.31979382038116455,
+              0.32371383905410767,
+              0.3333670198917389,
+              0.3475886285305023,
+              0.35987529158592224,
+              0.41289570927619934,
+              0.4329385459423065,
+              0.43497538566589355,
+              0.4492417275905609,
+              0.4623699486255646,
+              0.4911094903945923,
+              0.4984027147293091,
+              1.0
+            ],
+            "sde_gamma": 1.0,
+            "self_cond_cfg_scale": 3.0,
+            "cfg_scale": 1.0,
+            "time_schedule": "logit_normal",
+            "schedule_p_mean": -1.5,
+            "schedule_p_std": 0.8,
+            "seed": 100,
+            "eos_token_id": 1,
+            "pad_token_id": 0,
+            "max_length": 1024
+          },
+          "terminal_rng_cuda": {
+            "sha256": "5d758db0a0f372f388632bef2a59786f403f229807941795bee45e9aba34312b",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on": {
+          "final_latent": {
+            "sha256": "9ed34e2123c25a2278e63557170ba4bdb50f514288b003c583b0de79778df636",
+            "shape": [
+              8,
+              1024,
+              512
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:1"
+          },
+          "raw_endpoint_tokens": {
+            "sha256": "61c467fa8026226a1d2cdc9b285ec41afbbf9ff1eb8097c60a508d5e67c8a0a9",
+            "shape": [
+              8,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "masked_public_tokens": {
+            "sha256": "9e62a39ee4a90fe9a68f5278a939d1c46b744682b10503b3a177e04022fe45ba",
+            "shape": [
+              8,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed_metadata": {
+            "solver": "sde",
+            "steps_requested": 64,
+            "steps_executed": 64,
+            "nfe": 64,
+            "t_grid": [
+              0.0,
+              0.026127193123102188,
+              0.02813299372792244,
+              0.035730887204408646,
+              0.06305988878011703,
+              0.0690842792391777,
+              0.07128185778856277,
+              0.07385404407978058,
+              0.0762999877333641,
+              0.07835214585065842,
+              0.07997187227010727,
+              0.08210651576519012,
+              0.0842476487159729,
+              0.08524680137634277,
+              0.10452447086572647,
+              0.108139269053936,
+              0.11409135907888412,
+              0.12154626846313477,
+              0.12171777337789536,
+              0.12253063172101974,
+              0.12919938564300537,
+              0.12978455424308777,
+              0.13394269347190857,
+              0.13742710649967194,
+              0.14114470779895782,
+              0.1424504518508911,
+              0.14307521283626556,
+              0.14414222538471222,
+              0.14469745755195618,
+              0.152604877948761,
+              0.15325649082660675,
+              0.1602635383605957,
+              0.1612458974123001,
+              0.17313218116760254,
+              0.1796674132347107,
+              0.1802721470594406,
+              0.1920647919178009,
+              0.2053154557943344,
+              0.2071622610092163,
+              0.21165010333061218,
+              0.21232815086841583,
+              0.21810156106948853,
+              0.2242165356874466,
+              0.2254725694656372,
+              0.22985807061195374,
+              0.23529326915740967,
+              0.23705266416072845,
+              0.24923962354660034,
+              0.265727698802948,
+              0.2841568887233734,
+              0.2974908649921417,
+              0.31429120898246765,
+              0.31979382038116455,
+              0.32371383905410767,
+              0.3333670198917389,
+              0.3475886285305023,
+              0.35987529158592224,
+              0.41289570927619934,
+              0.4329385459423065,
+              0.43497538566589355,
+              0.4492417275905609,
+              0.4623699486255646,
+              0.4911094903945923,
+              0.4984027147293091,
+              1.0
+            ],
+            "sde_gamma": 1.0,
+            "self_cond_cfg_scale": 3.0,
+            "cfg_scale": 1.0,
+            "time_schedule": "logit_normal",
+            "schedule_p_mean": -1.5,
+            "schedule_p_std": 0.8,
+            "seed": 100,
+            "eos_token_id": 1,
+            "pad_token_id": 0,
+            "max_length": 1024
+          },
+          "terminal_rng_cuda": {
+            "sha256": "5d758db0a0f372f388632bef2a59786f403f229807941795bee45e9aba34312b",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on_structure": {
+          "step_calls": {
+            "_sde_step": 63,
+            "_ode_step": 1
+          },
+          "forward_calls": {
+            "rollout": 64,
+            "endpoint": 1
+          },
+          "pairing_problems": []
+        },
+        "matches": {
+          "final_latent": true,
+          "raw_endpoint_tokens": true,
+          "masked_public_tokens": true,
+          "terminal_rng_cpu": true,
+          "executed_metadata": true,
+          "terminal_rng_cuda": true
+        },
+        "status": "ok"
+      },
+      "random_calls": {
+        "observed": {
+          "time_grid": 1,
+          "initial_latent": 1,
+          "sde_churn": 63
+        },
+        "expected": {
+          "time_grid": 1,
+          "initial_latent": 1,
+          "sde_churn": 63
+        },
+        "unknown": 0,
+        "total_observed": 65,
+        "total_expected": 65,
+        "matches": true
+      },
+      "status": "ok",
+      "timing_attempted": true,
+      "latency": {
+        "verdict_seconds": 2.0935067790560424,
+        "verdict_basis": "instrumentation_off_outer_wall_clock",
+        "off_wall_trials": [
+          2.1052086800336838,
+          2.0886639290256426,
+          2.0935067790560424
+        ],
+        "on_wall_median": 2.0947235190542415,
+        "on_wall_trials": [
+          2.1061558610526845,
+          2.0857628979720175,
+          2.0947235190542415
+        ],
+        "instrumentation_overhead": {
+          "paired_delta_trials": [
+            0.0009471810190007091,
+            -0.002901031053625047,
+            0.0012167399981990457
+          ],
+          "median_paired_delta": 0.0009471810190007091,
+          "off_wall_trials": [
+            2.1052086800336838,
+            2.0886639290256426,
+            2.0935067790560424
+          ],
+          "off_trial_spread": 0.016544751008041203,
+          "direction_consistent": false,
+          "resolvable": null,
+          "resolution_status": "not_assessed",
+          "resolution_reason": "the frozen three-trial window is insufficient to estimate the noise floor",
+          "basis": "median of per-trial (on_wall - off_wall), from OFF/ON pairs run adjacently with the order reversed each trial. Descriptive; negative values are left as measured, neither clamped nor reinterpreted"
+        }
+      },
+      "trials": [
+        {
+          "trial": 0,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 2.1052086800336838,
+          "on_wall_seconds": 2.1061558610526845,
+          "paired_overhead_seconds": 0.0009471810190007091,
+          "step_calls": {
+            "_sde_step": 63,
+            "_ode_step": 1
+          },
+          "forward_calls": {
+            "rollout": 64,
+            "endpoint": 1
+          }
+        },
+        {
+          "trial": 1,
+          "order": [
+            "on",
+            "off"
+          ],
+          "off_wall_seconds": 2.0886639290256426,
+          "on_wall_seconds": 2.0857628979720175,
+          "paired_overhead_seconds": -0.002901031053625047,
+          "step_calls": {
+            "_sde_step": 63,
+            "_ode_step": 1
+          },
+          "forward_calls": {
+            "rollout": 64,
+            "endpoint": 1
+          }
+        },
+        {
+          "trial": 2,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 2.0935067790560424,
+          "on_wall_seconds": 2.0947235190542415,
+          "paired_overhead_seconds": 0.0012167399981990457,
+          "step_calls": {
+            "_sde_step": 63,
+            "_ode_step": 1
+          },
+          "forward_calls": {
+            "rollout": 64,
+            "endpoint": 1
+          }
+        }
+      ],
+      "peak_memory": {
+        "allocated_bytes_trials": [
+          2825702400,
+          2825702400,
+          2825702400
+        ],
+        "reserved_bytes_trials": [
+          3200253952,
+          3200253952,
+          3200253952
+        ],
+        "max_allocated_bytes": 2825702400,
+        "max_reserved_bytes": 3200253952,
+        "basis": "instrumentation_off_trials"
+      },
+      "events": [
+        {
+          "name": "denoiser_forward",
+          "seconds": 2.0209960937500004,
+          "seconds_trials": [
+            2.033099784851075,
+            2.0129300441741944,
+            2.0209960937500004
+          ],
+          "share_of_on_wall": 0.9650809524569459,
+          "description": "the rollout model call inside a solver step, attributed by an execution-phase-aware forward hook. Includes the SC-CFG token's own attention/prefix cost, which the frozen protocol does NOT decompose into a separate event. EXCLUDES the endpoint decoder forward."
+        },
+        {
+          "name": "solver_state_update",
+          "seconds": 0.02187606048583984,
+          "seconds_trials": [
+            0.02187606048583984,
+            0.02172199058532719,
+            0.021968772888183555
+          ],
+          "share_of_on_wall": 0.010414410289130864,
+          "description": "everything in a solver step that is not the rollout model call: noise draw, conditional restore and the Euler/SDE update. Computed as a PER-STEP difference (step_inclusive - its own child forward) summed within a trial, never as a difference of medians."
+        },
+        {
+          "name": "endpoint_projection",
+          "seconds": 0.04677427291870117,
+          "seconds_trials": [
+            0.046671871185302735,
+            0.04677427291870117,
+            0.04709580612182617
+          ],
+          "share_of_on_wall": 0.022425498585759526,
+          "description": "the whole of _dlm_decode_batch: the endpoint decoder forward and the argmax. Its model call is recorded here and NOT in denoiser_forward."
+        }
+      ],
+      "audit": {
+        "solver_step_inclusive_seconds_trials": [
+          2.054975845336914,
+          2.0346520347595214,
+          2.0429648666381834
+        ],
+        "solver_state_update_seconds_trials": [
+          0.02187606048583984,
+          0.02172199058532719,
+          0.021968772888183555
+        ],
+        "per_step_exclusive_seconds": [
+          [
+            0.0003015365600585948,
+            0.0003480644226074199,
+            0.0003439693450927733,
+            0.0003443832397460947,
+            0.0003421764373779321,
+            0.00034911918640136846,
+            0.00034108734130858936,
+            0.0003477745056152323,
+            0.00034288215637207076,
+            0.0003514862060546853,
+            0.000338911056518551,
+            0.0003533744812011727,
+            0.0003408946990966777,
+            0.0003460788726806635,
+            0.0003434867858886706,
+            0.0003476791381835931,
+            0.0003438396453857434,
+            0.00034636878967285456,
+            0.00033951950073241727,
+            0.0003486728668212896,
+            0.0003336639404296904,
+            0.00034704017639160256,
+            0.00033718490600586487,
+            0.00034825515747070185,
+            0.000338239669799803,
+            0.00034678459167480913,
+            0.00034064102172851746,
+            0.0003450241088867184,
+            0.00034079742431640525,
+            0.00034598350524902427,
+            0.00033385467529296886,
+            0.00034444618225097645,
+            0.0003464965820312513,
+            0.0003513278961181643,
+            0.0003398075103759751,
+            0.0003488311767578106,
+            0.0003415679931640589,
+            0.00034550285339355474,
+            0.00034006500244140175,
+            0.00034905624389647977,
+            0.00033856201171875155,
+            0.0003436508178710912,
+            0.0003378887176513634,
+            0.0003430099487304675,
+            0.0003419189453124985,
+            0.000350784301757813,
+            0.00034460830688476385,
+            0.0003457298278808571,
+            0.0003410873413085963,
+            0.00034307098388671603,
+            0.0003414115905761711,
+            0.0003467521667480447,
+            0.0003462066650390602,
+            0.0003468170166015666,
+            0.0003379516601562521,
+            0.00034444808959960965,
+            0.0003370590209960944,
+            0.00034153366088867515,
+            0.00033827209472656744,
+            0.000345439910888673,
+            0.00033564758300781705,
+            0.00034467124938965255,
+            0.00034639739990234564,
+            0.00026726531982421836
+          ],
+          [
+            0.0003002204895019567,
+            0.00034912109375000167,
+            0.00033750343322754006,
+            0.00034342384338378884,
+            0.00034076881408691764,
+            0.0003482875823974628,
+            0.00034672164916992043,
+            0.0003446712493896456,
+            0.0003376007080078125,
+            0.00034723281860351424,
+            0.000339937210083012,
+            0.0003459186553955093,
+            0.00034297752380371,
+            0.00034361457824707425,
+            0.00034051132202148754,
+            0.00034169769287109575,
+            0.000333473205566405,
+            0.0003396167755126897,
+            0.00033446311950684204,
+            0.00034063911437988426,
+            0.00033795356750487837,
+            0.0003419513702392629,
+            0.00033788871765137035,
+            0.00034124946594238023,
+            0.000335296630859374,
+            0.0003432006835937529,
+            0.0003341121673583955,
+            0.0003398723602294901,
+            0.00033775901794434043,
+            0.00034185791015624994,
+            0.0003365440368652342,
+            0.00034262466430664065,
+            0.00033686447143554954,
+            0.0003465919494628905,
+            0.0003367347717285127,
+            0.00034521484375000036,
+            0.00033926391601562383,
+            0.0003419208526611317,
+            0.00033766365051269426,
+            0.0003432960510253921,
+            0.00033731269836425465,
+            0.00034483337402343994,
+            0.00033891105651855796,
+            0.0003465919494628905,
+            0.0003369255065917981,
+            0.00034156608581543263,
+            0.0003419189453124985,
+            0.000344926834106446,
+            0.0003438720703125009,
+            0.000346624374389648,
+            0.0003447055816650363,
+            0.0003462066650390602,
+            0.0003378238677978554,
+            0.00034339141845703136,
+            0.0003384952545166034,
+            0.00034681701660155967,
+            0.00034054565429687475,
+            0.00034064102172851746,
+            0.00033942413330077803,
+            0.00034454345703125583,
+            0.0003343372344970716,
+            0.0003428478240966801,
+            0.0003378257751464886,
+            0.0002646408081054749
+          ],
+          [
+            0.00039475059509277294,
+            0.0003407688140869142,
+            0.00033414459228515644,
+            0.00034390258789062517,
+            0.0003354873657226559,
+            0.00034492874145507224,
+            0.00034147262573241965,
+            0.00034755134582518943,
+            0.0003439674377441401,
+            0.00034131240844726546,
+            0.0003392009735107421,
+            0.00034339332580566456,
+            0.00033625602722167636,
+            0.0003445129394531246,
+            0.00033955192565917475,
+            0.00035177612304687633,
+            0.0003377609252929667,
+            0.00034841537475585604,
+            0.0003455677032470697,
+            0.00034534454345703375,
+            0.0003416309356689476,
+            0.000346111297607421,
+            0.0003448963165283217,
+            0.0003417587280273443,
+            0.00033507156372070135,
+            0.0003424644470214899,
+            0.00033872222900390575,
+            0.0003414402008056622,
+            0.0003401927947998054,
+            0.0003439998626708976,
+            0.0003352966308593705,
+            0.00034163284301757385,
+            0.0003311691284179699,
+            0.0003410224914550744,
+            0.0003384933471679702,
+            0.00034118461608886874,
+            0.0003390407562255879,
+            0.00034617614746093595,
+            0.00033609771728515536,
+            0.00033868789672851507,
+            0.00033404731750488054,
+            0.0003435211181640613,
+            0.0003358383178710955,
+            0.00034448051452636713,
+            0.0003406066894531268,
+            0.0003450870513916071,
+            0.0003436470031738248,
+            0.00035043334960938033,
+            0.000341793060302735,
+            0.0003489913940429648,
+            0.00033804702758789135,
+            0.0003471355438232418,
+            0.0003443851470947279,
+            0.00034700965881347134,
+            0.0003372478485107397,
+            0.00035481834411620755,
+            0.00033788681030273715,
+            0.0003429756164550768,
+            0.00033593559265136796,
+            0.00034534645080566,
+            0.0003436470031738248,
+            0.0003433284759521496,
+            0.0003504619598388714,
+            0.00036694526672362976
+          ]
+        ],
+        "note": "retained so a later regression to median-of-medians is detectable from the artifact alone: the reported state update must equal the sum of that trial's per-step exclusive values"
+      },
+      "forward_accounting": {
+        "rollout_forward_count": 64,
+        "endpoint_forward_count": 1,
+        "extra_cfg_forward_count": 0,
+        "total_top_level_model_calls": 65,
+        "sc_cfg_token_cost": "included_in_denoiser_forward"
+      },
+      "attribution": {
+        "denominator": "per_trial_on_wall_seconds",
+        "aggregation": "median_of_per_trial_ratios",
+        "coverage_ratio": 0.9978595389762779,
+        "coverage_ratio_trials": [
+          0.9978595389762779,
+          0.9979208613318363,
+          0.9977740039428513
+        ],
+        "coverage_disposition": "descriptive_only",
+        "unattributed_seconds": 0.004508144530467106,
+        "unattributed_seconds_trials": [
+          0.004508144530467106,
+          0.004336590293794629,
+          0.004662846294231304
+        ],
+        "unattributed_note": "mask_after_eos runs after _dlm_decode_batch in the public entry point, so it is inside the outer wall but outside every event span and is deliberately unattributed; fork_rng enter/exit, the time grid and result assembly are likewise unattributed rather than folded into an adjacent event"
+      }
+    },
+    {
+      "steps": 64,
+      "batch_size": 32,
+      "solver": "sde",
+      "sde_gamma": 1.0,
+      "cfg_scale": 1.0,
+      "self_cond_cfg_scale": 3.0,
+      "time_schedule": "logit_normal",
+      "seed": 100,
+      "max_length": 1024,
+      "device_occupancy_before": {
+        "device": "cuda:1",
+        "uuid": "GPU-a0a92b0b-7f00-3cb4-2f3d-5dd28cceaac3",
+        "free_bytes": 49840914432,
+        "total_bytes": 50867404800,
+        "compute_processes": [
+          {
+            "pid": 3940971,
+            "used_mib": 956
+          }
+        ],
+        "foreign_process_count": 0,
+        "source": "nvidia-smi compute-apps scoped by gpu_uuid"
+      },
+      "non_interference": {
+        "off": {
+          "final_latent": {
+            "sha256": "71894e1bc95238540c005654852906d6d206bcb3a5101757af46dbd27f53ccf1",
+            "shape": [
+              32,
+              1024,
+              512
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:1"
+          },
+          "raw_endpoint_tokens": {
+            "sha256": "81c6b769905f41159866b40ebddd03e98ff75bcdbe9a093e9f2e7425785274c7",
+            "shape": [
+              32,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "masked_public_tokens": {
+            "sha256": "52ffb9272b6677b8c8a823b9ae9088e598f45bb8b857857d5500ee0882da254d",
+            "shape": [
+              32,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed_metadata": {
+            "solver": "sde",
+            "steps_requested": 64,
+            "steps_executed": 64,
+            "nfe": 64,
+            "t_grid": [
+              0.0,
+              0.026127193123102188,
+              0.02813299372792244,
+              0.035730887204408646,
+              0.06305988878011703,
+              0.0690842792391777,
+              0.07128185778856277,
+              0.07385404407978058,
+              0.0762999877333641,
+              0.07835214585065842,
+              0.07997187227010727,
+              0.08210651576519012,
+              0.0842476487159729,
+              0.08524680137634277,
+              0.10452447086572647,
+              0.108139269053936,
+              0.11409135907888412,
+              0.12154626846313477,
+              0.12171777337789536,
+              0.12253063172101974,
+              0.12919938564300537,
+              0.12978455424308777,
+              0.13394269347190857,
+              0.13742710649967194,
+              0.14114470779895782,
+              0.1424504518508911,
+              0.14307521283626556,
+              0.14414222538471222,
+              0.14469745755195618,
+              0.152604877948761,
+              0.15325649082660675,
+              0.1602635383605957,
+              0.1612458974123001,
+              0.17313218116760254,
+              0.1796674132347107,
+              0.1802721470594406,
+              0.1920647919178009,
+              0.2053154557943344,
+              0.2071622610092163,
+              0.21165010333061218,
+              0.21232815086841583,
+              0.21810156106948853,
+              0.2242165356874466,
+              0.2254725694656372,
+              0.22985807061195374,
+              0.23529326915740967,
+              0.23705266416072845,
+              0.24923962354660034,
+              0.265727698802948,
+              0.2841568887233734,
+              0.2974908649921417,
+              0.31429120898246765,
+              0.31979382038116455,
+              0.32371383905410767,
+              0.3333670198917389,
+              0.3475886285305023,
+              0.35987529158592224,
+              0.41289570927619934,
+              0.4329385459423065,
+              0.43497538566589355,
+              0.4492417275905609,
+              0.4623699486255646,
+              0.4911094903945923,
+              0.4984027147293091,
+              1.0
+            ],
+            "sde_gamma": 1.0,
+            "self_cond_cfg_scale": 3.0,
+            "cfg_scale": 1.0,
+            "time_schedule": "logit_normal",
+            "schedule_p_mean": -1.5,
+            "schedule_p_std": 0.8,
+            "seed": 100,
+            "eos_token_id": 1,
+            "pad_token_id": 0,
+            "max_length": 1024
+          },
+          "terminal_rng_cuda": {
+            "sha256": "ba89bee3958f331a0b8365294359f761a05d78e78caeeb1317eb433e69f5b756",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on": {
+          "final_latent": {
+            "sha256": "71894e1bc95238540c005654852906d6d206bcb3a5101757af46dbd27f53ccf1",
+            "shape": [
+              32,
+              1024,
+              512
+            ],
+            "dtype": "torch.float32",
+            "device": "cuda:1"
+          },
+          "raw_endpoint_tokens": {
+            "sha256": "81c6b769905f41159866b40ebddd03e98ff75bcdbe9a093e9f2e7425785274c7",
+            "shape": [
+              32,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "masked_public_tokens": {
+            "sha256": "52ffb9272b6677b8c8a823b9ae9088e598f45bb8b857857d5500ee0882da254d",
+            "shape": [
+              32,
+              1024
+            ],
+            "dtype": "torch.int64",
+            "device": "cuda:1"
+          },
+          "terminal_rng_cpu": {
+            "sha256": "2474a2757e82ae14692945369c7e42dac7cbf95e747a08f7977d60a15ef12997",
+            "shape": [
+              5056
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          },
+          "executed_metadata": {
+            "solver": "sde",
+            "steps_requested": 64,
+            "steps_executed": 64,
+            "nfe": 64,
+            "t_grid": [
+              0.0,
+              0.026127193123102188,
+              0.02813299372792244,
+              0.035730887204408646,
+              0.06305988878011703,
+              0.0690842792391777,
+              0.07128185778856277,
+              0.07385404407978058,
+              0.0762999877333641,
+              0.07835214585065842,
+              0.07997187227010727,
+              0.08210651576519012,
+              0.0842476487159729,
+              0.08524680137634277,
+              0.10452447086572647,
+              0.108139269053936,
+              0.11409135907888412,
+              0.12154626846313477,
+              0.12171777337789536,
+              0.12253063172101974,
+              0.12919938564300537,
+              0.12978455424308777,
+              0.13394269347190857,
+              0.13742710649967194,
+              0.14114470779895782,
+              0.1424504518508911,
+              0.14307521283626556,
+              0.14414222538471222,
+              0.14469745755195618,
+              0.152604877948761,
+              0.15325649082660675,
+              0.1602635383605957,
+              0.1612458974123001,
+              0.17313218116760254,
+              0.1796674132347107,
+              0.1802721470594406,
+              0.1920647919178009,
+              0.2053154557943344,
+              0.2071622610092163,
+              0.21165010333061218,
+              0.21232815086841583,
+              0.21810156106948853,
+              0.2242165356874466,
+              0.2254725694656372,
+              0.22985807061195374,
+              0.23529326915740967,
+              0.23705266416072845,
+              0.24923962354660034,
+              0.265727698802948,
+              0.2841568887233734,
+              0.2974908649921417,
+              0.31429120898246765,
+              0.31979382038116455,
+              0.32371383905410767,
+              0.3333670198917389,
+              0.3475886285305023,
+              0.35987529158592224,
+              0.41289570927619934,
+              0.4329385459423065,
+              0.43497538566589355,
+              0.4492417275905609,
+              0.4623699486255646,
+              0.4911094903945923,
+              0.4984027147293091,
+              1.0
+            ],
+            "sde_gamma": 1.0,
+            "self_cond_cfg_scale": 3.0,
+            "cfg_scale": 1.0,
+            "time_schedule": "logit_normal",
+            "schedule_p_mean": -1.5,
+            "schedule_p_std": 0.8,
+            "seed": 100,
+            "eos_token_id": 1,
+            "pad_token_id": 0,
+            "max_length": 1024
+          },
+          "terminal_rng_cuda": {
+            "sha256": "ba89bee3958f331a0b8365294359f761a05d78e78caeeb1317eb433e69f5b756",
+            "shape": [
+              16
+            ],
+            "dtype": "torch.uint8",
+            "device": "cpu"
+          }
+        },
+        "on_structure": {
+          "step_calls": {
+            "_sde_step": 63,
+            "_ode_step": 1
+          },
+          "forward_calls": {
+            "rollout": 64,
+            "endpoint": 1
+          },
+          "pairing_problems": []
+        },
+        "matches": {
+          "final_latent": true,
+          "raw_endpoint_tokens": true,
+          "masked_public_tokens": true,
+          "terminal_rng_cpu": true,
+          "executed_metadata": true,
+          "terminal_rng_cuda": true
+        },
+        "status": "ok"
+      },
+      "random_calls": {
+        "observed": {
+          "time_grid": 1,
+          "initial_latent": 1,
+          "sde_churn": 63
+        },
+        "expected": {
+          "time_grid": 1,
+          "initial_latent": 1,
+          "sde_churn": 63
+        },
+        "unknown": 0,
+        "total_observed": 65,
+        "total_expected": 65,
+        "matches": true
+      },
+      "status": "ok",
+      "timing_attempted": true,
+      "latency": {
+        "verdict_seconds": 10.048095345962793,
+        "verdict_basis": "instrumentation_off_outer_wall_clock",
+        "off_wall_trials": [
+          9.99063043098431,
+          10.054550918983296,
+          10.048095345962793
+        ],
+        "on_wall_median": 10.027095330995508,
+        "on_wall_trials": [
+          10.027095330995508,
+          10.054240048979409,
+          10.026874679955654
+        ],
+        "instrumentation_overhead": {
+          "paired_delta_trials": [
+            0.03646490001119673,
+            -0.00031087000388652086,
+            -0.02122066600713879
+          ],
+          "median_paired_delta": -0.00031087000388652086,
+          "off_wall_trials": [
+            9.99063043098431,
+            10.054550918983296,
+            10.048095345962793
+          ],
+          "off_trial_spread": 0.06392048799898475,
+          "direction_consistent": false,
+          "resolvable": null,
+          "resolution_status": "not_assessed",
+          "resolution_reason": "the frozen three-trial window is insufficient to estimate the noise floor",
+          "basis": "median of per-trial (on_wall - off_wall), from OFF/ON pairs run adjacently with the order reversed each trial. Descriptive; negative values are left as measured, neither clamped nor reinterpreted"
+        }
+      },
+      "trials": [
+        {
+          "trial": 0,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 9.99063043098431,
+          "on_wall_seconds": 10.027095330995508,
+          "paired_overhead_seconds": 0.03646490001119673,
+          "step_calls": {
+            "_sde_step": 63,
+            "_ode_step": 1
+          },
+          "forward_calls": {
+            "rollout": 64,
+            "endpoint": 1
+          }
+        },
+        {
+          "trial": 1,
+          "order": [
+            "on",
+            "off"
+          ],
+          "off_wall_seconds": 10.054550918983296,
+          "on_wall_seconds": 10.054240048979409,
+          "paired_overhead_seconds": -0.00031087000388652086,
+          "step_calls": {
+            "_sde_step": 63,
+            "_ode_step": 1
+          },
+          "forward_calls": {
+            "rollout": 64,
+            "endpoint": 1
+          }
+        },
+        {
+          "trial": 2,
+          "order": [
+            "off",
+            "on"
+          ],
+          "off_wall_seconds": 10.048095345962793,
+          "on_wall_seconds": 10.026874679955654,
+          "paired_overhead_seconds": -0.02122066600713879,
+          "step_calls": {
+            "_sde_step": 63,
+            "_ode_step": 1
+          },
+          "forward_calls": {
+            "rollout": 64,
+            "endpoint": 1
+          }
+        }
+      ],
+      "peak_memory": {
+        "allocated_bytes_trials": [
+          9459272704,
+          9459272704,
+          9459272704
+        ],
+        "reserved_bytes_trials": [
+          10905190400,
+          10905190400,
+          10905190400
+        ],
+        "max_allocated_bytes": 9459272704,
+        "max_reserved_bytes": 10905190400,
+        "basis": "instrumentation_off_trials"
+      },
+      "events": [
+        {
+          "name": "denoiser_forward",
+          "seconds": 9.652941848754883,
+          "seconds_trials": [
+            9.652941848754883,
+            9.674753021240235,
+            9.650193450927734
+          ],
+          "share_of_on_wall": 0.9624328376437247,
+          "description": "the rollout model call inside a solver step, attributed by an execution-phase-aware forward hook. Includes the SC-CFG token's own attention/prefix cost, which the frozen protocol does NOT decompose into a separate event. EXCLUDES the endpoint decoder forward."
+        },
+        {
+          "name": "solver_state_update",
+          "seconds": 0.15046669006347657,
+          "seconds_trials": [
+            0.1499828643798827,
+            0.1508905334472657,
+            0.15046669006347657
+          ],
+          "share_of_on_wall": 0.015006339948006814,
+          "description": "everything in a solver step that is not the rollout model call: noise draw, conditional restore and the Euler/SDE update. Computed as a PER-STEP difference (step_inclusive - its own child forward) summed within a trial, never as a difference of medians."
+        },
+        {
+          "name": "endpoint_projection",
+          "seconds": 0.2165022735595703,
+          "seconds_trials": [
+            0.21667840576171876,
+            0.21649407958984376,
+            0.2165022735595703
+          ],
+          "share_of_on_wall": 0.021592199012157975,
+          "description": "the whole of _dlm_decode_batch: the endpoint decoder forward and the argmax. Its model call is recorded here and NOT in denoiser_forward."
+        }
+      ],
+      "audit": {
+        "solver_step_inclusive_seconds_trials": [
+          9.802924713134766,
+          9.8256435546875,
+          9.80066014099121
+        ],
+        "solver_state_update_seconds_trials": [
+          0.1499828643798827,
+          0.1508905334472657,
+          0.15046669006347657
+        ],
+        "per_step_exclusive_seconds": [
+          [
+            0.00235287475585938,
+            0.0023488616943359297,
+            0.002349853515625,
+            0.0023327636718750155,
+            0.00236326599121095,
+            0.002348312377929679,
+            0.0023579101562500038,
+            0.002328140258789052,
+            0.0023506774902343763,
+            0.002356613159179677,
+            0.002366531372070324,
+            0.0023543090820312695,
+            0.0023527679443359484,
+            0.0023444519042968848,
+            0.0023626251220703054,
+            0.0023603820800781328,
+            0.00236477661132814,
+            0.0023460540771484406,
+            0.0023627777099609337,
+            0.0023491516113281208,
+            0.002355804443359366,
+            0.0023352966308593792,
+            0.0023423614501953127,
+            0.0023455047607421897,
+            0.0023749084472656223,
+            0.0023690795898437533,
+            0.0023595581054687564,
+            0.0023674774169921697,
+            0.0023814392089843706,
+            0.0023446350097656166,
+            0.002370391845703118,
+            0.0023672027587890443,
+            0.0023631744384765563,
+            0.0023462371826171724,
+            0.0023727569580078156,
+            0.0023508453369140425,
+            0.002366790771484384,
+            0.0023657531738281445,
+            0.002362304687499983,
+            0.0023376617431640767,
+            0.0023662109375000018,
+            0.002335357666015614,
+            0.002366088867187477,
+            0.0023522644042968666,
+            0.0023525695800781232,
+            0.0023657989501953136,
+            0.002366271972656264,
+            0.0023650512695312376,
+            0.002350524902343748,
+            0.0023597412109374882,
+            0.002367538452148432,
+            0.0023563385009765514,
+            0.002363128662109387,
+            0.0023601531982421764,
+            0.002361923217773426,
+            0.002366943359375012,
+            0.002362594604492174,
+            0.0023504333496093543,
+            0.0023647613525390465,
+            0.002355392456054678,
+            0.002365859985351576,
+            0.002354339599609373,
+            0.002363479614257813,
+            0.0014778137207031306
+          ],
+          [
+            0.002406524658203124,
+            0.0023498840332031035,
+            0.0023662719726562365,
+            0.00234959411621094,
+            0.0023954467773437405,
+            0.0023521881103515663,
+            0.0023736572265624922,
+            0.0023661804199218983,
+            0.0023610534667968808,
+            0.0023449249267578076,
+            0.0023632354736328187,
+            0.002351394653320321,
+            0.002367172241210941,
+            0.0023445434570312507,
+            0.0023721313476562367,
+            0.0023553771972656123,
+            0.002359207153320303,
+            0.002351287841796862,
+            0.002382553100585938,
+            0.0023617553710937322,
+            0.002373825073242186,
+            0.0023614044189453065,
+            0.002383895874023434,
+            0.0023560028076171913,
+            0.0023749389648437536,
+            0.0023592987060546966,
+            0.0023579559326172006,
+            0.0023657989501953136,
+            0.0023791656494140667,
+            0.0024137573242187516,
+            0.002369049072265622,
+            0.002367965698242186,
+            0.002372650146484384,
+            0.0023585357666015827,
+            0.0023735961914062575,
+            0.0023646392822265494,
+            0.0023796386718750173,
+            0.002367172241210941,
+            0.002359542846679691,
+            0.0023603515625000016,
+            0.0023769531249999976,
+            0.0023657989501953136,
+            0.0023828124999999978,
+            0.0023623657226562456,
+            0.0023818206787109553,
+            0.0023701171875000204,
+            0.002368377685546874,
+            0.0024085693359374993,
+            0.0023792724609374982,
+            0.0024202575683593686,
+            0.0023767089843750033,
+            0.0023565673828125078,
+            0.0023667602539062527,
+            0.002366912841796881,
+            0.002371200561523429,
+            0.0023553619384765745,
+            0.002386917114257814,
+            0.002356140136718754,
+            0.0023790435791015696,
+            0.0023627014160156334,
+            0.0023796386718750173,
+            0.0024068450927734464,
+            0.0024013214111328063,
+            0.0015345001220702925
+          ],
+          [
+            0.0023910064697265643,
+            0.0023504638671875133,
+            0.002365570068359385,
+            0.0023389434814453103,
+            0.0023736267089843888,
+            0.002382965087890626,
+            0.002352661132812489,
+            0.002341171264648445,
+            0.0024133453369140634,
+            0.0023600311279296793,
+            0.0023829193115234293,
+            0.0023743133544922024,
+            0.002382598876953107,
+            0.0023539123535156192,
+            0.002354522705078105,
+            0.0023562164306640543,
+            0.0023585052490234237,
+            0.002385314941406258,
+            0.00236537170410156,
+            0.002376678466796872,
+            0.0023788757324218757,
+            0.002346206665039069,
+            0.0023525238037109264,
+            0.0023660888671875047,
+            0.0023774719238281172,
+            0.0023502960205078194,
+            0.002374588012695328,
+            0.0023652496337890627,
+            0.0023481903076171817,
+            0.002346527099609391,
+            0.0023646697998046806,
+            0.0023525238037109264,
+            0.002383773803710937,
+            0.0023687896728515623,
+            0.002357009887695327,
+            0.0023552398681640496,
+            0.0023746490478515625,
+            0.0023490753173828205,
+            0.0023641357421874953,
+            0.0023534393310546964,
+            0.0023454437255859273,
+            0.00234339904785158,
+            0.002364318847656255,
+            0.0023631744384765563,
+            0.0023664855957031272,
+            0.0023498840332031312,
+            0.0024421386718750104,
+            0.002395935058593729,
+            0.002361511230468738,
+            0.00234800720214845,
+            0.002365783691406248,
+            0.00233576965332033,
+            0.002384658813476548,
+            0.0023601837158203076,
+            0.002405227661132825,
+            0.0023842010498046906,
+            0.0023638000488281075,
+            0.0023533172607421993,
+            0.0023594970703125218,
+            0.002367034912109378,
+            0.0023521881103515663,
+            0.002338745117187513,
+            0.0023517761230468504,
+            0.0014747467041015538
+          ]
+        ],
+        "note": "retained so a later regression to median-of-medians is detectable from the artifact alone: the reported state update must equal the sum of that trial's per-step exclusive values"
+      },
+      "forward_accounting": {
+        "rollout_forward_count": 64,
+        "endpoint_forward_count": 1,
+        "extra_cfg_forward_count": 0,
+        "total_top_level_model_calls": 65,
+        "sc_cfg_token_cost": "included_in_denoiser_forward"
+      },
+      "attribution": {
+        "denominator": "per_trial_on_wall_seconds",
+        "aggregation": "median_of_per_trial_ratios",
+        "coverage_ratio": 0.9990313766038894,
+        "coverage_ratio_trials": [
+          0.9992528033441687,
+          0.9987962874724389,
+          0.9990313766038894
+        ],
+        "coverage_disposition": "descriptive_only",
+        "unattributed_seconds": 0.009712265404873577,
+        "unattributed_seconds_trials": [
+          0.007492212099021955,
+          0.012102414702063413,
+          0.009712265404873577
+        ],
+        "unattributed_note": "mask_after_eos runs after _dlm_decode_batch in the public entry point, so it is inside the outer wall but outside every event span and is deliberately unattributed; fork_rng enter/exit, the time grid and result assembly are likewise unattributed rather than folded into an adjacent event"
+      }
+    }
+  ]
+}
