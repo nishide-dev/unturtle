@@ -98,7 +98,19 @@ def tiny_dream_checkpoint(tmp_path_factory):
         mask_token_id=1,
         pad_token_id=0,
     )
-    model = DreamModel(config).to(torch.bfloat16)
+    model = DreamModel(config)
+    # _init_weights zeroes the q/k/v biases; a zero bias makes the bias-aware
+    # QKV kernel's bias handling unobservable (a drop-the-bias mutant survives
+    # parity). Dream's real checkpoints carry non-zero q/k/v biases.
+    with torch.no_grad():
+        for layer in model.model.layers:
+            for proj in (
+                layer.self_attn.q_proj,
+                layer.self_attn.k_proj,
+                layer.self_attn.v_proj,
+            ):
+                proj.bias.normal_(std=0.2)
+    model = model.to(torch.bfloat16)
     path = tmp_path_factory.mktemp("tiny_dream_4bit") / "checkpoint"
     model.save_pretrained(path)
     return path
@@ -168,13 +180,15 @@ def _randomize_lora_b_(peft_model) -> None:
 
     PEFT initializes lora_B to zero; with B == 0 the LoRA contribution is
     identically zero and output parity would hold even if the adapter math
-    were completely wrong.
+    were completely wrong. The std is large on purpose: the adapter term must
+    stand clearly above the parity tolerances, or a wrong LoRA scaling slips
+    under them (measured: std=0.05 let an S*2 mutant survive).
     """
     torch.manual_seed(7)
     for name, param in peft_model.named_parameters():
         if ".lora_B." in name:
             with torch.no_grad():
-                param.normal_(std=0.05)
+                param.normal_(std=0.5)
 
 
 def _forward_backward(peft_model, input_ids) -> tuple[torch.Tensor, dict]:
