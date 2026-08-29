@@ -37,6 +37,8 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
+import importlib.util
 import json
 import os
 import pathlib
@@ -51,11 +53,30 @@ PROBE = REPO_ROOT / "benchmarks" / "architecture" / "subprocess_probe.py"
 ARTIFACT_PATH = REPO_ROOT / "docs" / "artifacts" / "184-architecture-contract-v1.json"
 MARKDOWN_PATH = REPO_ROOT / "docs" / "architecture" / "contract-v1.md"
 
-sys.path.insert(0, str(REPO_ROOT))
-from unturtle.diagnostics.architecture import (  # noqa: E402
-    make_row,
-    semantic_digest,
-)
+#: Captured BEFORE anything heavy runs in this process: the probes must see a
+#: pristine environment. Importing the unturtle package here would pull the
+#: unsloth chain, which mutates ~25 os.environ keys in THIS process — and
+#: those would silently propagate to every probe, turning the import probes'
+#: "environ_added_keys" into an empty (and wrong) observation. For the same
+#: reason the diagnostics helpers are loaded from their FILE below, without
+#: executing unturtle/__init__, and library versions come from
+#: importlib.metadata rather than imports.
+_BASE_ENV = dict(os.environ)
+
+
+def _load_diagnostics():
+    spec = importlib.util.spec_from_file_location(
+        "_unturtle_diagnostics_architecture",
+        REPO_ROOT / "unturtle" / "diagnostics" / "architecture.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_diagnostics = _load_diagnostics()
+make_row = _diagnostics.make_row
+semantic_digest = _diagnostics.semantic_digest
 
 IMPORT_TARGETS = (
     "unturtle",
@@ -782,7 +803,7 @@ def run_probe(case: str, payload: dict | None, *, device: str) -> tuple[dict, di
         "--json",
         json.dumps(payload or {}),
     ]
-    env = dict(os.environ)
+    env = dict(_BASE_ENV)
     env["PYTHONPATH"] = str(REPO_ROOT)
     env["UNTURTLE_EXPECTED_ROOT"] = str(REPO_ROOT)
     env["PYTHONHASHSEED"] = "0"
@@ -1010,25 +1031,25 @@ def producer_info() -> dict:
         ).stdout.strip()
 
     dirty = git("status", "--porcelain")
-    import peft
-    import torch
-    import transformers
 
-    try:
-        import unsloth
+    # importlib.metadata, never imports: importing torch/unsloth here would
+    # mutate THIS process's environment, which the probes inherit as their
+    # baseline (see _BASE_ENV).
+    def version(name: str) -> str | None:
+        try:
+            return importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            return None
 
-        unsloth_version = getattr(unsloth, "__version__", "unknown")
-    except Exception:  # noqa: BLE001
-        unsloth_version = None
     return {
         "commit": git("rev-parse", "HEAD"),
         "worktree_clean": dirty == "",
         "dirty_paths": sorted(line.split(None, 1)[-1] for line in dirty.splitlines()),
         "python": platform.python_version(),
-        "torch": torch.__version__,
-        "transformers": transformers.__version__,
-        "unsloth": unsloth_version,
-        "peft": peft.__version__,
+        "torch": version("torch"),
+        "transformers": version("transformers"),
+        "unsloth": version("unsloth"),
+        "peft": version("peft"),
         "platform": platform.platform(),
         "import_root": "<repo>",
         "probes": [],  # filled during capture
