@@ -81,7 +81,9 @@ def describe_method_owner(cls: type, name: str) -> dict[str, Any]:
     try:
         static = inspect.getattr_static(cls, name)
     except AttributeError:
-        return {"status": "absent"}
+        # "resolution", not "status": the artifact reserves "status" for the
+        # typed row enum (observed/blocked/unsupported/unverified).
+        return {"resolution": "absent"}
     defined_in = None
     for base in cls.__mro__:
         if name in vars(base):
@@ -89,7 +91,7 @@ def describe_method_owner(cls: type, name: str) -> dict[str, Any]:
             break
     func = getattr(static, "__func__", static)
     return {
-        "status": "present",
+        "resolution": "present",
         "defined_in": defined_in,
         "qualname": getattr(func, "__qualname__", None),
         "module": getattr(func, "__module__", None),

@@ -52,7 +52,7 @@ def _own_owner(cls: type, name: str) -> dict:
     try:
         static = inspect.getattr_static(cls, name)
     except AttributeError:
-        return {"status": "absent"}
+        return {"resolution": "absent"}
     defined_in = None
     for base in cls.__mro__:
         if name in vars(base):
@@ -86,8 +86,8 @@ def test_method_owners_match_runtime(artifact):
         cls = _resolve_class(row["model_class"])
         for name, recorded in row["method_owners"].items():
             own = _own_owner(cls, name)
-            if recorded.get("status") == "absent":
-                assert own.get("status") == "absent", (family, name)
+            if recorded.get("resolution") == "absent":
+                assert own.get("resolution") == "absent", (family, name)
                 continue
             assert own["defined_in"] == recorded["defined_in"], (family, name)
             assert own["qualname"] == recorded["qualname"], (family, name)

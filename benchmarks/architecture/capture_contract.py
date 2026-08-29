@@ -718,10 +718,9 @@ def scan_mutation_sites() -> list[dict]:
 
 
 def reconcile_ledger(hits: list[dict]) -> dict:
+    # Coverage direction: every mutation-shaped scan hit must be claimed.
     claimed_flags = [False] * len(hits)
-    rows = []
     for row in MUTATION_LEDGER:
-        matched = []
         for claim in row["claims"]:
             for index, hit in enumerate(hits):
                 if (
@@ -729,21 +728,39 @@ def reconcile_ledger(hits: list[dict]) -> dict:
                     and claim["contains"] in hit["code"]
                 ):
                     claimed_flags[index] = True
-                    matched.append({"file": hit["file"], "line": hit["line"]})
-        status = "observed" if matched else "unverified"
+    unclaimed = [hit for index, hit in enumerate(hits) if not claimed_flags[index]]
+
+    # Anchoring direction: every claim must exist in the production tree.
+    # Checked against file CONTENT, not only scan hits — some anchors (e.g.
+    # the registry bootstrap definition) are not mutation-shaped lines.
+    file_cache: dict[str, str] = {}
+    rows = []
+    for row in MUTATION_LEDGER:
+        matched = []
+        for claim in row["claims"]:
+            for path in sorted((REPO_ROOT / "unturtle").rglob("*.py")):
+                rel = path.relative_to(REPO_ROOT).as_posix()
+                if not rel.endswith(claim["file"]):
+                    continue
+                text = file_cache.setdefault(rel, path.read_text(encoding="utf-8"))
+                if claim["contains"] in text:
+                    matched.append({"file": rel, "contains": claim["contains"]})
+                    break
+        status = "observed" if len(matched) == len(row["claims"]) else "unverified"
         rows.append(
             {
                 **row,
                 "row": make_row(
                     status,
-                    reason=None if matched else "claim not found in production tree",
+                    reason=None
+                    if status == "observed"
+                    else "claim not found in production tree",
                     source="static scan + curated ledger",
                     owner=row["owner"],
-                    evidence={"matched_sites": matched},
+                    evidence={"matched_claims": matched},
                 ),
             }
         )
-    unclaimed = [hit for index, hit in enumerate(hits) if not claimed_flags[index]]
     return {"rows": rows, "unclaimed_hits": unclaimed, "scanned_hits": len(hits)}
 
 
