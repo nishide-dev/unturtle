@@ -172,10 +172,10 @@ side of the measured crossover.
 | operation | fused QKV LoRA |
 | backend | custom `autograd.Function` over Unsloth primitives (`matmul_lora`, `fast_dequantize`); extends Unsloth `LoRA_QKV`. **Authors no Triton itself** — the fusion is at the autograd/GEMM level (`unturtle/kernels/fast_lora.py`) |
 | semantic scope | adds bias in forward and the bias gradient (`dQ.sum(0)`) in backward; standard `apply_lora_qkv` requires `bias=False` |
-| valid regime | CUDA + `lora_dropout == 0` + `bias == "none"` + LoRA present + no DoRA. The module itself carries **no guards**; all gating lives in `fast_diffusion_model.py:258-282` |
-| fallback | PEFT's default `LoraLinear.forward` — silent, with a one-shot warning (`fast_diffusion_model.py:284-287`) |
+| valid regime | CUDA + `lora_dropout == 0` + `bias == "none"` + LoRA present + no DoRA + **activations in the quantization compute dtype** (bf16/fp16). The module itself carries **no guards**; per-layer gating lives in `_patch_dream_peft`, and the dtype constraint is enforced model-wide in `patch_peft_model` (#177). The documented 4-bit + PEFT flow satisfies it because `unturtle/save.py::prepare_model_for_kbit_training` uses unsloth semantics (frozen params keep their loaded dtype) — peft's own prepare upcasts them to fp32, which no fused path (`matmul_lora`) can execute |
+| fallback | PEFT's default `LoraLinear.forward` — silent, with a one-shot warning. A model whose hidden-state dtype cannot feed the fused kernels (e.g. fp32-upcasted) skips **all** fast paths uniformly with the typed reason `incompatible_compute_dtype` (#177) — never a partially-fast model |
 | dispatch | default where the family matches |
-| parity evidence | differential against the unfused path |
+| parity evidence | differential against the unfused path; since #177, a 4-bit tiny fixture **executes** forward+backward with output/gradient parity against a genuinely unfused standard-PEFT arm (`tests/test_4bit_peft_fast_lora.py`). At 7B the retained `parity_preflight` now runs both arms end-to-end; its frozen scale-blind atol/rtol=2e-2 flags bf16 rounding on QKV outputs of magnitude ~50–140 (single-layer fp32 ground truth: the fast arm's error is *smaller* than the peft reference arm's own — 0.16 vs 0.25 on Q, 0.50 vs 0.83 on K). Tolerance recalibration is a #166 measurement decision |
 | end-to-end evidence | **not measured as a share of step time** |
 | provenance | `unturtle/kernels/fast_lora.py` |
 

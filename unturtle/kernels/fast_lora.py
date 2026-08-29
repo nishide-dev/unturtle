@@ -26,6 +26,14 @@ Mathematics::
 
 The weight-update part is identical to ``LoRA_QKV``; this class adds the bias
 addition in forward and the bias gradient (``dQ.sum(0)`` etc.) in backward.
+
+Dtype contract (#177): activations must be in the quantization compute dtype
+(bf16/fp16) — ``matmul_lora`` multiplies the activation directly against the
+dequantized weight and rejects fp32 hidden states. This module carries no
+guards; ``FastDiffusionModel.patch_peft_model`` enforces the constraint
+model-wide (an incompatible model gets NO fast hooks), and
+``unturtle.save.prepare_model_for_kbit_training`` keeps frozen parameters at
+their loaded dtype so the documented 4-bit + PEFT flow satisfies it.
 """
 
 from __future__ import annotations

@@ -282,9 +282,7 @@ class Test4BitPeftFastLora:
             f"reference arm is not unfused: {ref_presence}"
         )
         # same adapters on both arms
-        lora_state = {
-            k: v for k, v in fast.state_dict().items() if ".lora_" in k
-        }
+        lora_state = {k: v for k, v in fast.state_dict().items() if ".lora_" in k}
         _missing, unexpected = reference.load_state_dict(lora_state, strict=False)
         assert not unexpected, f"adapter state mismatch: {unexpected[:5]}"
 
@@ -317,9 +315,7 @@ class Test4BitPeftFastLora:
             f"(atol={GRAD_ATOL}, rtol={GRAD_RTOL})"
         )
 
-    def test_upcasted_model_skips_all_fast_paths_uniformly(
-        self, tiny_dream_checkpoint
-    ):
+    def test_upcasted_model_skips_all_fast_paths_uniformly(self, tiny_dream_checkpoint):
         """A model whose hidden states were upcast to fp32 (e.g. by running
         peft's own ``prepare_model_for_kbit_training``) gets NO fast hooks —
         not QKV, not O, not MLP, not the fast attention forward — and still
@@ -370,9 +366,7 @@ class Test4BitPeftFastLora:
 
 
 class TestBf16NonQuantizedExecution:
-    def test_bf16_peft_forward_backward_through_fused_set(
-        self, tiny_dream_checkpoint
-    ):
+    def test_bf16_peft_forward_backward_through_fused_set(self, tiny_dream_checkpoint):
         """Non-quantized bf16 + PEFT executes forward/backward with the fused
         set installed (the regime that already worked must keep working)."""
         from unturtle import FastDiffusionModel
