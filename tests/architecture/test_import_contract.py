@@ -47,10 +47,20 @@ def artifact() -> dict:
 
 
 @pytest.fixture(scope="module")
-def fresh_import_observation() -> dict:
+def fresh_import_observation(artifact) -> dict:
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as handle:
         out = pathlib.Path(handle.name)
+    # This pytest process has already imported the unsloth chain (and earlier
+    # tests may have run kbit preparation), so its os.environ is NOT the
+    # pristine baseline the artifact was captured against. Reconstruct one:
+    # drop every key the artifact observed the import adding, plus any
+    # UNSLOTH_* runtime state (e.g. UNSLOTH_MIXED_PRECISION from prepare).
     env = dict(os.environ)
+    for key in artifact["imports"]["unturtle"]["environ_added_keys"]:
+        env.pop(key, None)
+    for key in list(env):
+        if key.startswith("UNSLOTH_"):
+            env.pop(key, None)
     env["PYTHONPATH"] = str(REPO_ROOT)
     env["UNTURTLE_EXPECTED_ROOT"] = str(REPO_ROOT)
     proc = subprocess.run(

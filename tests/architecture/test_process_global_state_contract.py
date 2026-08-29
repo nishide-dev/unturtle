@@ -98,16 +98,42 @@ def test_rng_contract_defect_is_real_and_recorded(artifact):
 
 
 def test_sdpa_row_matches_runtime_defaults(artifact):
+    """Compared against a FRESH process: the artifact records process-start
+    defaults, and this long-lived pytest process's flags are legitimately
+    mutated by other tests (e.g. sdpa_kernel contexts, unsloth patches)."""
+    import json as json_mod
+    import os
+    import subprocess
+    import sys
+    import tempfile
+
     row = artifact["process_global_state"]["sdpa"]
-    assert row["available_backends"] == {
-        "flash": bool(torch.backends.cuda.flash_sdp_enabled()),
-        "mem_efficient": bool(torch.backends.cuda.mem_efficient_sdp_enabled()),
-        "math": bool(torch.backends.cuda.math_sdp_enabled()),
-        "cudnn": bool(torch.backends.cuda.cudnn_sdp_enabled()),
-    }
-    assert row["tf32"]["allow_bf16_reduced_precision_reduction"] == bool(
-        torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction
+    probe = REPO_ROOT / "benchmarks" / "architecture" / "subprocess_probe.py"
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as handle:
+        out = handle.name
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(REPO_ROOT)
+    env["UNTURTLE_EXPECTED_ROOT"] = str(REPO_ROOT)
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(probe),
+            "process-global",
+            "--out",
+            out,
+            "--json",
+            json_mod.dumps({"case": "sdpa"}),
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
     )
+    assert proc.returncode == 0, proc.stderr[-500:]
+    fresh = json_mod.loads(pathlib.Path(out).read_text())
+    assert fresh["available_backends"] == row["available_backends"]
+    assert fresh["tf32"] == row["tf32"]
+    assert fresh["deterministic"] == row["deterministic"]
     assert "pin the backend" in row["policy"] or "unit level" in row["policy"]
 
 
