@@ -385,7 +385,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "4122b898cfdadf7b"
+        "torch_cpu_rng_digest": "ab0801e019195860"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -539,7 +539,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "8225049a43a9b18c"
+        "torch_cpu_rng_digest": "569a77e774b7ff68"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -693,7 +693,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "eff2a473d7c5d7c9"
+        "torch_cpu_rng_digest": "2b26000d747651bd"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -847,7 +847,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "746b8409b3661147"
+        "torch_cpu_rng_digest": "294bd8264b59dc51"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1001,7 +1001,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "449fb80d96fdda4c"
+        "torch_cpu_rng_digest": "bad6212d768d9da9"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1155,7 +1155,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "1e579932d5c5f0d6"
+        "torch_cpu_rng_digest": "aa59177a8b635e4a"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -2456,8 +2456,8 @@
       "output": {
         "bit_identical": false,
         "volatile": {
-          "max_abs_delta": 0.005457580089569092,
-          "relative_norm": 0.00641678599640727
+          "max_abs_delta": 0.007845096290111542,
+          "relative_norm": 0.01120704784989357
         },
         "within_rel_norm_0p05": true
       },
@@ -2550,7 +2550,7 @@
     }
   },
   "producer": {
-    "commit": "0cab4da611f8096b81ae6e41a7a8637dbde07099",
+    "commit": "3d84422fd1a2ccc7b62d9a7686f0ba72b848b1bf",
     "dirty_paths": [],
     "import_root": "<repo>",
     "peft": "0.19.1",
@@ -3013,6 +3013,22 @@
           "<tmp>",
           "--json",
           "{\"case\": \"sdpa\"}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {},
+        "case": "registry-hub",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "registry-hub",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{}"
         ],
         "cuda_visible_devices": "1",
         "cwd": "<repo>",
@@ -3742,6 +3758,111 @@
         }
       }
     }
+  },
+  "registry_hub": {
+    "args": {},
+    "explicit_builtin_bootstrap": {
+      "bootstrapped_flag": true,
+      "deterministic_across_two_bootstraps": true,
+      "ordered_axis_names": {
+        "backbone_integrations": [
+          "llada",
+          "mdlm-dit",
+          "dream",
+          "tiny-a2d-llama",
+          "tiny-a2d-qwen2",
+          "tiny-a2d-qwen3",
+          "modernbert-diffusion",
+          "diffusion-gemma"
+        ],
+        "conversions": [
+          "tiny_a2d",
+          "prediff_hybrid"
+        ],
+        "generation_algorithms": [
+          "block_ar",
+          "bd3lm",
+          "block_decode",
+          "mdlm",
+          "flowlm",
+          "ladiff",
+          "dfm"
+        ],
+        "methods": [
+          "mdlm",
+          "dfm",
+          "flowlm",
+          "tiny_a2d",
+          "prediff_hybrid"
+        ],
+        "post_training_recipes": [
+          "opd"
+        ],
+        "processes": [
+          "masked",
+          "discrete_flow",
+          "continuous_flow"
+        ],
+        "training_recipes": [
+          "mdlm",
+          "dfm",
+          "flowlm"
+        ]
+      },
+      "status": "observed",
+      "surroundings": {
+        "autoclass_changed": false,
+        "default_hub_changed": false,
+        "environ_changed_keys": [],
+        "python_rng_consumed": false,
+        "torch_rng_consumed": false
+      }
+    },
+    "fresh_empty_hub": {
+      "all_axes_empty": true,
+      "axis_names": {
+        "backbone_integrations": [],
+        "conversions": [],
+        "generation_algorithms": [],
+        "methods": [],
+        "post_training_recipes": [],
+        "processes": [],
+        "training_recipes": []
+      },
+      "bootstrapped_flag": false,
+      "status": "observed",
+      "surroundings": {
+        "autoclass_changed": false,
+        "default_hub_changed": false,
+        "environ_changed_keys": [],
+        "python_rng_consumed": false,
+        "torch_rng_consumed": false
+      }
+    },
+    "hub_isolation": {
+      "backing_storage_shared": false,
+      "duplicate_registration_raised": "DuplicateRegistrationError: process 'probe-sentinel-a' is already registered",
+      "registry_objects_shared": false,
+      "sentinel_leaked_to_default_hub": false,
+      "sentinel_leaked_to_other_hub": false,
+      "sentinel_visible_in_registering_hub": true,
+      "status": "observed",
+      "surroundings": {
+        "autoclass_changed": false,
+        "default_hub_changed": false,
+        "environ_changed_keys": [],
+        "python_rng_consumed": false,
+        "torch_rng_consumed": false
+      }
+    },
+    "probe": "registry-hub",
+    "repeat_bootstrap": {
+      "axis_counts_unchanged": true,
+      "behavior": "duplicate_rejection",
+      "raised": "ValueError: hub is already bootstrapped; builtin bootstrap is not idempotent by design \u2014 create a fresh RegistryHub instead",
+      "status": "observed"
+    },
+    "status": "observed"
   },
   "runtime_mutations": {
     "rows": [
@@ -4853,7 +4974,7 @@
     "unclaimed_hits": []
   },
   "schema_version": 1,
-  "semantic_digest": "83ad014cb7ce0433e21608eb804d15a202044c28bc564781e09f9051d907d147",
+  "semantic_digest": "03f6a017824d977feea2e84ee09cf87fd5b46e080768d347ecb8fbf570db134a",
   "verdicts": {
     "diffusion_gemma_class_swap": {
       "area": "DiffusionGemma runtime class swap",
@@ -5010,6 +5131,25 @@
       "row": {
         "evidence": {
           "import_probe": "default hub bootstrapped with 7 axes at import"
+        },
+        "owner": "#184",
+        "reason": null,
+        "source": "characterization sections",
+        "status": "observed"
+      },
+      "verdict": "KEEP"
+    },
+    "registry_hub_explicit_contract": {
+      "area": "RegistryHub explicit-hub contract",
+      "row": {
+        "evidence": {
+          "registry_hub": {
+            "bootstrap_deterministic": true,
+            "fresh_empty_hub": true,
+            "hubs_isolated": true,
+            "note": "re-bootstrap of the same hub is DUPLICATE REJECTION (ValueError, counts unchanged), not idempotent \u2014 frozen as observed; #185/#186 and external plugins can rely on supplied hubs being empty, deterministic to bootstrap, and storage-isolated",
+            "repeat_bootstrap_behavior": "duplicate_rejection"
+          }
         },
         "owner": "#184",
         "reason": null,
