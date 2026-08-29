@@ -211,6 +211,9 @@ def test_artifact_unpinned_backend_is_inadmissible(artifact):
 def test_artifact_persistent_weights_identical_everywhere(artifact):
     for case, row in artifact["cases"].items():
         for key, cond in row["conditions"].items():
+            if cond.get("status") != "observed":  # typed blocked (e.g. cuda fp32 flash)
+                assert cond.get("reason"), (case, key)
+                continue
             reload = cond["arms"]["reload"]
             assert reload["first_persistent_mismatch"] is None, (case, key)
             assert (
