@@ -38,6 +38,8 @@ from __future__ import annotations
 from contextvars import ContextVar
 from typing import Any
 
+from unturtle_flm.state_update import apply_state_update
+
 # --- private profiling seam (#166 Stage 1) -----------------------------------
 #
 # DEFAULT OFF. `_OBSERVER` is None in every normal run, so the only cost on the
@@ -240,6 +242,71 @@ def run_flm_request(model: Any, request: Any) -> dict[str, Any]:
     }
 
 
+def _reference_uses_compile() -> bool:
+    """Whether the reference DIT was imported with compilation enabled.
+
+    Read live rather than cached: the flag is a module attribute, and reading it
+    at call time is what makes the compiled axis testable at all.
+    """
+    try:
+        from unturtle_flm._reference import dit
+    except ImportError:
+        # Cannot show it is eager, so do not claim it is.
+        return True
+    return bool(getattr(dit, "USE_COMPILE", True))
+
+
+def _execution_context(
+    model: Any,
+    steps: int,
+    gamma: float,
+    batch: int,
+    length: int,
+    vocab: int,
+    device: Any,
+) -> dict[str, Any]:
+    """Describe the execution cell for the state-update scope gate.
+
+    Reports what is true, never what would be convenient: an unresolvable axis
+    is left as None so the guard rejects rather than assuming. The checkpoint is
+    identified by repo_id AND revision, because the measurement was made against
+    one pinned revision and a moved tag is a different model.
+    """
+    import torch
+
+    checkpoint = getattr(model, "flm_checkpoint", None)
+    if checkpoint is None:
+        checkpoint_id = None
+    else:
+        checkpoint_id = f"{checkpoint.repo_id}@{checkpoint.revision}"
+
+    if device.type == "cuda":
+        gpu_name = torch.cuda.get_device_name(device)
+        cuda_version = torch.version.cuda
+    else:
+        gpu_name = None
+        cuda_version = None
+
+    return {
+        "gamma": gamma,
+        "steps": steps,
+        "batch": batch,
+        "length": length,
+        "vocab": vocab,
+        "checkpoint": checkpoint_id,
+        "torch_version": torch.__version__,
+        "cuda_version": cuda_version,
+        "gpu_name": gpu_name,
+        # Read from the reference module that actually decides it (DIT_USE_COMPILE
+        # at import time). An earlier version read `model._unturtle_compiled`,
+        # an attribute nothing ever assigns — so it was a constant False, and a
+        # compiled model would have been labelled eager and admitted.
+        # torch.compile may reassociate the very arithmetic whose bit identity
+        # the fast path depends on, so this axis has to be real.
+        "compiled": _reference_uses_compile(),
+    }
+
+
 def run_fmlm_request(model: Any, request: Any) -> dict[str, Any]:
     """Flow-map composition — oracle FMLM.generate_samples, line-cited.
     NEVER routes through the FLM Euler loop; every forward carries the
@@ -261,6 +328,11 @@ def run_fmlm_request(model: Any, request: Any) -> dict[str, Any]:
     device = next(model.parameters()).device
     dtype = next(model.parameters()).dtype
     use_jvp = _use_jvp_attn(model)
+    # Built ONCE per request, outside the loop: the state-update fast path is
+    # admitted only inside the cell the Stage-2 outer-wall measurement actually
+    # covers, and these are the axes that bound it. Anything unresolvable here
+    # stays None, which the guard treats as "not shown to be in scope".
+    execution_context = _execution_context(model, num_steps, gamma, B, L, V, device)
     flow_map_calls = 0
     # Resolved ONCE per request: a per-boundary lookup would put a ContextVar
     # read on the hot path for no isolation benefit.
@@ -312,20 +384,30 @@ def run_fmlm_request(model: Any, request: Any) -> dict[str, Any]:
                     weight_D = (t_tilde.view(-1, 1, 1) - t_curr.view(-1, 1, 1)) / (
                         1.0 - t_curr.view(-1, 1, 1)
                     )
-                    z_tilde = weight_z * z + weight_D * D_st_pred
-
                     if gamma > 0:
                         noise_std = gamma * sigma_target.view(-1, 1, 1)
                         mean_adjustment = sigma_tilde.view(
                             -1, 1, 1
                         ) - sigma_target.view(-1, 1, 1)
-                        z = (
-                            z_tilde
-                            + mean_adjustment * D_st_pred
-                            + noise_std * torch.randn_like(z)
+                        # `eps` is drawn HERE, not inside the helper, so the RNG
+                        # stream advances identically whichever path runs.
+                        eps = torch.randn_like(z)
+                        z = apply_state_update(
+                            z=z,
+                            d_pred=D_st_pred,
+                            weight_z=weight_z,
+                            weight_d=weight_D,
+                            mean_adjustment=mean_adjustment,
+                            noise_std=noise_std,
+                            eps=eps,
+                            context=execution_context,
                         )
                     else:
-                        z = z_tilde
+                        # gamma == 0 is unspecialized: the fast path was only
+                        # measured for the churn branch, and z_tilde is computed
+                        # here rather than above so the gamma>0 path does not
+                        # materialize a value it recomputes.
+                        z = weight_z * z + weight_D * D_st_pred
 
         with _scope(observer, "endpoint_decode"):
             tokens = z.argmax(dim=-1)  # algo.py:1566
