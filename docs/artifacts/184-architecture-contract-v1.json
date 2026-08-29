@@ -1,0 +1,4958 @@
+{
+  "generation": {
+    "dream": {
+      "args": {
+        "family": "dream"
+      },
+      "candidate_methods_instrumented": [
+        "_block_decode_loop",
+        "_get_block_decode_query_start",
+        "_postprocess_block_decode_logits",
+        "_sample",
+        "_sample_with_cache"
+      ],
+      "family": "dream",
+      "generate_owner": "unturtle.models.backbones.dream.generation_utils.DreamGenerationMixin",
+      "per_algorithm": {
+        "auto": {
+          "default_config_run": {
+            "invoked_methods": [],
+            "nfe": 0,
+            "output_shape": null,
+            "raised": "AttributeError: 'GenerationConfig' object has no attribute 'eps'"
+          },
+          "explicit_config_run": {
+            "invoked_methods": [
+              "_sample_with_cache",
+              "_block_decode_loop",
+              "_get_block_decode_query_start",
+              "_postprocess_block_decode_logits"
+            ],
+            "nfe": 6,
+            "output_shape": [
+              1,
+              16
+            ],
+            "raised": null
+          },
+          "reason": null,
+          "requested_steps": 4,
+          "status": "observed"
+        },
+        "bd3lm": {
+          "default_config_run": {
+            "invoked_methods": [],
+            "nfe": 0,
+            "output_shape": null,
+            "raised": "ValueError: DreamModel does not implement BD3LM (_sample_block_diffusion); supported on the TinyA2D family. Use algorithm='mdlm' or 'block_decode'."
+          },
+          "reason": null,
+          "requested_steps": 4,
+          "status": "observed"
+        },
+        "block_ar": {
+          "default_config_run": {
+            "invoked_methods": [],
+            "nfe": 0,
+            "output_shape": null,
+            "raised": "ValueError: DreamModel does not support block_ar (native canvas block diffusion, DiffusionGemma family); use algorithm='mdlm' or 'block_decode' for masked models."
+          },
+          "reason": null,
+          "requested_steps": 4,
+          "status": "observed"
+        },
+        "block_decode": {
+          "default_config_run": {
+            "invoked_methods": [],
+            "nfe": 0,
+            "output_shape": null,
+            "raised": "AttributeError: 'GenerationConfig' object has no attribute 'eps'"
+          },
+          "explicit_config_run": {
+            "invoked_methods": [
+              "_sample_with_cache",
+              "_block_decode_loop",
+              "_get_block_decode_query_start",
+              "_postprocess_block_decode_logits"
+            ],
+            "nfe": 6,
+            "output_shape": [
+              1,
+              16
+            ],
+            "raised": null
+          },
+          "reason": null,
+          "requested_steps": 4,
+          "status": "observed"
+        },
+        "mdlm": {
+          "default_config_run": {
+            "invoked_methods": [],
+            "nfe": 0,
+            "output_shape": null,
+            "raised": "AttributeError: 'GenerationConfig' object has no attribute 'eps'"
+          },
+          "explicit_config_run": {
+            "invoked_methods": [
+              "_sample"
+            ],
+            "nfe": 4,
+            "output_shape": [
+              1,
+              16
+            ],
+            "raised": null
+          },
+          "reason": null,
+          "requested_steps": 4,
+          "status": "observed"
+        }
+      },
+      "probe": "generation",
+      "registered_algorithms": [
+        "bd3lm",
+        "block_ar",
+        "block_decode",
+        "dfm",
+        "flowlm",
+        "ladiff",
+        "mdlm"
+      ],
+      "status": "observed"
+    },
+    "tiny_a2d_llama": {
+      "args": {
+        "family": "tiny_a2d_llama"
+      },
+      "candidate_methods_instrumented": [
+        "_block_decode_loop",
+        "_get_block_decode_query_start",
+        "_postprocess_block_decode_logits",
+        "_sample",
+        "_sample_block_diffusion",
+        "_sample_with_cache"
+      ],
+      "family": "tiny_a2d_llama",
+      "generate_owner": "unturtle.models.generation.diffusion_generation_utils.MaskedDiffusionGenerationMixin",
+      "per_algorithm": {
+        "auto": {
+          "default_config_run": {
+            "invoked_methods": [
+              "_sample_with_cache",
+              "_block_decode_loop",
+              "_get_block_decode_query_start",
+              "_postprocess_block_decode_logits"
+            ],
+            "nfe": 6,
+            "output_shape": [
+              1,
+              16
+            ],
+            "raised": null
+          },
+          "reason": null,
+          "requested_steps": 4,
+          "status": "observed"
+        },
+        "bd3lm": {
+          "default_config_run": {
+            "invoked_methods": [
+              "_sample_block_diffusion"
+            ],
+            "nfe": 0,
+            "output_shape": null,
+            "raised": "ValueError: `pad_token_id` must be set in `generation_config` or `model.config` before calling `generate(algorithm='bd3lm')`."
+          },
+          "explicit_config_run": {
+            "invoked_methods": [
+              "_sample_block_diffusion"
+            ],
+            "nfe": 0,
+            "output_shape": null,
+            "raised": "ValueError: `pad_token_id` must be set in `generation_config` or `model.config` before calling `generate(algorithm='bd3lm')`."
+          },
+          "reason": null,
+          "requested_steps": 4,
+          "status": "observed"
+        },
+        "block_ar": {
+          "default_config_run": {
+            "invoked_methods": [],
+            "nfe": 0,
+            "output_shape": null,
+            "raised": "ValueError: TinyA2DLlamaLMHeadModel does not support block_ar (native canvas block diffusion, DiffusionGemma family); use algorithm='mdlm' or 'block_decode' for masked mode"
+          },
+          "reason": null,
+          "requested_steps": 4,
+          "status": "observed"
+        },
+        "block_decode": {
+          "default_config_run": {
+            "invoked_methods": [
+              "_sample_with_cache",
+              "_block_decode_loop",
+              "_get_block_decode_query_start",
+              "_postprocess_block_decode_logits"
+            ],
+            "nfe": 6,
+            "output_shape": [
+              1,
+              16
+            ],
+            "raised": null
+          },
+          "reason": null,
+          "requested_steps": 4,
+          "status": "observed"
+        },
+        "mdlm": {
+          "default_config_run": {
+            "invoked_methods": [
+              "_sample"
+            ],
+            "nfe": 4,
+            "output_shape": [
+              1,
+              16
+            ],
+            "raised": null
+          },
+          "reason": null,
+          "requested_steps": 4,
+          "status": "observed"
+        }
+      },
+      "probe": "generation",
+      "registered_algorithms": [
+        "bd3lm",
+        "block_ar",
+        "block_decode",
+        "dfm",
+        "flowlm",
+        "ladiff",
+        "mdlm"
+      ],
+      "status": "observed"
+    }
+  },
+  "imports": {
+    "unturtle": {
+      "args": {
+        "module": "unturtle"
+      },
+      "autoclass": {
+        "auto_causal_lm_extra": [],
+        "auto_masked_lm_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "auto_model_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "config_mapping_extra": [
+          "mdlm-dit->MDLMDiTConfig",
+          "modernbert-diffusion->DiffusionModernBertConfig",
+          "tiny-a2d-llama->TinyA2DLlamaConfig",
+          "tiny-a2d-qwen2->TinyA2DQwen2Config",
+          "tiny-a2d-qwen3->TinyA2DQwen3Config"
+        ],
+        "transformers_imported": true
+      },
+      "default_registry_hub": {
+        "axes": {
+          "backbone_integrations": [
+            "diffusion-gemma",
+            "dream",
+            "llada",
+            "mdlm-dit",
+            "modernbert-diffusion",
+            "tiny-a2d-llama",
+            "tiny-a2d-qwen2",
+            "tiny-a2d-qwen3"
+          ],
+          "conversions": [
+            "prediff_hybrid",
+            "tiny_a2d"
+          ],
+          "generation_algorithms": [
+            "bd3lm",
+            "block_ar",
+            "block_decode",
+            "dfm",
+            "flowlm",
+            "ladiff",
+            "mdlm"
+          ],
+          "methods": [
+            "dfm",
+            "flowlm",
+            "mdlm",
+            "prediff_hybrid",
+            "tiny_a2d"
+          ],
+          "post_training_recipes": [
+            "opd"
+          ],
+          "processes": [
+            "continuous_flow",
+            "discrete_flow",
+            "masked"
+          ],
+          "training_recipes": [
+            "dfm",
+            "flowlm",
+            "mdlm"
+          ]
+        },
+        "bootstrapped": true,
+        "default_hub_created": true,
+        "module_imported": true
+      },
+      "environ_added_keys": [],
+      "environ_changed_keys": [
+        "UNSLOTH_IGNORED_TOKENIZER_NAMES"
+      ],
+      "module": "unturtle",
+      "modules_after": {
+        "top_level": [
+          "accelerate",
+          "bitsandbytes",
+          "peft",
+          "torch",
+          "transformers",
+          "triton",
+          "trl",
+          "unsloth",
+          "unsloth_zoo",
+          "unturtle"
+        ],
+        "tracked_count": 2889
+      },
+      "modules_before": {
+        "top_level": [],
+        "tracked_count": 0
+      },
+      "probe": "import",
+      "python_random_consumed": true,
+      "torch": {
+        "checkpoint_fn": "torch.utils.checkpoint.checkpoint",
+        "cuda_initialized": true,
+        "default_dtype": "torch.float32",
+        "grad_enabled": true,
+        "imported": true
+      },
+      "unsloth_env": {
+        "UNSLOTH_ENABLE_CCE": "0",
+        "UNSLOTH_HAS_FBGEMM": "0",
+        "UNSLOTH_IGNORED_TOKENIZER_NAMES": "unsloth/qwen2.5-coder-1.5b-instruct-bnb-4bit\nunsloth/qwen2.5-coder-7b-instruct-bnb-4bit\nunsloth/qwen2.5-coder-1.5b-instruct\nunsloth/qwen2.5-coder-7b-instruct",
+        "UNSLOTH_IS_PRESENT": "1",
+        "UNSLOTH_PATCHED": "1",
+        "UNSLOTH_ZOO_IS_PRESENT": "1"
+      },
+      "volatile": {
+        "torch_cpu_rng_digest": "d2f6aee533d70299"
+      },
+      "warnings": [
+        "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
+      ]
+    },
+    "unturtle.fast_diffusion_model": {
+      "args": {
+        "module": "unturtle.fast_diffusion_model"
+      },
+      "autoclass": {
+        "auto_causal_lm_extra": [],
+        "auto_masked_lm_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "auto_model_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "config_mapping_extra": [
+          "mdlm-dit->MDLMDiTConfig",
+          "modernbert-diffusion->DiffusionModernBertConfig",
+          "tiny-a2d-llama->TinyA2DLlamaConfig",
+          "tiny-a2d-qwen2->TinyA2DQwen2Config",
+          "tiny-a2d-qwen3->TinyA2DQwen3Config"
+        ],
+        "transformers_imported": true
+      },
+      "default_registry_hub": {
+        "axes": {
+          "backbone_integrations": [
+            "diffusion-gemma",
+            "dream",
+            "llada",
+            "mdlm-dit",
+            "modernbert-diffusion",
+            "tiny-a2d-llama",
+            "tiny-a2d-qwen2",
+            "tiny-a2d-qwen3"
+          ],
+          "conversions": [
+            "prediff_hybrid",
+            "tiny_a2d"
+          ],
+          "generation_algorithms": [
+            "bd3lm",
+            "block_ar",
+            "block_decode",
+            "dfm",
+            "flowlm",
+            "ladiff",
+            "mdlm"
+          ],
+          "methods": [
+            "dfm",
+            "flowlm",
+            "mdlm",
+            "prediff_hybrid",
+            "tiny_a2d"
+          ],
+          "post_training_recipes": [
+            "opd"
+          ],
+          "processes": [
+            "continuous_flow",
+            "discrete_flow",
+            "masked"
+          ],
+          "training_recipes": [
+            "dfm",
+            "flowlm",
+            "mdlm"
+          ]
+        },
+        "bootstrapped": true,
+        "default_hub_created": true,
+        "module_imported": true
+      },
+      "environ_added_keys": [],
+      "environ_changed_keys": [
+        "UNSLOTH_IGNORED_TOKENIZER_NAMES"
+      ],
+      "module": "unturtle.fast_diffusion_model",
+      "modules_after": {
+        "top_level": [
+          "accelerate",
+          "bitsandbytes",
+          "peft",
+          "torch",
+          "transformers",
+          "triton",
+          "trl",
+          "unsloth",
+          "unsloth_zoo",
+          "unturtle"
+        ],
+        "tracked_count": 2889
+      },
+      "modules_before": {
+        "top_level": [],
+        "tracked_count": 0
+      },
+      "probe": "import",
+      "python_random_consumed": true,
+      "torch": {
+        "checkpoint_fn": "torch.utils.checkpoint.checkpoint",
+        "cuda_initialized": true,
+        "default_dtype": "torch.float32",
+        "grad_enabled": true,
+        "imported": true
+      },
+      "unsloth_env": {
+        "UNSLOTH_ENABLE_CCE": "0",
+        "UNSLOTH_HAS_FBGEMM": "0",
+        "UNSLOTH_IGNORED_TOKENIZER_NAMES": "unsloth/qwen2.5-coder-1.5b-instruct-bnb-4bit\nunsloth/qwen2.5-coder-7b-instruct-bnb-4bit\nunsloth/qwen2.5-coder-1.5b-instruct\nunsloth/qwen2.5-coder-7b-instruct",
+        "UNSLOTH_IS_PRESENT": "1",
+        "UNSLOTH_PATCHED": "1",
+        "UNSLOTH_ZOO_IS_PRESENT": "1"
+      },
+      "volatile": {
+        "torch_cpu_rng_digest": "59dc18b4ffd5e191"
+      },
+      "warnings": [
+        "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
+      ]
+    },
+    "unturtle.methods": {
+      "args": {
+        "module": "unturtle.methods"
+      },
+      "autoclass": {
+        "auto_causal_lm_extra": [],
+        "auto_masked_lm_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "auto_model_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "config_mapping_extra": [
+          "mdlm-dit->MDLMDiTConfig",
+          "modernbert-diffusion->DiffusionModernBertConfig",
+          "tiny-a2d-llama->TinyA2DLlamaConfig",
+          "tiny-a2d-qwen2->TinyA2DQwen2Config",
+          "tiny-a2d-qwen3->TinyA2DQwen3Config"
+        ],
+        "transformers_imported": true
+      },
+      "default_registry_hub": {
+        "axes": {
+          "backbone_integrations": [
+            "diffusion-gemma",
+            "dream",
+            "llada",
+            "mdlm-dit",
+            "modernbert-diffusion",
+            "tiny-a2d-llama",
+            "tiny-a2d-qwen2",
+            "tiny-a2d-qwen3"
+          ],
+          "conversions": [
+            "prediff_hybrid",
+            "tiny_a2d"
+          ],
+          "generation_algorithms": [
+            "bd3lm",
+            "block_ar",
+            "block_decode",
+            "dfm",
+            "flowlm",
+            "ladiff",
+            "mdlm"
+          ],
+          "methods": [
+            "dfm",
+            "flowlm",
+            "mdlm",
+            "prediff_hybrid",
+            "tiny_a2d"
+          ],
+          "post_training_recipes": [
+            "opd"
+          ],
+          "processes": [
+            "continuous_flow",
+            "discrete_flow",
+            "masked"
+          ],
+          "training_recipes": [
+            "dfm",
+            "flowlm",
+            "mdlm"
+          ]
+        },
+        "bootstrapped": true,
+        "default_hub_created": true,
+        "module_imported": true
+      },
+      "environ_added_keys": [],
+      "environ_changed_keys": [
+        "UNSLOTH_IGNORED_TOKENIZER_NAMES"
+      ],
+      "module": "unturtle.methods",
+      "modules_after": {
+        "top_level": [
+          "accelerate",
+          "bitsandbytes",
+          "peft",
+          "torch",
+          "transformers",
+          "triton",
+          "trl",
+          "unsloth",
+          "unsloth_zoo",
+          "unturtle"
+        ],
+        "tracked_count": 2889
+      },
+      "modules_before": {
+        "top_level": [],
+        "tracked_count": 0
+      },
+      "probe": "import",
+      "python_random_consumed": true,
+      "torch": {
+        "checkpoint_fn": "torch.utils.checkpoint.checkpoint",
+        "cuda_initialized": true,
+        "default_dtype": "torch.float32",
+        "grad_enabled": true,
+        "imported": true
+      },
+      "unsloth_env": {
+        "UNSLOTH_ENABLE_CCE": "0",
+        "UNSLOTH_HAS_FBGEMM": "0",
+        "UNSLOTH_IGNORED_TOKENIZER_NAMES": "unsloth/qwen2.5-coder-1.5b-instruct-bnb-4bit\nunsloth/qwen2.5-coder-7b-instruct-bnb-4bit\nunsloth/qwen2.5-coder-1.5b-instruct\nunsloth/qwen2.5-coder-7b-instruct",
+        "UNSLOTH_IS_PRESENT": "1",
+        "UNSLOTH_PATCHED": "1",
+        "UNSLOTH_ZOO_IS_PRESENT": "1"
+      },
+      "volatile": {
+        "torch_cpu_rng_digest": "503739fde41584e5"
+      },
+      "warnings": [
+        "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
+      ]
+    },
+    "unturtle.models": {
+      "args": {
+        "module": "unturtle.models"
+      },
+      "autoclass": {
+        "auto_causal_lm_extra": [],
+        "auto_masked_lm_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "auto_model_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "config_mapping_extra": [
+          "mdlm-dit->MDLMDiTConfig",
+          "modernbert-diffusion->DiffusionModernBertConfig",
+          "tiny-a2d-llama->TinyA2DLlamaConfig",
+          "tiny-a2d-qwen2->TinyA2DQwen2Config",
+          "tiny-a2d-qwen3->TinyA2DQwen3Config"
+        ],
+        "transformers_imported": true
+      },
+      "default_registry_hub": {
+        "axes": {
+          "backbone_integrations": [
+            "diffusion-gemma",
+            "dream",
+            "llada",
+            "mdlm-dit",
+            "modernbert-diffusion",
+            "tiny-a2d-llama",
+            "tiny-a2d-qwen2",
+            "tiny-a2d-qwen3"
+          ],
+          "conversions": [
+            "prediff_hybrid",
+            "tiny_a2d"
+          ],
+          "generation_algorithms": [
+            "bd3lm",
+            "block_ar",
+            "block_decode",
+            "dfm",
+            "flowlm",
+            "ladiff",
+            "mdlm"
+          ],
+          "methods": [
+            "dfm",
+            "flowlm",
+            "mdlm",
+            "prediff_hybrid",
+            "tiny_a2d"
+          ],
+          "post_training_recipes": [
+            "opd"
+          ],
+          "processes": [
+            "continuous_flow",
+            "discrete_flow",
+            "masked"
+          ],
+          "training_recipes": [
+            "dfm",
+            "flowlm",
+            "mdlm"
+          ]
+        },
+        "bootstrapped": true,
+        "default_hub_created": true,
+        "module_imported": true
+      },
+      "environ_added_keys": [],
+      "environ_changed_keys": [
+        "UNSLOTH_IGNORED_TOKENIZER_NAMES"
+      ],
+      "module": "unturtle.models",
+      "modules_after": {
+        "top_level": [
+          "accelerate",
+          "bitsandbytes",
+          "peft",
+          "torch",
+          "transformers",
+          "triton",
+          "trl",
+          "unsloth",
+          "unsloth_zoo",
+          "unturtle"
+        ],
+        "tracked_count": 2889
+      },
+      "modules_before": {
+        "top_level": [],
+        "tracked_count": 0
+      },
+      "probe": "import",
+      "python_random_consumed": true,
+      "torch": {
+        "checkpoint_fn": "torch.utils.checkpoint.checkpoint",
+        "cuda_initialized": true,
+        "default_dtype": "torch.float32",
+        "grad_enabled": true,
+        "imported": true
+      },
+      "unsloth_env": {
+        "UNSLOTH_ENABLE_CCE": "0",
+        "UNSLOTH_HAS_FBGEMM": "0",
+        "UNSLOTH_IGNORED_TOKENIZER_NAMES": "unsloth/qwen2.5-coder-1.5b-instruct-bnb-4bit\nunsloth/qwen2.5-coder-7b-instruct-bnb-4bit\nunsloth/qwen2.5-coder-1.5b-instruct\nunsloth/qwen2.5-coder-7b-instruct",
+        "UNSLOTH_IS_PRESENT": "1",
+        "UNSLOTH_PATCHED": "1",
+        "UNSLOTH_ZOO_IS_PRESENT": "1"
+      },
+      "volatile": {
+        "torch_cpu_rng_digest": "57917ecf9bee1351"
+      },
+      "warnings": [
+        "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
+      ]
+    },
+    "unturtle.plugins": {
+      "args": {
+        "module": "unturtle.plugins"
+      },
+      "autoclass": {
+        "auto_causal_lm_extra": [],
+        "auto_masked_lm_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "auto_model_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "config_mapping_extra": [
+          "mdlm-dit->MDLMDiTConfig",
+          "modernbert-diffusion->DiffusionModernBertConfig",
+          "tiny-a2d-llama->TinyA2DLlamaConfig",
+          "tiny-a2d-qwen2->TinyA2DQwen2Config",
+          "tiny-a2d-qwen3->TinyA2DQwen3Config"
+        ],
+        "transformers_imported": true
+      },
+      "default_registry_hub": {
+        "axes": {
+          "backbone_integrations": [
+            "diffusion-gemma",
+            "dream",
+            "llada",
+            "mdlm-dit",
+            "modernbert-diffusion",
+            "tiny-a2d-llama",
+            "tiny-a2d-qwen2",
+            "tiny-a2d-qwen3"
+          ],
+          "conversions": [
+            "prediff_hybrid",
+            "tiny_a2d"
+          ],
+          "generation_algorithms": [
+            "bd3lm",
+            "block_ar",
+            "block_decode",
+            "dfm",
+            "flowlm",
+            "ladiff",
+            "mdlm"
+          ],
+          "methods": [
+            "dfm",
+            "flowlm",
+            "mdlm",
+            "prediff_hybrid",
+            "tiny_a2d"
+          ],
+          "post_training_recipes": [
+            "opd"
+          ],
+          "processes": [
+            "continuous_flow",
+            "discrete_flow",
+            "masked"
+          ],
+          "training_recipes": [
+            "dfm",
+            "flowlm",
+            "mdlm"
+          ]
+        },
+        "bootstrapped": true,
+        "default_hub_created": true,
+        "module_imported": true
+      },
+      "environ_added_keys": [],
+      "environ_changed_keys": [
+        "UNSLOTH_IGNORED_TOKENIZER_NAMES"
+      ],
+      "module": "unturtle.plugins",
+      "modules_after": {
+        "top_level": [
+          "accelerate",
+          "bitsandbytes",
+          "peft",
+          "torch",
+          "transformers",
+          "triton",
+          "trl",
+          "unsloth",
+          "unsloth_zoo",
+          "unturtle"
+        ],
+        "tracked_count": 2890
+      },
+      "modules_before": {
+        "top_level": [],
+        "tracked_count": 0
+      },
+      "probe": "import",
+      "python_random_consumed": true,
+      "torch": {
+        "checkpoint_fn": "torch.utils.checkpoint.checkpoint",
+        "cuda_initialized": true,
+        "default_dtype": "torch.float32",
+        "grad_enabled": true,
+        "imported": true
+      },
+      "unsloth_env": {
+        "UNSLOTH_ENABLE_CCE": "0",
+        "UNSLOTH_HAS_FBGEMM": "0",
+        "UNSLOTH_IGNORED_TOKENIZER_NAMES": "unsloth/qwen2.5-coder-1.5b-instruct-bnb-4bit\nunsloth/qwen2.5-coder-7b-instruct-bnb-4bit\nunsloth/qwen2.5-coder-1.5b-instruct\nunsloth/qwen2.5-coder-7b-instruct",
+        "UNSLOTH_IS_PRESENT": "1",
+        "UNSLOTH_PATCHED": "1",
+        "UNSLOTH_ZOO_IS_PRESENT": "1"
+      },
+      "volatile": {
+        "torch_cpu_rng_digest": "01674d0808f1b77a"
+      },
+      "warnings": [
+        "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
+      ]
+    },
+    "unturtle.registry": {
+      "args": {
+        "module": "unturtle.registry"
+      },
+      "autoclass": {
+        "auto_causal_lm_extra": [],
+        "auto_masked_lm_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "auto_model_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "config_mapping_extra": [
+          "mdlm-dit->MDLMDiTConfig",
+          "modernbert-diffusion->DiffusionModernBertConfig",
+          "tiny-a2d-llama->TinyA2DLlamaConfig",
+          "tiny-a2d-qwen2->TinyA2DQwen2Config",
+          "tiny-a2d-qwen3->TinyA2DQwen3Config"
+        ],
+        "transformers_imported": true
+      },
+      "default_registry_hub": {
+        "axes": {
+          "backbone_integrations": [
+            "diffusion-gemma",
+            "dream",
+            "llada",
+            "mdlm-dit",
+            "modernbert-diffusion",
+            "tiny-a2d-llama",
+            "tiny-a2d-qwen2",
+            "tiny-a2d-qwen3"
+          ],
+          "conversions": [
+            "prediff_hybrid",
+            "tiny_a2d"
+          ],
+          "generation_algorithms": [
+            "bd3lm",
+            "block_ar",
+            "block_decode",
+            "dfm",
+            "flowlm",
+            "ladiff",
+            "mdlm"
+          ],
+          "methods": [
+            "dfm",
+            "flowlm",
+            "mdlm",
+            "prediff_hybrid",
+            "tiny_a2d"
+          ],
+          "post_training_recipes": [
+            "opd"
+          ],
+          "processes": [
+            "continuous_flow",
+            "discrete_flow",
+            "masked"
+          ],
+          "training_recipes": [
+            "dfm",
+            "flowlm",
+            "mdlm"
+          ]
+        },
+        "bootstrapped": true,
+        "default_hub_created": true,
+        "module_imported": true
+      },
+      "environ_added_keys": [],
+      "environ_changed_keys": [
+        "UNSLOTH_IGNORED_TOKENIZER_NAMES"
+      ],
+      "module": "unturtle.registry",
+      "modules_after": {
+        "top_level": [
+          "accelerate",
+          "bitsandbytes",
+          "peft",
+          "torch",
+          "transformers",
+          "triton",
+          "trl",
+          "unsloth",
+          "unsloth_zoo",
+          "unturtle"
+        ],
+        "tracked_count": 2889
+      },
+      "modules_before": {
+        "top_level": [],
+        "tracked_count": 0
+      },
+      "probe": "import",
+      "python_random_consumed": true,
+      "torch": {
+        "checkpoint_fn": "torch.utils.checkpoint.checkpoint",
+        "cuda_initialized": true,
+        "default_dtype": "torch.float32",
+        "grad_enabled": true,
+        "imported": true
+      },
+      "unsloth_env": {
+        "UNSLOTH_ENABLE_CCE": "0",
+        "UNSLOTH_HAS_FBGEMM": "0",
+        "UNSLOTH_IGNORED_TOKENIZER_NAMES": "unsloth/qwen2.5-coder-1.5b-instruct-bnb-4bit\nunsloth/qwen2.5-coder-7b-instruct-bnb-4bit\nunsloth/qwen2.5-coder-1.5b-instruct\nunsloth/qwen2.5-coder-7b-instruct",
+        "UNSLOTH_IS_PRESENT": "1",
+        "UNSLOTH_PATCHED": "1",
+        "UNSLOTH_ZOO_IS_PRESENT": "1"
+      },
+      "volatile": {
+        "torch_cpu_rng_digest": "2c4f173f2cc8ef3b"
+      },
+      "warnings": [
+        "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
+      ]
+    }
+  },
+  "integrations": {
+    "args": {},
+    "integrations": {
+      "diffusion-gemma": {
+        "model_types": [
+          "diffusion_gemma"
+        ],
+        "native": {
+          "declared": false
+        },
+        "peft_model_types": [],
+        "peft_patcher": {
+          "declared": false
+        },
+        "wrapper": {
+          "declared": true,
+          "resolved": true,
+          "target": "unturtle.models.backbones.diffusion_gemma.modeling.UnturtleDiffusionGemmaForBlockDiffusion"
+        }
+      },
+      "dream": {
+        "model_types": [
+          "Dream",
+          "dream"
+        ],
+        "native": {
+          "declared": true,
+          "resolved": true,
+          "target": "unturtle.models.backbones.dream.modeling_dream.DreamModel"
+        },
+        "peft_model_types": [
+          "Dream",
+          "dream"
+        ],
+        "peft_patcher": {
+          "declared": true,
+          "resolved": true,
+          "target": "unturtle.fast_diffusion_model._patch_dream_peft"
+        },
+        "wrapper": {
+          "declared": false
+        }
+      },
+      "llada": {
+        "model_types": [
+          "llada"
+        ],
+        "native": {
+          "declared": true,
+          "resolved": true,
+          "target": "unturtle.models.backbones.llada.modeling_llada.LLaDAModelLM"
+        },
+        "peft_model_types": [
+          "llada"
+        ],
+        "peft_patcher": {
+          "declared": true,
+          "resolved": true,
+          "target": "unturtle.fast_diffusion_model._patch_llada_peft"
+        },
+        "wrapper": {
+          "declared": false
+        }
+      },
+      "mdlm-dit": {
+        "model_types": [
+          "mdlm-dit"
+        ],
+        "native": {
+          "declared": true,
+          "resolved": true,
+          "target": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTForMaskedDiffusionLM"
+        },
+        "peft_model_types": [],
+        "peft_patcher": {
+          "declared": false
+        },
+        "wrapper": {
+          "declared": false
+        }
+      },
+      "modernbert-diffusion": {
+        "model_types": [],
+        "native": {
+          "declared": false
+        },
+        "peft_model_types": [
+          "modernbert-diffusion"
+        ],
+        "peft_patcher": {
+          "declared": true,
+          "resolved": true,
+          "target": "unturtle.fast_diffusion_model._patch_modernbert_peft"
+        },
+        "wrapper": {
+          "declared": false
+        }
+      },
+      "tiny-a2d-llama": {
+        "model_types": [
+          "tiny-a2d-llama"
+        ],
+        "native": {
+          "declared": true,
+          "resolved": true,
+          "target": "unturtle.models.conversion.a2d.tiny_a2d.modeling_llama.TinyA2DLlamaLMHeadModel"
+        },
+        "peft_model_types": [
+          "llama",
+          "tiny-a2d-llama"
+        ],
+        "peft_patcher": {
+          "declared": true,
+          "resolved": true,
+          "target": "unturtle.fast_diffusion_model._patch_a2d_peft"
+        },
+        "wrapper": {
+          "declared": false
+        }
+      },
+      "tiny-a2d-qwen2": {
+        "model_types": [
+          "tiny-a2d-qwen2"
+        ],
+        "native": {
+          "declared": true,
+          "resolved": true,
+          "target": "unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen2.TinyA2DQwen2LMHeadModel"
+        },
+        "peft_model_types": [
+          "qwen2",
+          "tiny-a2d-qwen2"
+        ],
+        "peft_patcher": {
+          "declared": true,
+          "resolved": true,
+          "target": "unturtle.fast_diffusion_model._patch_a2d_peft"
+        },
+        "wrapper": {
+          "declared": false
+        }
+      },
+      "tiny-a2d-qwen3": {
+        "model_types": [
+          "tiny-a2d-qwen3"
+        ],
+        "native": {
+          "declared": true,
+          "resolved": true,
+          "target": "unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen3.TinyA2DQwen3LMHeadModel"
+        },
+        "peft_model_types": [
+          "qwen3",
+          "tiny-a2d-qwen3"
+        ],
+        "peft_patcher": {
+          "declared": true,
+          "resolved": true,
+          "target": "unturtle.fast_diffusion_model._patch_a2d_peft"
+        },
+        "wrapper": {
+          "declared": false
+        }
+      }
+    },
+    "probe": "integrations",
+    "status": "observed"
+  },
+  "models": {
+    "diffusion_gemma": {
+      "args": {
+        "family": "diffusion_gemma"
+      },
+      "autoclass_config_registered": false,
+      "autoclass_extra": {
+        "auto_causal_lm_extra": [],
+        "auto_masked_lm_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "auto_model_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "config_mapping_extra": [
+          "mdlm-dit->MDLMDiTConfig",
+          "modernbert-diffusion->DiffusionModernBertConfig",
+          "tiny-a2d-llama->TinyA2DLlamaConfig",
+          "tiny-a2d-qwen2->TinyA2DQwen2Config",
+          "tiny-a2d-qwen3->TinyA2DQwen3Config"
+        ],
+        "transformers_imported": true
+      },
+      "base_model_prefix": "model",
+      "config_class": "transformers.models.diffusion_gemma.configuration_diffusion_gemma.DiffusionGemmaConfig",
+      "declared_config_class": "transformers.models.diffusion_gemma.configuration_diffusion_gemma.DiffusionGemmaConfig",
+      "family": "diffusion_gemma",
+      "method_owners": {
+        "_set_gradient_checkpointing": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel._set_gradient_checkpointing",
+          "status": "present"
+        },
+        "forward": {
+          "defined_in": "transformers.models.diffusion_gemma.modeling_diffusion_gemma.DiffusionGemmaForBlockDiffusion",
+          "kind": "function",
+          "module": "transformers.models.diffusion_gemma.modeling_diffusion_gemma",
+          "qualname": "DiffusionGemmaForBlockDiffusion.forward",
+          "status": "present"
+        },
+        "from_pretrained": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "classmethod",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.from_pretrained",
+          "status": "present"
+        },
+        "generate": {
+          "defined_in": "unturtle.models.backbones.diffusion_gemma.modeling.UnturtleDiffusionGemmaForBlockDiffusion",
+          "kind": "function",
+          "module": "unturtle.models.backbones.diffusion_gemma.modeling",
+          "qualname": "UnturtleDiffusionGemmaForBlockDiffusion.generate",
+          "status": "present"
+        },
+        "get_input_embeddings": {
+          "defined_in": "transformers.modeling_utils.EmbeddingAccessMixin",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "EmbeddingAccessMixin.get_input_embeddings",
+          "status": "present"
+        },
+        "gradient_checkpointing_enable": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.gradient_checkpointing_enable",
+          "status": "present"
+        },
+        "post_init": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.post_init",
+          "status": "present"
+        },
+        "save_pretrained": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.save_pretrained",
+          "status": "present"
+        },
+        "tie_weights": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.tie_weights",
+          "status": "present"
+        }
+      },
+      "model_class": "unturtle.models.backbones.diffusion_gemma.modeling.UnturtleDiffusionGemmaForBlockDiffusion",
+      "model_type": "diffusion_gemma",
+      "mro": [
+        "unturtle.models.backbones.diffusion_gemma.modeling.UnturtleDiffusionGemmaForBlockDiffusion",
+        "transformers.models.diffusion_gemma.modeling_diffusion_gemma.DiffusionGemmaForBlockDiffusion",
+        "transformers.models.diffusion_gemma.modeling_diffusion_gemma.DiffusionGemmaPreTrainedModel",
+        "transformers.modeling_utils.PreTrainedModel",
+        "torch.nn.modules.module.Module",
+        "transformers.modeling_utils.EmbeddingAccessMixin",
+        "transformers.modeling_utils.ModuleUtilsMixin",
+        "transformers.utils.hub.PushToHubMixin",
+        "transformers.integrations.peft.PeftAdapterMixin",
+        "transformers.distributed.mixin.DistributedMixin",
+        "transformers.models.diffusion_gemma.generation_diffusion_gemma.DiffusionGemmaGenerationMixin",
+        "builtins.object"
+      ],
+      "probe": "model",
+      "status": "observed",
+      "tied_weights_keys": {
+        "lm_head.weight": "model.decoder.embed_tokens.weight"
+      }
+    },
+    "dream": {
+      "args": {
+        "family": "dream"
+      },
+      "autoclass_config_registered": false,
+      "autoclass_extra": {
+        "auto_causal_lm_extra": [],
+        "auto_masked_lm_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "auto_model_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "config_mapping_extra": [
+          "mdlm-dit->MDLMDiTConfig",
+          "modernbert-diffusion->DiffusionModernBertConfig",
+          "tiny-a2d-llama->TinyA2DLlamaConfig",
+          "tiny-a2d-qwen2->TinyA2DQwen2Config",
+          "tiny-a2d-qwen3->TinyA2DQwen3Config"
+        ],
+        "transformers_imported": true
+      },
+      "base_model_prefix": "model",
+      "config_class": "unturtle.models.backbones.dream.configuration_dream.DreamConfig",
+      "declared_config_class": "unturtle.models.backbones.dream.configuration_dream.DreamConfig",
+      "family": "dream",
+      "method_owners": {
+        "_set_gradient_checkpointing": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel._set_gradient_checkpointing",
+          "status": "present"
+        },
+        "forward": {
+          "defined_in": "unturtle.models.backbones.dream.modeling_dream.DreamModel",
+          "kind": "function",
+          "module": "unturtle.models.backbones.dream.modeling_dream",
+          "qualname": "DreamModel.forward",
+          "status": "present"
+        },
+        "from_pretrained": {
+          "defined_in": "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel",
+          "kind": "classmethod",
+          "module": "unturtle.models.backbones.dream.modeling_dream",
+          "qualname": "DreamPreTrainedModel.from_pretrained",
+          "status": "present"
+        },
+        "generate": {
+          "defined_in": "unturtle.models.backbones.dream.generation_utils.DreamGenerationMixin",
+          "kind": "function",
+          "module": "unturtle.models.backbones.dream.generation_utils",
+          "qualname": "DreamGenerationMixin.generate",
+          "status": "present"
+        },
+        "get_input_embeddings": {
+          "defined_in": "unturtle.models.backbones.dream.modeling_dream.DreamModel",
+          "kind": "function",
+          "module": "unturtle.models.backbones.dream.modeling_dream",
+          "qualname": "DreamModel.get_input_embeddings",
+          "status": "present"
+        },
+        "gradient_checkpointing_enable": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.gradient_checkpointing_enable",
+          "status": "present"
+        },
+        "post_init": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.post_init",
+          "status": "present"
+        },
+        "save_pretrained": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.save_pretrained",
+          "status": "present"
+        },
+        "tie_weights": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.tie_weights",
+          "status": "present"
+        }
+      },
+      "model_class": "unturtle.models.backbones.dream.modeling_dream.DreamModel",
+      "model_type": "Dream",
+      "mro": [
+        "unturtle.models.backbones.dream.modeling_dream.DreamModel",
+        "unturtle.models.backbones.dream.generation_utils.DreamGenerationMixin",
+        "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
+        "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel",
+        "transformers.modeling_utils.PreTrainedModel",
+        "torch.nn.modules.module.Module",
+        "transformers.modeling_utils.EmbeddingAccessMixin",
+        "transformers.modeling_utils.ModuleUtilsMixin",
+        "transformers.utils.hub.PushToHubMixin",
+        "transformers.integrations.peft.PeftAdapterMixin",
+        "transformers.distributed.mixin.DistributedMixin",
+        "builtins.object"
+      ],
+      "probe": "model",
+      "status": "observed",
+      "tied_weights_keys": {
+        "lm_head.weight": "model.embed_tokens.weight"
+      }
+    },
+    "llada": {
+      "args": {
+        "family": "llada"
+      },
+      "autoclass_config_registered": false,
+      "autoclass_extra": {
+        "auto_causal_lm_extra": [],
+        "auto_masked_lm_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "auto_model_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "config_mapping_extra": [
+          "mdlm-dit->MDLMDiTConfig",
+          "modernbert-diffusion->DiffusionModernBertConfig",
+          "tiny-a2d-llama->TinyA2DLlamaConfig",
+          "tiny-a2d-qwen2->TinyA2DQwen2Config",
+          "tiny-a2d-qwen3->TinyA2DQwen3Config"
+        ],
+        "transformers_imported": true
+      },
+      "base_model_prefix": "model",
+      "config_class": "unturtle.models.backbones.llada.configuration_llada.LLaDAConfig",
+      "declared_config_class": "unturtle.models.backbones.llada.configuration_llada.LLaDAConfig",
+      "family": "llada",
+      "method_owners": {
+        "_set_gradient_checkpointing": {
+          "defined_in": "unturtle.models.backbones.llada.modeling_llada.LLaDAPreTrainedModel",
+          "kind": "function",
+          "module": "unturtle.models.backbones.llada.modeling_llada",
+          "qualname": "LLaDAPreTrainedModel._set_gradient_checkpointing",
+          "status": "present"
+        },
+        "forward": {
+          "defined_in": "unturtle.models.backbones.llada.modeling_llada.LLaDAModelLM",
+          "kind": "function",
+          "module": "unturtle.models.backbones.llada.modeling_llada",
+          "qualname": "LLaDAModelLM.forward",
+          "status": "present"
+        },
+        "from_pretrained": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "classmethod",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.from_pretrained",
+          "status": "present"
+        },
+        "generate": {
+          "defined_in": "unturtle.models.generation.diffusion_generation_utils.MaskedDiffusionGenerationMixin",
+          "kind": "function",
+          "module": "unturtle.models.generation.diffusion_generation_utils",
+          "qualname": "MaskedDiffusionGenerationMixin.generate",
+          "status": "present"
+        },
+        "get_input_embeddings": {
+          "defined_in": "unturtle.models.backbones.llada.modeling_llada.LLaDAModelLM",
+          "kind": "function",
+          "module": "unturtle.models.backbones.llada.modeling_llada",
+          "qualname": "LLaDAModelLM.get_input_embeddings",
+          "status": "present"
+        },
+        "gradient_checkpointing_enable": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.gradient_checkpointing_enable",
+          "status": "present"
+        },
+        "post_init": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.post_init",
+          "status": "present"
+        },
+        "save_pretrained": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.save_pretrained",
+          "status": "present"
+        },
+        "tie_weights": {
+          "defined_in": "unturtle.models.backbones.llada.modeling_llada.LLaDAModelLM",
+          "kind": "function",
+          "module": "unturtle.models.backbones.llada.modeling_llada",
+          "qualname": "LLaDAModelLM.tie_weights",
+          "status": "present"
+        }
+      },
+      "model_class": "unturtle.models.backbones.llada.modeling_llada.LLaDAModelLM",
+      "model_type": "llada",
+      "mro": [
+        "unturtle.models.backbones.llada.modeling_llada.LLaDAModelLM",
+        "unturtle.models.backbones.llada.generation_utils.LLaDAGenerationMixin",
+        "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
+        "unturtle.models.generation.diffusion_generation_utils.MaskedDiffusionGenerationMixin",
+        "unturtle.models.backbones.llada.modeling_llada.LLaDAPreTrainedModel",
+        "transformers.modeling_utils.PreTrainedModel",
+        "torch.nn.modules.module.Module",
+        "transformers.modeling_utils.EmbeddingAccessMixin",
+        "transformers.modeling_utils.ModuleUtilsMixin",
+        "transformers.utils.hub.PushToHubMixin",
+        "transformers.integrations.peft.PeftAdapterMixin",
+        "transformers.distributed.mixin.DistributedMixin",
+        "builtins.object"
+      ],
+      "probe": "model",
+      "status": "observed",
+      "tied_weights_keys": null
+    },
+    "mdlm_dit": {
+      "args": {
+        "family": "mdlm_dit"
+      },
+      "autoclass_config_registered": true,
+      "autoclass_extra": {
+        "auto_causal_lm_extra": [],
+        "auto_masked_lm_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "auto_model_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "config_mapping_extra": [
+          "mdlm-dit->MDLMDiTConfig",
+          "modernbert-diffusion->DiffusionModernBertConfig",
+          "tiny-a2d-llama->TinyA2DLlamaConfig",
+          "tiny-a2d-qwen2->TinyA2DQwen2Config",
+          "tiny-a2d-qwen3->TinyA2DQwen3Config"
+        ],
+        "transformers_imported": true
+      },
+      "base_model_prefix": "model",
+      "config_class": "unturtle.models.backbones.mdlm_dit.configuration_mdlm_dit.MDLMDiTConfig",
+      "declared_config_class": "unturtle.models.backbones.mdlm_dit.configuration_mdlm_dit.MDLMDiTConfig",
+      "family": "mdlm_dit",
+      "method_owners": {
+        "_set_gradient_checkpointing": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel._set_gradient_checkpointing",
+          "status": "present"
+        },
+        "forward": {
+          "defined_in": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTForMaskedDiffusionLM",
+          "kind": "function",
+          "module": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit",
+          "qualname": "MDLMDiTForMaskedDiffusionLM.forward",
+          "status": "present"
+        },
+        "from_pretrained": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "classmethod",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.from_pretrained",
+          "status": "present"
+        },
+        "generate": {
+          "defined_in": "unturtle.models.generation.diffusion_generation_utils.MaskedDiffusionGenerationMixin",
+          "kind": "function",
+          "module": "unturtle.models.generation.diffusion_generation_utils",
+          "qualname": "MaskedDiffusionGenerationMixin.generate",
+          "status": "present"
+        },
+        "get_input_embeddings": {
+          "defined_in": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTForMaskedDiffusionLM",
+          "kind": "function",
+          "module": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit",
+          "qualname": "MDLMDiTForMaskedDiffusionLM.get_input_embeddings",
+          "status": "present"
+        },
+        "gradient_checkpointing_enable": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.gradient_checkpointing_enable",
+          "status": "present"
+        },
+        "post_init": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.post_init",
+          "status": "present"
+        },
+        "save_pretrained": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.save_pretrained",
+          "status": "present"
+        },
+        "tie_weights": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.tie_weights",
+          "status": "present"
+        }
+      },
+      "model_class": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTForMaskedDiffusionLM",
+      "model_type": "mdlm-dit",
+      "mro": [
+        "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTForMaskedDiffusionLM",
+        "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTPreTrainedModel",
+        "transformers.modeling_utils.PreTrainedModel",
+        "torch.nn.modules.module.Module",
+        "transformers.modeling_utils.EmbeddingAccessMixin",
+        "transformers.modeling_utils.ModuleUtilsMixin",
+        "transformers.utils.hub.PushToHubMixin",
+        "transformers.integrations.peft.PeftAdapterMixin",
+        "transformers.distributed.mixin.DistributedMixin",
+        "unturtle.models.generation.diffusion_generation_utils.MaskedDiffusionGenerationMixin",
+        "builtins.object"
+      ],
+      "probe": "model",
+      "status": "observed",
+      "tied_weights_keys": null
+    },
+    "modernbert_diffusion": {
+      "args": {
+        "family": "modernbert_diffusion"
+      },
+      "autoclass_config_registered": true,
+      "autoclass_extra": {
+        "auto_causal_lm_extra": [],
+        "auto_masked_lm_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "auto_model_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "config_mapping_extra": [
+          "mdlm-dit->MDLMDiTConfig",
+          "modernbert-diffusion->DiffusionModernBertConfig",
+          "tiny-a2d-llama->TinyA2DLlamaConfig",
+          "tiny-a2d-qwen2->TinyA2DQwen2Config",
+          "tiny-a2d-qwen3->TinyA2DQwen3Config"
+        ],
+        "transformers_imported": true
+      },
+      "base_model_prefix": "model",
+      "config_class": "unturtle.models.backbones.modernbert.configuration.DiffusionModernBertConfig",
+      "declared_config_class": "unturtle.models.backbones.modernbert.configuration.DiffusionModernBertConfig",
+      "family": "modernbert_diffusion",
+      "method_owners": {
+        "_set_gradient_checkpointing": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel._set_gradient_checkpointing",
+          "status": "present"
+        },
+        "forward": {
+          "defined_in": "transformers.models.modernbert.modeling_modernbert.ModernBertForMaskedLM",
+          "kind": "function",
+          "module": "transformers.models.modernbert.modeling_modernbert",
+          "qualname": "ModernBertForMaskedLM.forward",
+          "status": "present"
+        },
+        "from_pretrained": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "classmethod",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.from_pretrained",
+          "status": "present"
+        },
+        "generate": {
+          "defined_in": "unturtle.models.generation.diffusion_generation_utils.MaskedDiffusionGenerationMixin",
+          "kind": "function",
+          "module": "unturtle.models.generation.diffusion_generation_utils",
+          "qualname": "MaskedDiffusionGenerationMixin.generate",
+          "status": "present"
+        },
+        "get_input_embeddings": {
+          "defined_in": "transformers.modeling_utils.EmbeddingAccessMixin",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "EmbeddingAccessMixin.get_input_embeddings",
+          "status": "present"
+        },
+        "gradient_checkpointing_enable": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.gradient_checkpointing_enable",
+          "status": "present"
+        },
+        "post_init": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.post_init",
+          "status": "present"
+        },
+        "save_pretrained": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.save_pretrained",
+          "status": "present"
+        },
+        "tie_weights": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.tie_weights",
+          "status": "present"
+        }
+      },
+      "model_class": "unturtle.models.backbones.modernbert.modeling.DiffusionModernBertForMaskedLM",
+      "model_type": "modernbert-diffusion",
+      "mro": [
+        "unturtle.models.backbones.modernbert.modeling.DiffusionModernBertForMaskedLM",
+        "unturtle.models.generation.masked_diffusion_block_mixin.MaskedDiffusionBlockGenerationMixin",
+        "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
+        "unturtle.models.generation.diffusion_generation_utils.MaskedDiffusionGenerationMixin",
+        "transformers.models.modernbert.modeling_modernbert.ModernBertForMaskedLM",
+        "transformers.models.modernbert.modeling_modernbert.ModernBertPreTrainedModel",
+        "transformers.modeling_utils.PreTrainedModel",
+        "torch.nn.modules.module.Module",
+        "transformers.modeling_utils.EmbeddingAccessMixin",
+        "transformers.modeling_utils.ModuleUtilsMixin",
+        "transformers.utils.hub.PushToHubMixin",
+        "transformers.integrations.peft.PeftAdapterMixin",
+        "transformers.distributed.mixin.DistributedMixin",
+        "builtins.object"
+      ],
+      "probe": "model",
+      "status": "observed",
+      "tied_weights_keys": {
+        "decoder.weight": "model.embeddings.tok_embeddings.weight"
+      }
+    },
+    "tiny_a2d_llama": {
+      "args": {
+        "family": "tiny_a2d_llama"
+      },
+      "autoclass_config_registered": true,
+      "autoclass_extra": {
+        "auto_causal_lm_extra": [],
+        "auto_masked_lm_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "auto_model_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "config_mapping_extra": [
+          "mdlm-dit->MDLMDiTConfig",
+          "modernbert-diffusion->DiffusionModernBertConfig",
+          "tiny-a2d-llama->TinyA2DLlamaConfig",
+          "tiny-a2d-qwen2->TinyA2DQwen2Config",
+          "tiny-a2d-qwen3->TinyA2DQwen3Config"
+        ],
+        "transformers_imported": true
+      },
+      "base_model_prefix": "model",
+      "config_class": "unturtle.models.conversion.a2d.tiny_a2d.modeling_llama.TinyA2DLlamaConfig",
+      "declared_config_class": "unturtle.models.conversion.a2d.tiny_a2d.modeling_llama.TinyA2DLlamaConfig",
+      "family": "tiny_a2d_llama",
+      "method_owners": {
+        "_set_gradient_checkpointing": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel._set_gradient_checkpointing",
+          "status": "present"
+        },
+        "forward": {
+          "defined_in": "transformers.models.llama.modeling_llama.LlamaForCausalLM",
+          "kind": "function",
+          "module": "transformers.models.llama.modeling_llama",
+          "qualname": "LlamaForCausalLM.forward",
+          "status": "present"
+        },
+        "from_pretrained": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "classmethod",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.from_pretrained",
+          "status": "present"
+        },
+        "generate": {
+          "defined_in": "unturtle.models.generation.diffusion_generation_utils.MaskedDiffusionGenerationMixin",
+          "kind": "function",
+          "module": "unturtle.models.generation.diffusion_generation_utils",
+          "qualname": "MaskedDiffusionGenerationMixin.generate",
+          "status": "present"
+        },
+        "get_input_embeddings": {
+          "defined_in": "transformers.modeling_utils.EmbeddingAccessMixin",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "EmbeddingAccessMixin.get_input_embeddings",
+          "status": "present"
+        },
+        "gradient_checkpointing_enable": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.gradient_checkpointing_enable",
+          "status": "present"
+        },
+        "post_init": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.post_init",
+          "status": "present"
+        },
+        "save_pretrained": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.save_pretrained",
+          "status": "present"
+        },
+        "tie_weights": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.tie_weights",
+          "status": "present"
+        }
+      },
+      "model_class": "unturtle.models.conversion.a2d.tiny_a2d.modeling_llama.TinyA2DLlamaLMHeadModel",
+      "model_type": "tiny-a2d-llama",
+      "mro": [
+        "unturtle.models.conversion.a2d.tiny_a2d.modeling_llama.TinyA2DLlamaLMHeadModel",
+        "unturtle.models.conversion.a2d.tiny_a2d.generation_utils.TinyA2DGenerationMixin",
+        "unturtle.models.generation.masked_diffusion_block_mixin.MaskedDiffusionBlockGenerationMixin",
+        "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
+        "unturtle.models.generation.diffusion_generation_utils.MaskedDiffusionGenerationMixin",
+        "transformers.models.llama.modeling_llama.LlamaForCausalLM",
+        "transformers.models.llama.modeling_llama.LlamaPreTrainedModel",
+        "transformers.modeling_utils.PreTrainedModel",
+        "torch.nn.modules.module.Module",
+        "transformers.modeling_utils.EmbeddingAccessMixin",
+        "transformers.modeling_utils.ModuleUtilsMixin",
+        "transformers.utils.hub.PushToHubMixin",
+        "transformers.integrations.peft.PeftAdapterMixin",
+        "transformers.distributed.mixin.DistributedMixin",
+        "transformers.generation.utils.GenerationMixin",
+        "transformers.generation.continuous_batching.continuous_api.ContinuousMixin",
+        "builtins.object"
+      ],
+      "probe": "model",
+      "status": "observed",
+      "tied_weights_keys": {
+        "lm_head.weight": "model.embed_tokens.weight"
+      }
+    },
+    "tiny_a2d_qwen2": {
+      "args": {
+        "family": "tiny_a2d_qwen2"
+      },
+      "autoclass_config_registered": true,
+      "autoclass_extra": {
+        "auto_causal_lm_extra": [],
+        "auto_masked_lm_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "auto_model_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "config_mapping_extra": [
+          "mdlm-dit->MDLMDiTConfig",
+          "modernbert-diffusion->DiffusionModernBertConfig",
+          "tiny-a2d-llama->TinyA2DLlamaConfig",
+          "tiny-a2d-qwen2->TinyA2DQwen2Config",
+          "tiny-a2d-qwen3->TinyA2DQwen3Config"
+        ],
+        "transformers_imported": true
+      },
+      "base_model_prefix": "model",
+      "config_class": "unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen2.TinyA2DQwen2Config",
+      "declared_config_class": "unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen2.TinyA2DQwen2Config",
+      "family": "tiny_a2d_qwen2",
+      "method_owners": {
+        "_set_gradient_checkpointing": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel._set_gradient_checkpointing",
+          "status": "present"
+        },
+        "forward": {
+          "defined_in": "transformers.models.qwen2.modeling_qwen2.Qwen2ForCausalLM",
+          "kind": "function",
+          "module": "transformers.models.qwen2.modeling_qwen2",
+          "qualname": "Qwen2ForCausalLM.forward",
+          "status": "present"
+        },
+        "from_pretrained": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "classmethod",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.from_pretrained",
+          "status": "present"
+        },
+        "generate": {
+          "defined_in": "unturtle.models.generation.diffusion_generation_utils.MaskedDiffusionGenerationMixin",
+          "kind": "function",
+          "module": "unturtle.models.generation.diffusion_generation_utils",
+          "qualname": "MaskedDiffusionGenerationMixin.generate",
+          "status": "present"
+        },
+        "get_input_embeddings": {
+          "defined_in": "transformers.modeling_utils.EmbeddingAccessMixin",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "EmbeddingAccessMixin.get_input_embeddings",
+          "status": "present"
+        },
+        "gradient_checkpointing_enable": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.gradient_checkpointing_enable",
+          "status": "present"
+        },
+        "post_init": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.post_init",
+          "status": "present"
+        },
+        "save_pretrained": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.save_pretrained",
+          "status": "present"
+        },
+        "tie_weights": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.tie_weights",
+          "status": "present"
+        }
+      },
+      "model_class": "unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen2.TinyA2DQwen2LMHeadModel",
+      "model_type": "tiny-a2d-qwen2",
+      "mro": [
+        "unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen2.TinyA2DQwen2LMHeadModel",
+        "unturtle.models.conversion.a2d.tiny_a2d.generation_utils.TinyA2DGenerationMixin",
+        "unturtle.models.generation.masked_diffusion_block_mixin.MaskedDiffusionBlockGenerationMixin",
+        "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
+        "unturtle.models.generation.diffusion_generation_utils.MaskedDiffusionGenerationMixin",
+        "transformers.models.qwen2.modeling_qwen2.Qwen2ForCausalLM",
+        "transformers.models.qwen2.modeling_qwen2.Qwen2PreTrainedModel",
+        "transformers.modeling_utils.PreTrainedModel",
+        "torch.nn.modules.module.Module",
+        "transformers.modeling_utils.EmbeddingAccessMixin",
+        "transformers.modeling_utils.ModuleUtilsMixin",
+        "transformers.utils.hub.PushToHubMixin",
+        "transformers.integrations.peft.PeftAdapterMixin",
+        "transformers.distributed.mixin.DistributedMixin",
+        "transformers.generation.utils.GenerationMixin",
+        "transformers.generation.continuous_batching.continuous_api.ContinuousMixin",
+        "builtins.object"
+      ],
+      "probe": "model",
+      "status": "observed",
+      "tied_weights_keys": {
+        "lm_head.weight": "model.embed_tokens.weight"
+      }
+    },
+    "tiny_a2d_qwen3": {
+      "args": {
+        "family": "tiny_a2d_qwen3"
+      },
+      "autoclass_config_registered": true,
+      "autoclass_extra": {
+        "auto_causal_lm_extra": [],
+        "auto_masked_lm_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "auto_model_extra": [
+          "DiffusionModernBertConfig->DiffusionModernBertForMaskedLM",
+          "MDLMDiTConfig->MDLMDiTForMaskedDiffusionLM",
+          "TinyA2DLlamaConfig->TinyA2DLlamaLMHeadModel",
+          "TinyA2DQwen2Config->TinyA2DQwen2LMHeadModel",
+          "TinyA2DQwen3Config->TinyA2DQwen3LMHeadModel"
+        ],
+        "config_mapping_extra": [
+          "mdlm-dit->MDLMDiTConfig",
+          "modernbert-diffusion->DiffusionModernBertConfig",
+          "tiny-a2d-llama->TinyA2DLlamaConfig",
+          "tiny-a2d-qwen2->TinyA2DQwen2Config",
+          "tiny-a2d-qwen3->TinyA2DQwen3Config"
+        ],
+        "transformers_imported": true
+      },
+      "base_model_prefix": "model",
+      "config_class": "unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen3.TinyA2DQwen3Config",
+      "declared_config_class": "unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen3.TinyA2DQwen3Config",
+      "family": "tiny_a2d_qwen3",
+      "method_owners": {
+        "_set_gradient_checkpointing": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel._set_gradient_checkpointing",
+          "status": "present"
+        },
+        "forward": {
+          "defined_in": "transformers.models.qwen3.modeling_qwen3.Qwen3ForCausalLM",
+          "kind": "function",
+          "module": "transformers.models.qwen3.modeling_qwen3",
+          "qualname": "Qwen3ForCausalLM.forward",
+          "status": "present"
+        },
+        "from_pretrained": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "classmethod",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.from_pretrained",
+          "status": "present"
+        },
+        "generate": {
+          "defined_in": "unturtle.models.generation.diffusion_generation_utils.MaskedDiffusionGenerationMixin",
+          "kind": "function",
+          "module": "unturtle.models.generation.diffusion_generation_utils",
+          "qualname": "MaskedDiffusionGenerationMixin.generate",
+          "status": "present"
+        },
+        "get_input_embeddings": {
+          "defined_in": "transformers.modeling_utils.EmbeddingAccessMixin",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "EmbeddingAccessMixin.get_input_embeddings",
+          "status": "present"
+        },
+        "gradient_checkpointing_enable": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.gradient_checkpointing_enable",
+          "status": "present"
+        },
+        "post_init": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.post_init",
+          "status": "present"
+        },
+        "save_pretrained": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.save_pretrained",
+          "status": "present"
+        },
+        "tie_weights": {
+          "defined_in": "transformers.modeling_utils.PreTrainedModel",
+          "kind": "function",
+          "module": "transformers.modeling_utils",
+          "qualname": "PreTrainedModel.tie_weights",
+          "status": "present"
+        }
+      },
+      "model_class": "unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen3.TinyA2DQwen3LMHeadModel",
+      "model_type": "tiny-a2d-qwen3",
+      "mro": [
+        "unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen3.TinyA2DQwen3LMHeadModel",
+        "unturtle.models.conversion.a2d.tiny_a2d.generation_utils.TinyA2DGenerationMixin",
+        "unturtle.models.generation.masked_diffusion_block_mixin.MaskedDiffusionBlockGenerationMixin",
+        "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
+        "unturtle.models.generation.diffusion_generation_utils.MaskedDiffusionGenerationMixin",
+        "transformers.models.qwen3.modeling_qwen3.Qwen3ForCausalLM",
+        "transformers.models.qwen3.modeling_qwen3.Qwen3PreTrainedModel",
+        "transformers.modeling_utils.PreTrainedModel",
+        "torch.nn.modules.module.Module",
+        "transformers.modeling_utils.EmbeddingAccessMixin",
+        "transformers.modeling_utils.ModuleUtilsMixin",
+        "transformers.utils.hub.PushToHubMixin",
+        "transformers.integrations.peft.PeftAdapterMixin",
+        "transformers.distributed.mixin.DistributedMixin",
+        "transformers.generation.utils.GenerationMixin",
+        "transformers.generation.continuous_batching.continuous_api.ContinuousMixin",
+        "builtins.object"
+      ],
+      "probe": "model",
+      "status": "observed",
+      "tied_weights_keys": {
+        "lm_head.weight": "model.embed_tokens.weight"
+      }
+    }
+  },
+  "persistence": {
+    "autoconfig_roundtrip": {
+      "args": {
+        "case": "autoconfig_roundtrip"
+      },
+      "case": "autoconfig_roundtrip",
+      "families": {
+        "dream": {
+          "raised": "ValueError: The checkpoint you are trying to load has model type `Dream` but Transformers does not recognize this architecture. This could be because of an issue with the c",
+          "roundtrip": "failed",
+          "status": "observed"
+        },
+        "llada": {
+          "raised": "ValueError: The checkpoint you are trying to load has model type `llada` but Transformers does not recognize this architecture. This could be because of an issue with the c",
+          "roundtrip": "failed",
+          "status": "observed"
+        },
+        "modernbert_diffusion": {
+          "resolved_class": "unturtle.models.backbones.modernbert.configuration.DiffusionModernBertConfig",
+          "roundtrip": "ok",
+          "status": "observed"
+        },
+        "tiny_a2d_llama": {
+          "resolved_class": "unturtle.models.conversion.a2d.tiny_a2d.modeling_llama.TinyA2DLlamaConfig",
+          "roundtrip": "ok",
+          "status": "observed"
+        }
+      },
+      "probe": "persistence",
+      "status": "observed"
+    },
+    "custom_adapter": {
+      "adapter_key_count": 16,
+      "adapter_keys_equal": true,
+      "args": {
+        "case": "custom_adapter"
+      },
+      "case": "custom_adapter",
+      "output": {
+        "bit_identical": true,
+        "volatile": {
+          "max_abs_delta": 0.0,
+          "relative_norm": 0.0
+        },
+        "within_rel_norm_0p05": true
+      },
+      "probe": "persistence",
+      "reloaded_class": "peft.peft_model.PeftModelForFeatureExtraction",
+      "status": "observed"
+    },
+    "fourbit_contract": {
+      "args": {},
+      "dtype_gate_tristate_note": "the production gate is effectively three-valued: compatible, incompatible_compute_dtype, and fail-open when embedding structure is unresolvable; the fail-open branch is recorded as status=unverified reason=input_embedding_unresolvable in the verdicts section, never as compatible (carry-forward from #177, requirement for #185's SupportResult)",
+      "embedding_dtype": "torch.bfloat16",
+      "fallback_behavior": {
+        "fp32_upcast_hooks": {
+          "any_instance_forward": false,
+          "any_mlp_fast": false,
+          "any_o_fast": false,
+          "any_qkv_fast": false
+        },
+        "standard_path_lora_grads": 16,
+        "uniform_skip": true,
+        "verdict": "incompatible_compute_dtype"
+      },
+      "fast_path_verdict": "compatible",
+      "forward_backward_liveness": {
+        "lora_grads": 28,
+        "loss_finite": true
+      },
+      "frozen_parameter_dtypes": {
+        "torch.bfloat16": 13,
+        "torch.float32": 28,
+        "torch.uint8": 14
+      },
+      "mutation_identity": {
+        "after": {
+          "apply_o_is_fast": true,
+          "apply_qkv_is_bias_kernel": true,
+          "apply_qkv_is_original": false,
+          "instance_forward_installed": true,
+          "mlp_forward_is_fast": true
+        },
+        "before": {
+          "apply_qkv": "_original_apply_qkv",
+          "instance_forward": false
+        }
+      },
+      "preparation_owner": "unsloth.models._utils.prepare_model_for_kbit_training",
+      "probe": "fourbit-contract",
+      "status": "observed",
+      "trainable_adapter_dtypes": [
+        "torch.float32"
+      ],
+      "unsloth_environment_mutation": {
+        "UNSLOTH_MIXED_PRECISION_after": "float32",
+        "UNSLOTH_MIXED_PRECISION_before": null,
+        "checkpoint_fn_after": "torch.utils.checkpoint.checkpoint",
+        "checkpoint_fn_before": "torch.utils.checkpoint.checkpoint",
+        "note": "prepare_model_for_kbit_training (per-model API) mutates process state; classified separately from object-local mutations",
+        "scope": "process_global"
+      }
+    },
+    "generation_reload": {
+      "args": {
+        "case": "generation_reload"
+      },
+      "case": "generation_reload",
+      "default_config_reload_raised": "AttributeError: 'GenerationConfig' object has no attribute 'eps'",
+      "generation_config_class_after_reload": "DreamGenerationConfig",
+      "probe": "persistence",
+      "status": "observed",
+      "tokens_equal": true,
+      "volatile": {
+        "tokens_after_digest": "47cc62697df9cb72",
+        "tokens_before_digest": "47cc62697df9cb72"
+      }
+    },
+    "native_fp": {
+      "args": {
+        "case": "native_fp"
+      },
+      "attn_implementation": {
+        "direct_instantiation": "sdpa",
+        "from_pretrained": "sdpa"
+      },
+      "buffer_diffs": [
+        "model.layers.0.self_attn.rotary_emb.inv_freq",
+        "model.layers.1.self_attn.rotary_emb.inv_freq",
+        "model.rotary_emb.inv_freq"
+      ],
+      "buffer_names_equal": true,
+      "case": "native_fp",
+      "dtype_diffs": [],
+      "first_mismatching_key": null,
+      "generation_config_class": {
+        "direct_instantiation": "DreamGenerationConfig",
+        "from_pretrained": "DreamGenerationConfig"
+      },
+      "missing_keys": [],
+      "output": {
+        "bit_identical": false,
+        "volatile": {
+          "max_abs_delta": 0.005457580089569092,
+          "relative_norm": 0.00641678599640727
+        },
+        "within_rel_norm_0p05": true
+      },
+      "probe": "persistence",
+      "reloaded_class": "unturtle.models.backbones.dream.modeling_dream.DreamModel",
+      "status": "observed",
+      "unexpected_keys": []
+    },
+    "native_peft": {
+      "adapter_key_count": 16,
+      "adapter_keys_equal": true,
+      "args": {
+        "case": "native_peft"
+      },
+      "case": "native_peft",
+      "output": {
+        "bit_identical": true,
+        "volatile": {
+          "max_abs_delta": 0.0,
+          "relative_norm": 0.0
+        },
+        "within_rel_norm_0p05": true
+      },
+      "probe": "persistence",
+      "reloaded_class": "peft.peft_model.PeftModelForFeatureExtraction",
+      "status": "observed"
+    }
+  },
+  "process_global_state": {
+    "rng_contract": {
+      "args": {
+        "case": "rng_contract"
+      },
+      "case": "rng_contract",
+      "classification": "known_defect",
+      "linked_issue": 188,
+      "probe": "process-global",
+      "random_state_argument": 3407,
+      "run_with_preconsumption": {
+        "lora_A_digest": "24567fd211974e62",
+        "rng_after": "d34b456e9ad93b7e",
+        "rng_before": "29d52a8cb4d7ea75",
+        "rng_consumed": true
+      },
+      "run_without_preconsumption": {
+        "lora_A_digest": "058c7545c207e835",
+        "rng_after": "edb457f7b690f00e",
+        "rng_before": "a57e8655b6988cb4",
+        "rng_consumed": true
+      },
+      "same_random_state_same_adapters": false,
+      "status": "observed"
+    },
+    "sdpa": {
+      "args": {
+        "case": "sdpa"
+      },
+      "available_backends": {
+        "cudnn": true,
+        "flash": true,
+        "math": true,
+        "mem_efficient": true
+      },
+      "case": "sdpa",
+      "deterministic": {
+        "cudnn_benchmark": false,
+        "cudnn_deterministic": false,
+        "deterministic_algorithms": false
+      },
+      "environment": {
+        "CUBLAS_WORKSPACE_CONFIG": null,
+        "TORCH_CUDNN_SDPA_ENABLED": null
+      },
+      "policy": "numeric parity cells that route through scaled_dot_product_attention must either pin the backend (torch.nn.attention.sdpa_kernel) or compare below attention at the unit level; the backend a process happens to select is not a contract value (#187: layer-0 attention output sum flipped 33.83/22.68 on identical inputs).",
+      "probe": "process-global",
+      "status": "observed",
+      "tf32": {
+        "allow_bf16_reduced_precision_reduction": true,
+        "cudnn_allow_tf32": true,
+        "matmul_allow_tf32": false
+      }
+    },
+    "unsloth_environment_mutation": {
+      "UNSLOTH_MIXED_PRECISION_after": "float32",
+      "UNSLOTH_MIXED_PRECISION_before": null,
+      "checkpoint_fn_after": "torch.utils.checkpoint.checkpoint",
+      "checkpoint_fn_before": "torch.utils.checkpoint.checkpoint",
+      "note": "prepare_model_for_kbit_training (per-model API) mutates process state; classified separately from object-local mutations",
+      "scope": "process_global"
+    }
+  },
+  "producer": {
+    "commit": "320d1db74336b93d7b83ff21e557080202108bfe",
+    "dirty_paths": [],
+    "import_root": "<repo>",
+    "peft": "0.19.1",
+    "platform": "Linux-5.15.0-122-generic-x86_64-with-glibc2.35",
+    "probes": [
+      {
+        "args": {
+          "module": "unturtle"
+        },
+        "case": "import",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "import",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{\"module\": \"unturtle\"}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {
+          "module": "unturtle.models"
+        },
+        "case": "import",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "import",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{\"module\": \"unturtle.models\"}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {
+          "module": "unturtle.registry"
+        },
+        "case": "import",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "import",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{\"module\": \"unturtle.registry\"}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {
+          "module": "unturtle.methods"
+        },
+        "case": "import",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "import",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{\"module\": \"unturtle.methods\"}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {
+          "module": "unturtle.plugins"
+        },
+        "case": "import",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "import",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{\"module\": \"unturtle.plugins\"}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {
+          "module": "unturtle.fast_diffusion_model"
+        },
+        "case": "import",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "import",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{\"module\": \"unturtle.fast_diffusion_model\"}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {},
+        "case": "public-api",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "public-api",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {
+          "family": "dream"
+        },
+        "case": "model",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "model",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{\"family\": \"dream\"}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {
+          "family": "llada"
+        },
+        "case": "model",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "model",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{\"family\": \"llada\"}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {
+          "family": "mdlm_dit"
+        },
+        "case": "model",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "model",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{\"family\": \"mdlm_dit\"}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {
+          "family": "tiny_a2d_llama"
+        },
+        "case": "model",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "model",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{\"family\": \"tiny_a2d_llama\"}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {
+          "family": "tiny_a2d_qwen2"
+        },
+        "case": "model",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "model",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{\"family\": \"tiny_a2d_qwen2\"}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {
+          "family": "tiny_a2d_qwen3"
+        },
+        "case": "model",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "model",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{\"family\": \"tiny_a2d_qwen3\"}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {
+          "family": "modernbert_diffusion"
+        },
+        "case": "model",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "model",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{\"family\": \"modernbert_diffusion\"}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {
+          "family": "diffusion_gemma"
+        },
+        "case": "model",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "model",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{\"family\": \"diffusion_gemma\"}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {},
+        "case": "integrations",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "integrations",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {
+          "family": "dream"
+        },
+        "case": "generation",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "generation",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{\"family\": \"dream\"}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {
+          "family": "tiny_a2d_llama"
+        },
+        "case": "generation",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "generation",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{\"family\": \"tiny_a2d_llama\"}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {
+          "case": "native_fp"
+        },
+        "case": "persistence",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "persistence",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{\"case\": \"native_fp\"}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {
+          "case": "native_peft"
+        },
+        "case": "persistence",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "persistence",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{\"case\": \"native_peft\"}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {
+          "case": "custom_adapter"
+        },
+        "case": "persistence",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "persistence",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{\"case\": \"custom_adapter\"}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {
+          "case": "autoconfig_roundtrip"
+        },
+        "case": "persistence",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "persistence",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{\"case\": \"autoconfig_roundtrip\"}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {
+          "case": "generation_reload"
+        },
+        "case": "persistence",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "persistence",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{\"case\": \"generation_reload\"}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {},
+        "case": "fourbit-contract",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "fourbit-contract",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {
+          "case": "rng_contract"
+        },
+        "case": "process-global",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "process-global",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{\"case\": \"rng_contract\"}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      },
+      {
+        "args": {
+          "case": "sdpa"
+        },
+        "case": "process-global",
+        "command": [
+          "<path>",
+          "<repo>/benchmarks/architecture/subprocess_probe.py",
+          "process-global",
+          "--out",
+          "<tmp>",
+          "--json",
+          "{\"case\": \"sdpa\"}"
+        ],
+        "cuda_visible_devices": "1",
+        "cwd": "<repo>",
+        "exit_code": 0
+      }
+    ],
+    "python": "3.12.7",
+    "torch": "2.10.0+cu128",
+    "transformers": "5.15.0",
+    "unsloth": "2026.7.2",
+    "worktree_clean": true
+  },
+  "public_api": {
+    "args": {},
+    "probe": "public-api",
+    "status": "observed",
+    "unturtle": {
+      "all": [
+        "A2DModernBertConfig",
+        "A2DModernBertForMaskedLM",
+        "A2DModernBertModel",
+        "BaseAlphaScheduler",
+        "BaseEvaluator",
+        "CosineAlphaScheduler",
+        "DiffuGRPOConfig",
+        "DiffuGRPOTrainer",
+        "DiffusionModernBertConfig",
+        "DiffusionModernBertForMaskedLM",
+        "DiffusionModernBertModel",
+        "DiffusionTrainer",
+        "DiffusionTrainingArguments",
+        "DreamConfig",
+        "DreamForDiffusionLM",
+        "DreamGenerationConfig",
+        "DreamGenerationMixin",
+        "DreamModel",
+        "FastDiffusionModel",
+        "FastLanguageModel",
+        "FastLlamaModel",
+        "FastMistralModel",
+        "FastQwen2Model",
+        "FastQwen3Model",
+        "GaLoreProjector",
+        "GenerationEvaluator",
+        "LLaDAConfig",
+        "LLaDAModel",
+        "LLaDAModelLM",
+        "LinearAlphaScheduler",
+        "MaskedDiffusionDataCollator",
+        "MaskedDiffusionEvaluator",
+        "PackedMaskedDiffusionDataCollator",
+        "PatchDPOTrainer",
+        "PatchKTOTrainer",
+        "QGaLoreAdamW8bit",
+        "QGaloreConfig",
+        "TinyA2DLlamaConfig",
+        "TinyA2DLlamaLMHeadModel",
+        "TinyA2DLlamaModel",
+        "TinyA2DQwen2Config",
+        "TinyA2DQwen2LMHeadModel",
+        "TinyA2DQwen2Model",
+        "TinyA2DQwen3Config",
+        "TinyA2DQwen3LMHeadModel",
+        "TinyA2DQwen3Model",
+        "UnslothAdamW",
+        "UnslothAdamW8bit",
+        "UnslothAdamWScheduleFree",
+        "UnslothTrainer",
+        "UnslothTrainingArguments",
+        "UnturtleTrainer",
+        "UnturtleTrainingArguments",
+        "__version__",
+        "apply_chat_template",
+        "check_tokenizer",
+        "fast_masked_diffusion_loss",
+        "fix_sentencepiece_tokenizer",
+        "fused_masked_diffusion_loss",
+        "get_chat_template",
+        "get_tokenizer_info",
+        "is_bf16_supported",
+        "is_bfloat16_supported",
+        "load_correct_tokenizer",
+        "make_alpha_scheduler",
+        "masked_diffusion_loss_from_timesteps",
+        "patch_saving_functions",
+        "save_to_gguf",
+        "unsloth_save_model",
+        "unsloth_train",
+        "unturtle_train"
+      ],
+      "all_count": 71,
+      "symbols": {
+        "A2DModernBertConfig": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.modernbert.configuration",
+          "qualname": "DiffusionModernBertConfig",
+          "resolved": true
+        },
+        "A2DModernBertForMaskedLM": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.modernbert.modeling",
+          "qualname": "DiffusionModernBertForMaskedLM",
+          "resolved": true
+        },
+        "A2DModernBertModel": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.modernbert.modeling",
+          "qualname": "DiffusionModernBertModel",
+          "resolved": true
+        },
+        "BaseAlphaScheduler": {
+          "kind": "ABCMeta",
+          "module": "unturtle.diffusion.schedulers",
+          "qualname": "BaseAlphaScheduler",
+          "resolved": true
+        },
+        "BaseEvaluator": {
+          "kind": "ABCMeta",
+          "module": "unturtle.eval.base",
+          "qualname": "BaseEvaluator",
+          "resolved": true
+        },
+        "CosineAlphaScheduler": {
+          "kind": "ABCMeta",
+          "module": "unturtle.diffusion.schedulers",
+          "qualname": "CosineAlphaScheduler",
+          "resolved": true
+        },
+        "DiffuGRPOConfig": {
+          "kind": "type",
+          "module": "unturtle.diffusion.grpo_trainer",
+          "qualname": "DiffuGRPOConfig",
+          "resolved": true
+        },
+        "DiffuGRPOTrainer": {
+          "kind": "type",
+          "module": "unturtle.diffusion.grpo_trainer",
+          "qualname": "DiffuGRPOTrainer",
+          "resolved": true
+        },
+        "DiffusionModernBertConfig": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.modernbert.configuration",
+          "qualname": "DiffusionModernBertConfig",
+          "resolved": true
+        },
+        "DiffusionModernBertForMaskedLM": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.modernbert.modeling",
+          "qualname": "DiffusionModernBertForMaskedLM",
+          "resolved": true
+        },
+        "DiffusionModernBertModel": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.modernbert.modeling",
+          "qualname": "DiffusionModernBertModel",
+          "resolved": true
+        },
+        "DiffusionTrainer": {
+          "kind": "type",
+          "module": "unturtle.diffusion.trainer",
+          "qualname": "DiffusionTrainer",
+          "resolved": true
+        },
+        "DiffusionTrainingArguments": {
+          "kind": "type",
+          "module": "unturtle.diffusion.trainer",
+          "qualname": "DiffusionTrainingArguments",
+          "resolved": true
+        },
+        "DreamConfig": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.dream.configuration_dream",
+          "qualname": "DreamConfig",
+          "resolved": true
+        },
+        "DreamForDiffusionLM": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.dream.modeling_dream",
+          "qualname": "DreamModel",
+          "resolved": true
+        },
+        "DreamGenerationConfig": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.dream.generation_utils",
+          "qualname": "DreamGenerationConfig",
+          "resolved": true
+        },
+        "DreamGenerationMixin": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.dream.generation_utils",
+          "qualname": "DreamGenerationMixin",
+          "resolved": true
+        },
+        "DreamModel": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.dream.modeling_dream",
+          "qualname": "DreamModel",
+          "resolved": true
+        },
+        "FastDiffusionModel": {
+          "kind": "type",
+          "module": "unturtle.fast_diffusion_model",
+          "qualname": "FastDiffusionModel",
+          "resolved": true
+        },
+        "FastLanguageModel": {
+          "kind": "type",
+          "module": "unsloth.models.loader",
+          "qualname": "FastLanguageModel",
+          "resolved": true
+        },
+        "FastLlamaModel": {
+          "kind": "type",
+          "module": "unsloth.models.llama",
+          "qualname": "FastLlamaModel",
+          "resolved": true
+        },
+        "FastMistralModel": {
+          "kind": "type",
+          "module": "unsloth.models.mistral",
+          "qualname": "FastMistralModel",
+          "resolved": true
+        },
+        "FastQwen2Model": {
+          "kind": "type",
+          "module": "unsloth.models.qwen2",
+          "qualname": "FastQwen2Model",
+          "resolved": true
+        },
+        "FastQwen3Model": {
+          "kind": "type",
+          "module": "unsloth.models.qwen3",
+          "qualname": "FastQwen3Model",
+          "resolved": true
+        },
+        "GaLoreProjector": {
+          "resolved": false
+        },
+        "GenerationEvaluator": {
+          "kind": "ABCMeta",
+          "module": "unturtle.eval.generation",
+          "qualname": "GenerationEvaluator",
+          "resolved": true
+        },
+        "LLaDAConfig": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.llada.configuration_llada",
+          "qualname": "LLaDAConfig",
+          "resolved": true
+        },
+        "LLaDAModel": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.llada.modeling_llada",
+          "qualname": "LLaDAModel",
+          "resolved": true
+        },
+        "LLaDAModelLM": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.llada.modeling_llada",
+          "qualname": "LLaDAModelLM",
+          "resolved": true
+        },
+        "LinearAlphaScheduler": {
+          "kind": "ABCMeta",
+          "module": "unturtle.diffusion.schedulers",
+          "qualname": "LinearAlphaScheduler",
+          "resolved": true
+        },
+        "MaskedDiffusionDataCollator": {
+          "kind": "type",
+          "module": "unturtle.diffusion.collator",
+          "qualname": "MaskedDiffusionDataCollator",
+          "resolved": true
+        },
+        "MaskedDiffusionEvaluator": {
+          "kind": "ABCMeta",
+          "module": "unturtle.eval.diffusion",
+          "qualname": "MaskedDiffusionEvaluator",
+          "resolved": true
+        },
+        "PackedMaskedDiffusionDataCollator": {
+          "kind": "type",
+          "module": "unturtle.diffusion.packed_collator",
+          "qualname": "PackedMaskedDiffusionDataCollator",
+          "resolved": true
+        },
+        "PatchDPOTrainer": {
+          "kind": "function",
+          "module": "unsloth.models.dpo",
+          "qualname": "PatchDPOTrainer",
+          "resolved": true
+        },
+        "PatchKTOTrainer": {
+          "kind": "function",
+          "module": "unsloth.models.dpo",
+          "qualname": "PatchKTOTrainer",
+          "resolved": true
+        },
+        "QGaLoreAdamW8bit": {
+          "resolved": false
+        },
+        "QGaloreConfig": {
+          "kind": "type",
+          "module": "unsloth.trainer",
+          "qualname": "QGaloreConfig",
+          "resolved": true
+        },
+        "TinyA2DLlamaConfig": {
+          "kind": "type",
+          "module": "unturtle.models.conversion.a2d.tiny_a2d.modeling_llama",
+          "qualname": "TinyA2DLlamaConfig",
+          "resolved": true
+        },
+        "TinyA2DLlamaLMHeadModel": {
+          "kind": "type",
+          "module": "unturtle.models.conversion.a2d.tiny_a2d.modeling_llama",
+          "qualname": "TinyA2DLlamaLMHeadModel",
+          "resolved": true
+        },
+        "TinyA2DLlamaModel": {
+          "kind": "type",
+          "module": "unturtle.models.conversion.a2d.tiny_a2d.modeling_llama",
+          "qualname": "TinyA2DLlamaModel",
+          "resolved": true
+        },
+        "TinyA2DQwen2Config": {
+          "kind": "type",
+          "module": "unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen2",
+          "qualname": "TinyA2DQwen2Config",
+          "resolved": true
+        },
+        "TinyA2DQwen2LMHeadModel": {
+          "kind": "type",
+          "module": "unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen2",
+          "qualname": "TinyA2DQwen2LMHeadModel",
+          "resolved": true
+        },
+        "TinyA2DQwen2Model": {
+          "kind": "type",
+          "module": "unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen2",
+          "qualname": "TinyA2DQwen2Model",
+          "resolved": true
+        },
+        "TinyA2DQwen3Config": {
+          "kind": "type",
+          "module": "unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen3",
+          "qualname": "TinyA2DQwen3Config",
+          "resolved": true
+        },
+        "TinyA2DQwen3LMHeadModel": {
+          "kind": "type",
+          "module": "unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen3",
+          "qualname": "TinyA2DQwen3LMHeadModel",
+          "resolved": true
+        },
+        "TinyA2DQwen3Model": {
+          "kind": "type",
+          "module": "unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen3",
+          "qualname": "TinyA2DQwen3Model",
+          "resolved": true
+        },
+        "UnslothAdamW": {
+          "resolved": false
+        },
+        "UnslothAdamW8bit": {
+          "resolved": false
+        },
+        "UnslothAdamWScheduleFree": {
+          "resolved": false
+        },
+        "UnslothTrainer": {
+          "kind": "type",
+          "module": "unsloth.trainer",
+          "qualname": "UnslothTrainer",
+          "resolved": true
+        },
+        "UnslothTrainingArguments": {
+          "kind": "type",
+          "module": "unsloth.trainer",
+          "qualname": "UnslothTrainingArguments",
+          "resolved": true
+        },
+        "UnturtleTrainer": {
+          "kind": "type",
+          "module": "unturtle.trainer",
+          "qualname": "UnturtleTrainer",
+          "resolved": true
+        },
+        "UnturtleTrainingArguments": {
+          "kind": "type",
+          "module": "unturtle.trainer",
+          "qualname": "UnturtleTrainingArguments",
+          "resolved": true
+        },
+        "__version__": {
+          "kind": "str",
+          "module": "builtins",
+          "qualname": "str",
+          "resolved": true
+        },
+        "apply_chat_template": {
+          "kind": "function",
+          "module": "unsloth.chat_templates",
+          "qualname": "apply_chat_template",
+          "resolved": true
+        },
+        "check_tokenizer": {
+          "kind": "function",
+          "module": "unsloth.tokenizer_utils",
+          "qualname": "check_tokenizer",
+          "resolved": true
+        },
+        "fast_masked_diffusion_loss": {
+          "kind": "function",
+          "module": "unturtle.kernels.masked_diffusion_loss",
+          "qualname": "fast_masked_diffusion_loss",
+          "resolved": true
+        },
+        "fix_sentencepiece_tokenizer": {
+          "kind": "function",
+          "module": "unsloth.tokenizer_utils",
+          "qualname": "fix_sentencepiece_tokenizer",
+          "resolved": true
+        },
+        "fused_masked_diffusion_loss": {
+          "kind": "function",
+          "module": "unturtle.kernels.fused_masked_diffusion_loss",
+          "qualname": "fused_masked_diffusion_loss",
+          "resolved": true
+        },
+        "get_chat_template": {
+          "kind": "function",
+          "module": "unsloth.chat_templates",
+          "qualname": "get_chat_template",
+          "resolved": true
+        },
+        "get_tokenizer_info": {
+          "kind": "function",
+          "module": "unsloth.tokenizer_utils",
+          "qualname": "get_tokenizer_info",
+          "resolved": true
+        },
+        "is_bf16_supported": {
+          "kind": "function",
+          "module": "unsloth._gpu_init",
+          "qualname": "is_bf16_supported",
+          "resolved": true
+        },
+        "is_bfloat16_supported": {
+          "kind": "function",
+          "module": "unsloth.models._utils",
+          "qualname": "is_bfloat16_supported",
+          "resolved": true
+        },
+        "load_correct_tokenizer": {
+          "kind": "function",
+          "module": "unsloth.tokenizer_utils",
+          "qualname": "load_correct_tokenizer",
+          "resolved": true
+        },
+        "make_alpha_scheduler": {
+          "kind": "function",
+          "module": "unturtle.diffusion.schedulers",
+          "qualname": "make_alpha_scheduler",
+          "resolved": true
+        },
+        "masked_diffusion_loss_from_timesteps": {
+          "kind": "function",
+          "module": "unturtle.kernels.masked_diffusion_loss",
+          "qualname": "masked_diffusion_loss_from_timesteps",
+          "resolved": true
+        },
+        "patch_saving_functions": {
+          "kind": "function",
+          "module": "unsloth.save",
+          "qualname": "patch_saving_functions",
+          "resolved": true
+        },
+        "save_to_gguf": {
+          "kind": "function",
+          "module": "unsloth.save",
+          "qualname": "save_to_gguf",
+          "resolved": true
+        },
+        "unsloth_save_model": {
+          "kind": "function",
+          "module": "unsloth.save",
+          "qualname": "unsloth_save_model",
+          "resolved": true
+        },
+        "unsloth_train": {
+          "kind": "function",
+          "module": "unsloth.trainer",
+          "qualname": "unsloth_train",
+          "resolved": true
+        },
+        "unturtle_train": {
+          "kind": "function",
+          "module": "unsloth.trainer",
+          "qualname": "unsloth_train",
+          "resolved": true
+        }
+      }
+    },
+    "unturtle.models": {
+      "all": [
+        "A2DModernBertConfig",
+        "A2DModernBertForMaskedLM",
+        "A2DModernBertModel",
+        "BlockKVCache",
+        "DiffusionModernBertConfig",
+        "DiffusionModernBertForMaskedLM",
+        "DiffusionModernBertModel",
+        "DreamConfig",
+        "DreamGenerationConfig",
+        "DreamGenerationMixin",
+        "DreamModel",
+        "LLaDAConfig",
+        "LLaDAGenerationConfig",
+        "LLaDAGenerationMixin",
+        "LLaDAModel",
+        "LLaDAModelLM",
+        "MaskedDiffusionGenerationConfig",
+        "MaskedDiffusionGenerationMixin",
+        "MaskedDiffusionModelOutput",
+        "TinyA2DGenerationConfig",
+        "TinyA2DGenerationMixin",
+        "TinyA2DLlamaConfig",
+        "TinyA2DLlamaLMHeadModel",
+        "TinyA2DLlamaModel",
+        "TinyA2DQwen2Config",
+        "TinyA2DQwen2LMHeadModel",
+        "TinyA2DQwen2Model",
+        "TinyA2DQwen3Config",
+        "TinyA2DQwen3LMHeadModel",
+        "TinyA2DQwen3Model",
+        "prepare_for_sampling"
+      ],
+      "all_count": 31,
+      "symbols": {
+        "A2DModernBertConfig": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.modernbert.configuration",
+          "qualname": "DiffusionModernBertConfig",
+          "resolved": true
+        },
+        "A2DModernBertForMaskedLM": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.modernbert.modeling",
+          "qualname": "DiffusionModernBertForMaskedLM",
+          "resolved": true
+        },
+        "A2DModernBertModel": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.modernbert.modeling",
+          "qualname": "DiffusionModernBertModel",
+          "resolved": true
+        },
+        "BlockKVCache": {
+          "kind": "type",
+          "module": "unturtle.models.generation.cache",
+          "qualname": "BlockKVCache",
+          "resolved": true
+        },
+        "DiffusionModernBertConfig": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.modernbert.configuration",
+          "qualname": "DiffusionModernBertConfig",
+          "resolved": true
+        },
+        "DiffusionModernBertForMaskedLM": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.modernbert.modeling",
+          "qualname": "DiffusionModernBertForMaskedLM",
+          "resolved": true
+        },
+        "DiffusionModernBertModel": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.modernbert.modeling",
+          "qualname": "DiffusionModernBertModel",
+          "resolved": true
+        },
+        "DreamConfig": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.dream.configuration_dream",
+          "qualname": "DreamConfig",
+          "resolved": true
+        },
+        "DreamGenerationConfig": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.dream.generation_utils",
+          "qualname": "DreamGenerationConfig",
+          "resolved": true
+        },
+        "DreamGenerationMixin": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.dream.generation_utils",
+          "qualname": "DreamGenerationMixin",
+          "resolved": true
+        },
+        "DreamModel": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.dream.modeling_dream",
+          "qualname": "DreamModel",
+          "resolved": true
+        },
+        "LLaDAConfig": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.llada.configuration_llada",
+          "qualname": "LLaDAConfig",
+          "resolved": true
+        },
+        "LLaDAGenerationConfig": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.llada.generation_utils",
+          "qualname": "LLaDAGenerationConfig",
+          "resolved": true
+        },
+        "LLaDAGenerationMixin": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.llada.generation_utils",
+          "qualname": "LLaDAGenerationMixin",
+          "resolved": true
+        },
+        "LLaDAModel": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.llada.modeling_llada",
+          "qualname": "LLaDAModel",
+          "resolved": true
+        },
+        "LLaDAModelLM": {
+          "kind": "type",
+          "module": "unturtle.models.backbones.llada.modeling_llada",
+          "qualname": "LLaDAModelLM",
+          "resolved": true
+        },
+        "MaskedDiffusionGenerationConfig": {
+          "kind": "type",
+          "module": "unturtle.models.generation.diffusion_generation_utils",
+          "qualname": "MaskedDiffusionGenerationConfig",
+          "resolved": true
+        },
+        "MaskedDiffusionGenerationMixin": {
+          "kind": "type",
+          "module": "unturtle.models.generation.diffusion_generation_utils",
+          "qualname": "MaskedDiffusionGenerationMixin",
+          "resolved": true
+        },
+        "MaskedDiffusionModelOutput": {
+          "kind": "type",
+          "module": "unturtle.models.generation.diffusion_generation_utils",
+          "qualname": "MaskedDiffusionModelOutput",
+          "resolved": true
+        },
+        "TinyA2DGenerationConfig": {
+          "kind": "type",
+          "module": "unturtle.models.conversion.a2d.tiny_a2d.generation_utils",
+          "qualname": "TinyA2DGenerationConfig",
+          "resolved": true
+        },
+        "TinyA2DGenerationMixin": {
+          "kind": "type",
+          "module": "unturtle.models.conversion.a2d.tiny_a2d.generation_utils",
+          "qualname": "TinyA2DGenerationMixin",
+          "resolved": true
+        },
+        "TinyA2DLlamaConfig": {
+          "kind": "type",
+          "module": "unturtle.models.conversion.a2d.tiny_a2d.modeling_llama",
+          "qualname": "TinyA2DLlamaConfig",
+          "resolved": true
+        },
+        "TinyA2DLlamaLMHeadModel": {
+          "kind": "type",
+          "module": "unturtle.models.conversion.a2d.tiny_a2d.modeling_llama",
+          "qualname": "TinyA2DLlamaLMHeadModel",
+          "resolved": true
+        },
+        "TinyA2DLlamaModel": {
+          "kind": "type",
+          "module": "unturtle.models.conversion.a2d.tiny_a2d.modeling_llama",
+          "qualname": "TinyA2DLlamaModel",
+          "resolved": true
+        },
+        "TinyA2DQwen2Config": {
+          "kind": "type",
+          "module": "unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen2",
+          "qualname": "TinyA2DQwen2Config",
+          "resolved": true
+        },
+        "TinyA2DQwen2LMHeadModel": {
+          "kind": "type",
+          "module": "unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen2",
+          "qualname": "TinyA2DQwen2LMHeadModel",
+          "resolved": true
+        },
+        "TinyA2DQwen2Model": {
+          "kind": "type",
+          "module": "unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen2",
+          "qualname": "TinyA2DQwen2Model",
+          "resolved": true
+        },
+        "TinyA2DQwen3Config": {
+          "kind": "type",
+          "module": "unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen3",
+          "qualname": "TinyA2DQwen3Config",
+          "resolved": true
+        },
+        "TinyA2DQwen3LMHeadModel": {
+          "kind": "type",
+          "module": "unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen3",
+          "qualname": "TinyA2DQwen3LMHeadModel",
+          "resolved": true
+        },
+        "TinyA2DQwen3Model": {
+          "kind": "type",
+          "module": "unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen3",
+          "qualname": "TinyA2DQwen3Model",
+          "resolved": true
+        },
+        "prepare_for_sampling": {
+          "kind": "function",
+          "module": "unturtle.models.generation.diffusion_generation_utils",
+          "qualname": "prepare_for_sampling",
+          "resolved": true
+        }
+      }
+    }
+  },
+  "runtime_mutations": {
+    "rows": [
+      {
+        "after_identity": "MethodType(TinyA2DAttention_fast_forward)",
+        "applicability": "CUDA",
+        "before_identity": "class-level TinyA2D attention forward",
+        "claims": [
+          {
+            "contains": "layer.self_attn.forward = types.MethodType(",
+            "file": "unturtle/fast_diffusion_model.py"
+          }
+        ],
+        "classification": "EXTRACT -> #185",
+        "idempotent": "yes (same assignment)",
+        "linked_issue": null,
+        "liveness_evidence": "tests/test_4bit_peft_fast_lora.py (Dream analogue); A2D E2E tests",
+        "mutation_id": "a2d_attention_fast_forward",
+        "owner": "_patch_a2d_peft",
+        "reversible": "no API (instance attr could be deleted)",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 156
+              }
+            ]
+          },
+          "owner": "_patch_a2d_peft",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "warning-only (_warn_once patch report); no structured result \u2014 REPLACE target for #185's PatchReport",
+        "target": "layer.self_attn.forward (instance)"
+      },
+      {
+        "after_identity": "MethodType(apply_lora_mlp_swiglu) [unsloth]",
+        "applicability": "CUDA + lora_dropout==0 + bias==none + LoRA + no DoRA + dtype gate (#177)",
+        "before_identity": "class-level MLP forward",
+        "claims": [
+          {
+            "contains": "mlp.forward = types.MethodType(apply_lora_mlp_swiglu, mlp)",
+            "file": "unturtle/fast_diffusion_model.py"
+          }
+        ],
+        "classification": "EXTRACT -> #185",
+        "idempotent": "yes",
+        "linked_issue": null,
+        "liveness_evidence": "fourbit-contract probe: mlp_forward_is_fast + backward",
+        "mutation_id": "a2d_mlp_fast_hook",
+        "owner": "_patch_a2d_peft",
+        "reversible": "no API",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 180
+              },
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 321
+              }
+            ]
+          },
+          "owner": "_patch_a2d_peft",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "warning-only (_warn_once patch report); no structured result \u2014 REPLACE target for #185's PatchReport",
+        "target": "layer.mlp.forward (instance)"
+      },
+      {
+        "after_identity": "apply_lora_qkv (unsloth)",
+        "applicability": "CUDA + lora_dropout==0 + bias==none + LoRA + no DoRA + dtype gate (#177)",
+        "before_identity": "_original_apply_qkv stub",
+        "claims": [
+          {
+            "contains": "layer.self_attn.apply_qkv = apply_lora_qkv",
+            "file": "unturtle/fast_diffusion_model.py"
+          }
+        ],
+        "classification": "EXTRACT -> #185",
+        "idempotent": "yes",
+        "linked_issue": null,
+        "liveness_evidence": "A2D fast-path tests",
+        "mutation_id": "a2d_qkv_fast_hook",
+        "owner": "_patch_a2d_peft",
+        "reversible": "reassign stub",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 203
+              }
+            ]
+          },
+          "owner": "_patch_a2d_peft",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "warning-only (_warn_once patch report); no structured result \u2014 REPLACE target for #185's PatchReport",
+        "target": "layer.self_attn.apply_qkv"
+      },
+      {
+        "after_identity": "apply_lora_o (unsloth)",
+        "applicability": "CUDA + eligibility gates",
+        "before_identity": "_original_apply_o stub",
+        "claims": [
+          {
+            "contains": "layer.self_attn.apply_o = apply_lora_o",
+            "file": "unturtle/fast_diffusion_model.py"
+          }
+        ],
+        "classification": "EXTRACT -> #185",
+        "idempotent": "yes",
+        "linked_issue": null,
+        "liveness_evidence": "A2D fast-path tests",
+        "mutation_id": "a2d_o_fast_hook",
+        "owner": "_patch_a2d_peft",
+        "reversible": "reassign stub",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 214
+              }
+            ]
+          },
+          "owner": "_patch_a2d_peft",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "warning-only (_warn_once patch report); no structured result \u2014 REPLACE target for #185's PatchReport",
+        "target": "layer.self_attn.apply_o"
+      },
+      {
+        "after_identity": "MethodType(DreamAttention_fast_forward)",
+        "applicability": "CUDA + dtype gate (#177)",
+        "before_identity": "DreamSdpaAttention.forward (class)",
+        "claims": [
+          {
+            "contains": "self_attn.forward = types.MethodType(DreamAttention_fast_forward",
+            "file": "unturtle/fast_diffusion_model.py"
+          }
+        ],
+        "classification": "EXTRACT -> #185",
+        "idempotent": "yes",
+        "linked_issue": 177,
+        "liveness_evidence": "fourbit-contract probe: instance_forward_installed + forward/backward",
+        "mutation_id": "dream_attention_fast_forward",
+        "owner": "_patch_dream_peft",
+        "reversible": "delete instance attr (no API)",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 259
+              }
+            ]
+          },
+          "owner": "_patch_dream_peft",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "warning-only (_warn_once patch report); no structured result \u2014 REPLACE target for #185's PatchReport",
+        "target": "self_attn.forward (instance)"
+      },
+      {
+        "after_identity": "apply_lora_qkv_with_bias (unturtle.kernels.fast_lora)",
+        "applicability": "CUDA + lora_dropout==0 + bias==none + LoRA + no DoRA + dtype gate (#177)",
+        "before_identity": "_original_apply_qkv stub",
+        "claims": [
+          {
+            "contains": "self_attn.apply_qkv = apply_lora_qkv_with_bias",
+            "file": "unturtle/fast_diffusion_model.py"
+          }
+        ],
+        "classification": "EXTRACT -> #185",
+        "idempotent": "yes",
+        "linked_issue": 177,
+        "liveness_evidence": "fourbit-contract probe: before=_original_apply_qkv, after=apply_lora_qkv_with_bias, forward+backward complete",
+        "mutation_id": "dream_qkv_fast_hook_bias",
+        "owner": "_patch_dream_peft",
+        "reversible": "reassign stub",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 282
+              }
+            ]
+          },
+          "owner": "_patch_dream_peft",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "warning-only (_warn_once patch report); no structured result \u2014 REPLACE target for #185's PatchReport",
+        "target": "self_attn.apply_qkv"
+      },
+      {
+        "after_identity": "apply_lora_o (unsloth)",
+        "applicability": "CUDA + eligibility gates",
+        "before_identity": "_original_apply_o stub",
+        "claims": [
+          {
+            "contains": "self_attn.apply_o = apply_lora_o",
+            "file": "unturtle/fast_diffusion_model.py"
+          }
+        ],
+        "classification": "EXTRACT -> #185",
+        "idempotent": "yes",
+        "linked_issue": null,
+        "liveness_evidence": "fourbit-contract probe: apply_o_is_fast + backward",
+        "mutation_id": "dream_o_fast_hook",
+        "owner": "_patch_dream_peft",
+        "reversible": "reassign stub",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 214
+              },
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 298
+              }
+            ]
+          },
+          "owner": "_patch_dream_peft",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "warning-only (_warn_once patch report); no structured result \u2014 REPLACE target for #185's PatchReport",
+        "target": "self_attn.apply_o"
+      },
+      {
+        "after_identity": "MethodType(apply_lora_mlp_swiglu) [unsloth]",
+        "applicability": "CUDA + eligibility gates",
+        "before_identity": "DreamMLP.forward (class)",
+        "claims": [
+          {
+            "contains": "mlp.forward = types.MethodType(apply_lora_mlp_swiglu, mlp)",
+            "file": "unturtle/fast_diffusion_model.py"
+          }
+        ],
+        "classification": "EXTRACT -> #185",
+        "idempotent": "yes",
+        "linked_issue": null,
+        "liveness_evidence": "fourbit-contract probe: mlp_forward_is_fast + backward",
+        "mutation_id": "dream_mlp_fast_hook",
+        "owner": "_patch_dream_peft",
+        "reversible": "no API",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 180
+              },
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 321
+              }
+            ]
+          },
+          "owner": "_patch_dream_peft",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "warning-only (_warn_once patch report); no structured result \u2014 REPLACE target for #185's PatchReport",
+        "target": "layer.mlp.forward (instance)"
+      },
+      {
+        "after_identity": "MethodType(_make_llada_fast_rope_forward(...))",
+        "applicability": "CUDA",
+        "before_identity": "class rotary forward",
+        "claims": [
+          {
+            "contains": "rotary_emb.forward = types.MethodType(",
+            "file": "unturtle/fast_diffusion_model.py"
+          }
+        ],
+        "classification": "EXTRACT -> #185",
+        "idempotent": "yes \u2014 guarded by _fast_rope_patched flag",
+        "linked_issue": null,
+        "liveness_evidence": "LLaDA fast-path tests",
+        "mutation_id": "llada_rope_fast_forward",
+        "owner": "_patch_llada_peft",
+        "reversible": "no API",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 393
+              }
+            ]
+          },
+          "owner": "_patch_llada_peft",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "warning-only (_warn_once patch report); no structured result \u2014 REPLACE target for #185's PatchReport",
+        "target": "block.rotary_emb.forward (instance)"
+      },
+      {
+        "after_identity": "apply_lora_qkv (unsloth)",
+        "applicability": "CUDA + eligibility gates",
+        "before_identity": "unset / stub",
+        "claims": [
+          {
+            "contains": "block.apply_qkv = apply_lora_qkv",
+            "file": "unturtle/fast_diffusion_model.py"
+          }
+        ],
+        "classification": "EXTRACT -> #185",
+        "idempotent": "yes",
+        "linked_issue": null,
+        "liveness_evidence": "LLaDA fast-path tests",
+        "mutation_id": "llada_qkv_fast_hook",
+        "owner": "_patch_llada_peft",
+        "reversible": "reassign",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 419
+              }
+            ]
+          },
+          "owner": "_patch_llada_peft",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "warning-only (_warn_once patch report); no structured result \u2014 REPLACE target for #185's PatchReport",
+        "target": "block.apply_qkv"
+      },
+      {
+        "after_identity": "apply_lora_o (unsloth)",
+        "applicability": "CUDA + eligibility gates",
+        "before_identity": "unset / stub",
+        "claims": [
+          {
+            "contains": "block.apply_o = apply_lora_o",
+            "file": "unturtle/fast_diffusion_model.py"
+          }
+        ],
+        "classification": "EXTRACT -> #185",
+        "idempotent": "yes",
+        "linked_issue": null,
+        "liveness_evidence": "LLaDA fast-path tests",
+        "mutation_id": "llada_o_fast_hook",
+        "owner": "_patch_llada_peft",
+        "reversible": "reassign",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 435
+              }
+            ]
+          },
+          "owner": "_patch_llada_peft",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "warning-only (_warn_once patch report); no structured result \u2014 REPLACE target for #185's PatchReport",
+        "target": "block.apply_o"
+      },
+      {
+        "after_identity": "apply_lora_mlp_swiglu (unsloth) + block.gate_proj=ff_proj alias",
+        "applicability": "CUDA + SiLU activation + eligibility gates",
+        "before_identity": "LLaDALlamaBlock._default_apply_mlp",
+        "claims": [
+          {
+            "contains": "block.apply_mlp = apply_lora_mlp_swiglu",
+            "file": "unturtle/fast_diffusion_model.py"
+          },
+          {
+            "contains": "block.gate_proj = ff_proj",
+            "file": "unturtle/fast_diffusion_model.py"
+          }
+        ],
+        "classification": "EXTRACT -> #185",
+        "idempotent": "yes",
+        "linked_issue": null,
+        "liveness_evidence": "LLaDA fast-path tests",
+        "mutation_id": "llada_mlp_fast_hook",
+        "owner": "_patch_llada_peft",
+        "reversible": "reassign + alias removal (no API)",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 476
+              },
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 474
+              }
+            ]
+          },
+          "owner": "_patch_llada_peft",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "warning-only (_warn_once patch report); no structured result \u2014 REPLACE target for #185's PatchReport",
+        "target": "block.apply_mlp + gate_proj/down_proj aliasing"
+      },
+      {
+        "after_identity": "MethodType(ModernBertAttention_fast_forward)",
+        "applicability": "CUDA",
+        "before_identity": "ModernBertAttention.forward (class)",
+        "claims": [
+          {
+            "contains": "attn.forward = types.MethodType(ModernBertAttention_fast_forward",
+            "file": "unturtle/fast_diffusion_model.py"
+          }
+        ],
+        "classification": "EXTRACT -> #185",
+        "idempotent": "yes",
+        "linked_issue": null,
+        "liveness_evidence": "ModernBERT tests",
+        "mutation_id": "modernbert_attention_fast_forward",
+        "owner": "_patch_modernbert_peft",
+        "reversible": "no API",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 538
+              }
+            ]
+          },
+          "owner": "_patch_modernbert_peft",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "warning-only (_warn_once patch report); no structured result \u2014 REPLACE target for #185's PatchReport",
+        "target": "layer.attn.forward (instance)"
+      },
+      {
+        "after_identity": "apply_lora_o (unsloth) + attn.o_proj=attn.Wo alias",
+        "applicability": "CUDA + eligibility gates",
+        "before_identity": "_original_apply_wo stub",
+        "claims": [
+          {
+            "contains": "attn.apply_wo = apply_lora_o",
+            "file": "unturtle/fast_diffusion_model.py"
+          },
+          {
+            "contains": "attn.o_proj = attn.Wo",
+            "file": "unturtle/fast_diffusion_model.py"
+          }
+        ],
+        "classification": "EXTRACT -> #185",
+        "idempotent": "yes",
+        "linked_issue": null,
+        "liveness_evidence": "ModernBERT tests",
+        "mutation_id": "modernbert_wo_fast_hook",
+        "owner": "_patch_modernbert_peft",
+        "reversible": "reassign",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 554
+              },
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 553
+              }
+            ]
+          },
+          "owner": "_patch_modernbert_peft",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "warning-only (_warn_once patch report); no structured result \u2014 REPLACE target for #185's PatchReport",
+        "target": "attn.apply_wo + o_proj aliasing"
+      },
+      {
+        "after_identity": "UnturtleDiffusionGemmaForBlockDiffusion",
+        "applicability": "model_type in _POST_LOAD_CLASS_SWAPS AND isinstance(model, wrapper bases)",
+        "before_identity": "upstream transformers class (e.g. DiffusionGemmaForBlockDiffusion)",
+        "claims": [
+          {
+            "contains": "model.__class__ = wrapper_cls",
+            "file": "unturtle/fast_diffusion_model.py"
+          }
+        ],
+        "classification": "REPLACE -> #186",
+        "idempotent": "yes (isinstance guard)",
+        "linked_issue": null,
+        "liveness_evidence": "DiffusionGemma real-checkpoint tests (slow/gpu)",
+        "mutation_id": "post_load_class_swap",
+        "owner": "_apply_post_load_class_swap",
+        "reversible": "reassign original class (no API)",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 808
+              }
+            ]
+          },
+          "owner": "_apply_post_load_class_swap",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "silent on success; warning when the swap is refused",
+        "target": "model.__class__"
+      },
+      {
+        "after_identity": "absent -> class-level generate shim wins",
+        "applicability": "after class swap (unsloth FastModel installs an instance-level generate)",
+        "before_identity": "unsloth_base_fast_generate (instance attribute)",
+        "claims": [
+          {
+            "contains": "model.__dict__.pop(\"generate\", None)",
+            "file": "unturtle/fast_diffusion_model.py"
+          }
+        ],
+        "classification": "REPLACE -> #186",
+        "idempotent": "yes (pop with default)",
+        "linked_issue": null,
+        "liveness_evidence": "DiffusionGemma generation tests",
+        "mutation_id": "instance_generate_deletion",
+        "owner": "_apply_post_load_class_swap",
+        "reversible": "no (original saved as _old_generate by unsloth)",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 816
+              }
+            ]
+          },
+          "owner": "_apply_post_load_class_swap",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "silent",
+        "target": "model.__dict__['generate']"
+      },
+      {
+        "after_identity": "checkpoint generation config, or from_model_config fallback",
+        "applicability": "post-swap, when unset and model can_generate",
+        "before_identity": "absent (unsloth load path skips the __init__ postamble)",
+        "claims": [
+          {
+            "contains": "model.generation_config = restored",
+            "file": "unturtle/fast_diffusion_model.py"
+          }
+        ],
+        "classification": "REPLACE -> #186",
+        "idempotent": "yes (never overwrites a populated one)",
+        "linked_issue": null,
+        "liveness_evidence": "#96 regression tests",
+        "mutation_id": "generation_config_restoration",
+        "owner": "_apply_post_load_class_swap",
+        "reversible": "reassign",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 851
+              }
+            ]
+          },
+          "owner": "_apply_post_load_class_swap",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "silent",
+        "target": "model.generation_config"
+      },
+      {
+        "after_identity": "_original_apply_qkv / _original_apply_o",
+        "applicability": "always (from_pretrained and get_peft_model)",
+        "before_identity": "absent",
+        "claims": [
+          {
+            "contains": "module.apply_qkv = _original_apply_qkv",
+            "file": "unturtle/fast_diffusion_model.py"
+          },
+          {
+            "contains": "module.apply_o = _original_apply_o",
+            "file": "unturtle/fast_diffusion_model.py"
+          }
+        ],
+        "classification": "EXTRACT -> #185",
+        "idempotent": "yes (hasattr guard)",
+        "linked_issue": null,
+        "liveness_evidence": "all fast-forward tests dispatch through the stubs",
+        "mutation_id": "apply_stubs_install",
+        "owner": "_install_apply_stubs",
+        "reversible": "delete attrs (no API)",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 1807
+              },
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 1809
+              }
+            ]
+          },
+          "owner": "_install_apply_stubs",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "silent",
+        "target": "module.apply_qkv / module.apply_o on every q_proj+o_proj module"
+      },
+      {
+        "after_identity": "_original_apply_wo",
+        "applicability": "ModernBERT models (CPU and CUDA)",
+        "before_identity": "absent",
+        "claims": [
+          {
+            "contains": "module.apply_wo = _original_apply_wo",
+            "file": "unturtle/models/backbones/modernbert/_fast_forward.py"
+          }
+        ],
+        "classification": "EXTRACT -> #185",
+        "idempotent": "yes",
+        "linked_issue": null,
+        "liveness_evidence": "ModernBERT tests",
+        "mutation_id": "modernbert_wo_stub_install",
+        "owner": "_install_modernbert_stubs",
+        "reversible": "delete attr",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/models/backbones/modernbert/_fast_forward.py",
+                "line": 111
+              }
+            ]
+          },
+          "owner": "_install_modernbert_stubs",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "silent",
+        "target": "module.apply_wo"
+      },
+      {
+        "after_identity": "LLaDALlamaBlock._default_apply_mlp",
+        "applicability": "constructor default (not a patch)",
+        "before_identity": "n/a (construction)",
+        "claims": [
+          {
+            "contains": "self.apply_mlp = LLaDALlamaBlock._default_apply_mlp",
+            "file": "unturtle/models/backbones/llada/modeling_llada.py"
+          }
+        ],
+        "classification": "KEEP",
+        "idempotent": "yes",
+        "linked_issue": null,
+        "liveness_evidence": "LLaDA forward tests",
+        "mutation_id": "llada_default_apply_mlp",
+        "owner": "LLaDALlamaBlock.__init__",
+        "reversible": "n/a",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/models/backbones/llada/modeling_llada.py",
+                "line": 1128
+              }
+            ]
+          },
+          "owner": "LLaDALlamaBlock.__init__",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "n/a",
+        "target": "self.apply_mlp"
+      },
+      {
+        "after_identity": "MethodType(unturtle push wrapper), original kept as original_push_to_hub",
+        "applicability": "every get_peft_model output",
+        "before_identity": "class push_to_hub",
+        "claims": [
+          {
+            "contains": "original_model.push_to_hub = types.MethodType(",
+            "file": "unturtle/save.py"
+          }
+        ],
+        "classification": "EXTRACT -> #185",
+        "idempotent": "unverified (re-patch wraps the wrapper unless guarded \u2014 see tests)",
+        "linked_issue": null,
+        "liveness_evidence": "save tests",
+        "mutation_id": "push_to_hub_patch",
+        "owner": "unturtle.save.patch_saving_functions",
+        "reversible": "original retained on the instance",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/save.py",
+                "line": 61
+              }
+            ]
+          },
+          "owner": "unturtle.save.patch_saving_functions",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "silent",
+        "target": "model.push_to_hub (instance)"
+      },
+      {
+        "after_identity": "extended/regenerated inv_freq for max_seq_length",
+        "applicability": "every from_pretrained load; NOT applied to directly-instantiated models",
+        "before_identity": "constructor-initialized inv_freq",
+        "claims": [
+          {
+            "contains": "rope.extend_rope_embedding(max_seq_length)",
+            "file": "unturtle/fast_diffusion_model.py"
+          }
+        ],
+        "classification": "UNDECIDABLE -> #174",
+        "idempotent": "unverified",
+        "linked_issue": 174,
+        "liveness_evidence": "persistence.native_fp probe: identical state_dict, buffer_diffs=[*.rotary_emb.inv_freq], output relnorm ~1e-2 \u2014 load-path vs direct-instantiation divergence",
+        "mutation_id": "rope_extension",
+        "owner": "_extend_rope_if_possible (via _patch_for_diffusion)",
+        "reversible": "no",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 1126
+              }
+            ]
+          },
+          "owner": "_extend_rope_if_possible (via _patch_for_diffusion)",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "debug log only",
+        "target": "rotary_emb.inv_freq and RoPE tables (non-persistent buffers)"
+      },
+      {
+        "after_identity": "int attribute on every module",
+        "applicability": "every load and PEFT wrap",
+        "before_identity": "absent",
+        "claims": [
+          {
+            "contains": "module.max_seq_length = max_seq_length",
+            "file": "unturtle/fast_diffusion_model.py"
+          },
+          {
+            "contains": "internal.max_seq_length = max_seq_length",
+            "file": "unturtle/fast_diffusion_model.py"
+          },
+          {
+            "contains": "model.max_seq_length = max_seq_length",
+            "file": "unturtle/fast_diffusion_model.py"
+          }
+        ],
+        "classification": "EXTRACT -> #185",
+        "idempotent": "yes",
+        "linked_issue": null,
+        "liveness_evidence": "unsloth GC reads it",
+        "mutation_id": "max_seq_length_propagation",
+        "owner": "_propagate_max_seq_length",
+        "reversible": "delete attrs",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 1144
+              },
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 1140
+              },
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 1142
+              },
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 1157
+              }
+            ]
+          },
+          "owner": "_propagate_max_seq_length",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "silent",
+        "target": "module.max_seq_length on every module"
+      },
+      {
+        "after_identity": "DreamGenerationConfig.from_pretrained(...)",
+        "applicability": "Dream loads with a checkpoint generation_config",
+        "before_identity": "plain GenerationConfig from the upstream postamble",
+        "claims": [
+          {
+            "contains": "_model.generation_config = DreamGenerationConfig.from_pretrained(",
+            "file": "unturtle/models/backbones/dream/modeling_dream.py"
+          }
+        ],
+        "classification": "linked defect -> #189",
+        "idempotent": "yes",
+        "linked_issue": 189,
+        "liveness_evidence": "persistence.generation_reload probe: reloaded model carries DreamGenerationConfig, yet the default-config generate path still crashes (it never consults self.generation_config \u2014 #189)",
+        "mutation_id": "dream_generation_config_from_pretrained",
+        "owner": "DreamModel.from_pretrained (family hook)",
+        "reversible": "reassign",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/models/backbones/dream/modeling_dream.py",
+                "line": 802
+              }
+            ]
+          },
+          "owner": "DreamModel.from_pretrained (family hook)",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "silent",
+        "target": "model.generation_config"
+      },
+      {
+        "after_identity": "bool flag consumed by each family's forward",
+        "applicability": "constructor defaults and transformers GC API",
+        "before_identity": "n/a (construction / toggle)",
+        "claims": [
+          {
+            "contains": "self.gradient_checkpointing = False",
+            "file": "unturtle/models/backbones/dream/modeling_dream.py"
+          },
+          {
+            "contains": "self.gradient_checkpointing = False",
+            "file": "unturtle/models/backbones/mdlm_dit/modeling_mdlm_dit.py"
+          },
+          {
+            "contains": "gradient_checkpointing = enable",
+            "file": "unturtle/models/backbones/llada/modeling_llada.py"
+          }
+        ],
+        "classification": "KEEP",
+        "idempotent": "yes",
+        "linked_issue": null,
+        "liveness_evidence": "gradient-checkpointing training tests",
+        "mutation_id": "in_model_gradient_checkpointing_state",
+        "owner": "family model constructors / GC toggles",
+        "reversible": "yes",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/models/backbones/dream/modeling_dream.py",
+                "line": 844
+              },
+              {
+                "file": "unturtle/models/backbones/mdlm_dit/modeling_mdlm_dit.py",
+                "line": 283
+              },
+              {
+                "file": "unturtle/models/backbones/llada/modeling_llada.py",
+                "line": 1387
+              },
+              {
+                "file": "unturtle/models/backbones/llada/modeling_llada.py",
+                "line": 1396
+              }
+            ]
+          },
+          "owner": "family model constructors / GC toggles",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "n/a (in-model state, not a patch)",
+        "target": "module.gradient_checkpointing (in-model field)"
+      },
+      {
+        "after_identity": "uniform bool + tracked mode attr",
+        "applicability": "get_peft_model / for_inference / for_training",
+        "before_identity": "per-module flags",
+        "claims": [
+          {
+            "contains": "module.gradient_checkpointing = bool(mode)",
+            "file": "unturtle/fast_diffusion_model.py"
+          }
+        ],
+        "classification": "KEEP",
+        "idempotent": "yes",
+        "linked_issue": null,
+        "liveness_evidence": "inference_context round-trip tests",
+        "mutation_id": "gc_mode_application",
+        "owner": "_apply_gradient_checkpointing_mode",
+        "reversible": "yes (mode round-trips)",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 1835
+              }
+            ]
+          },
+          "owner": "_apply_gradient_checkpointing_mode",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "silent",
+        "target": "module.gradient_checkpointing + model._unturtle_gradient_checkpointing_mode"
+      },
+      {
+        "after_identity": "UNSLOTH_MIXED_PRECISION=float32 (measured)",
+        "applicability": "every quantized get_peft_model",
+        "before_identity": "env unset",
+        "claims": [
+          {
+            "contains": "model = prepare_model_for_kbit_training(",
+            "file": "unturtle/fast_diffusion_model.py"
+          }
+        ],
+        "classification": "EXTRACT -> #185",
+        "idempotent": "yes (same value)",
+        "linked_issue": 177,
+        "liveness_evidence": "fourbit-contract probe: UNSLOTH_MIXED_PRECISION None->float32; a per-model API mutating process state \u2014 ledgered separately from object-local rows (#184 requirement)",
+        "mutation_id": "kbit_preparation_env",
+        "owner": "unturtle.save.prepare_model_for_kbit_training -> unsloth zoo",
+        "reversible": "no (env persists for the process)",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/fast_diffusion_model.py",
+                "line": 1441
+              }
+            ]
+          },
+          "owner": "unturtle.save.prepare_model_for_kbit_training -> unsloth zoo",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "process-global",
+        "success_signal": "silent",
+        "target": "os.environ['UNSLOTH_MIXED_PRECISION'] + GC patch/unpatch state"
+      },
+      {
+        "after_identity": "mdlm-dit, modernbert-diffusion, tiny-a2d-{llama,qwen2,qwen3} registered; Dream and LLaDA are NOT (import probe evidence)",
+        "applicability": "once per process at import",
+        "before_identity": "no unturtle model_types registered",
+        "claims": [
+          {
+            "contains": "transformers.AutoConfig.register(",
+            "file": "unturtle/models/backbones/mdlm_dit/modeling_mdlm_dit.py"
+          },
+          {
+            "contains": "transformers.AutoConfig.register(",
+            "file": "unturtle/models/backbones/modernbert/modeling.py"
+          },
+          {
+            "contains": "transformers.AutoConfig.register(",
+            "file": "unturtle/models/conversion/a2d/tiny_a2d/modeling_llama.py"
+          },
+          {
+            "contains": "transformers.AutoConfig.register(",
+            "file": "unturtle/models/conversion/a2d/tiny_a2d/modeling_qwen2.py"
+          },
+          {
+            "contains": "transformers.AutoConfig.register(",
+            "file": "unturtle/models/conversion/a2d/tiny_a2d/modeling_qwen3.py"
+          }
+        ],
+        "classification": "KEEP (asymmetry recorded: Dream/LLaDA unregistered)",
+        "idempotent": "guarded (fires once per model_type)",
+        "linked_issue": null,
+        "liveness_evidence": "import probe: autoclass config_mapping_extra",
+        "mutation_id": "autoclass_registration",
+        "owner": "unturtle.models import side effects",
+        "reversible": "no",
+        "row": {
+          "evidence": {
+            "matched_sites": [
+              {
+                "file": "unturtle/models/backbones/mdlm_dit/modeling_mdlm_dit.py",
+                "line": 406
+              },
+              {
+                "file": "unturtle/models/backbones/modernbert/modeling.py",
+                "line": 92
+              },
+              {
+                "file": "unturtle/models/conversion/a2d/tiny_a2d/modeling_llama.py",
+                "line": 217
+              },
+              {
+                "file": "unturtle/models/conversion/a2d/tiny_a2d/modeling_qwen2.py",
+                "line": 225
+              },
+              {
+                "file": "unturtle/models/conversion/a2d/tiny_a2d/modeling_qwen3.py",
+                "line": 225
+              }
+            ]
+          },
+          "owner": "unturtle.models import side effects",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "process-global",
+        "success_signal": "silent",
+        "target": "transformers CONFIG_MAPPING / AutoModel mappings"
+      },
+      {
+        "after_identity": "bootstrapped RegistryHub with all builtin axes (import probe evidence)",
+        "applicability": "once per process, at import unturtle",
+        "before_identity": "None",
+        "claims": [
+          {
+            "contains": "def ensure_default_hub",
+            "file": "unturtle/registry.py"
+          }
+        ],
+        "classification": "KEEP",
+        "idempotent": "yes (memoized)",
+        "linked_issue": null,
+        "liveness_evidence": "import probe: default_registry_hub.bootstrapped=true with axis contents",
+        "mutation_id": "default_registry_bootstrap",
+        "owner": "unturtle import chain (ensure_default_hub)",
+        "reversible": "no API",
+        "row": {
+          "evidence": {
+            "matched_sites": []
+          },
+          "owner": "unturtle import chain (ensure_default_hub)",
+          "reason": "claim not found in production tree",
+          "source": "static scan + curated ledger",
+          "status": "unverified"
+        },
+        "scope": "process-global",
+        "success_signal": "silent",
+        "target": "unturtle.registry._default_hub"
+      }
+    ],
+    "scanned_hits": 41,
+    "unclaimed_hits": []
+  },
+  "schema_version": 1,
+  "semantic_digest": "59b609033d1a775c2eff50c6a332620f3965b79e43960db070010fbb3d6157f9",
+  "verdicts": {
+    "diffusion_gemma_class_swap": {
+      "area": "DiffusionGemma runtime class swap",
+      "row": {
+        "evidence": {
+          "mutation_ledger": "post_load_class_swap + instance_generate_deletion rows"
+        },
+        "owner": "#184",
+        "reason": null,
+        "source": "characterization sections",
+        "status": "observed"
+      },
+      "verdict": "REPLACE -> #186"
+    },
+    "dream_default_generation_config": {
+      "area": "Dream unified generate with default config",
+      "row": {
+        "evidence": {
+          "generation_probe": "default-config runs raise AttributeError eps on transformers 5.x; explicit DreamGenerationConfig executes"
+        },
+        "owner": "#184",
+        "reason": null,
+        "source": "characterization sections",
+        "status": "observed"
+      },
+      "verdict": "linked defect -> #189"
+    },
+    "dtype_gate_fail_open": {
+      "area": "Fast-path dtype gate: unresolvable embedding structure",
+      "row": {
+        "evidence": {
+          "note": "fail-open today (per-layer gates still apply); #185 must represent this as unverified, never compatible",
+          "reason_code": "input_embedding_unresolvable"
+        },
+        "owner": "#184",
+        "reason": "input_embedding_unresolvable",
+        "source": "characterization sections",
+        "status": "unverified"
+      },
+      "verdict": "unverified -> #185 SupportResult must model it"
+    },
+    "explicit_plugin_loading": {
+      "area": "Explicit plugin loading",
+      "row": {
+        "evidence": {
+          "import_probe": "unturtle.plugins import registers nothing by itself"
+        },
+        "owner": "#184",
+        "reason": null,
+        "source": "characterization sections",
+        "status": "observed"
+      },
+      "verdict": "KEEP"
+    },
+    "family_specific_configs_models": {
+      "area": "Family-specific configs/models",
+      "row": {
+        "evidence": {
+          "models_section": "per-family rows"
+        },
+        "owner": "#184",
+        "reason": null,
+        "source": "characterization sections",
+        "status": "observed"
+      },
+      "verdict": "KEEP"
+    },
+    "fast_diffusion_model_facade": {
+      "area": "FastDiffusionModel public facade",
+      "row": {
+        "evidence": {
+          "public_api": "exported"
+        },
+        "owner": "#184",
+        "reason": null,
+        "source": "characterization sections",
+        "status": "observed"
+      },
+      "verdict": "KEEP"
+    },
+    "fast_diffusion_model_internal_ownership": {
+      "area": "FastDiffusionModel internal ownership",
+      "row": {
+        "evidence": {
+          "runtime_mutations": "loader/PEFT/patch rows classified EXTRACT"
+        },
+        "owner": "#184",
+        "reason": null,
+        "source": "characterization sections",
+        "status": "observed"
+      },
+      "verdict": "EXTRACT -> #185"
+    },
+    "fourbit_peft_contract": {
+      "area": "4-bit + PEFT preparation/fast-path contract",
+      "row": {
+        "evidence": {
+          "fourbit_contract": {
+            "embedding_dtype": "torch.bfloat16",
+            "fallback_uniform_skip": true,
+            "fast_path_verdict": "compatible",
+            "preparation_owner": "unsloth.models._utils.prepare_model_for_kbit_training"
+          }
+        },
+        "owner": "#184",
+        "reason": null,
+        "source": "characterization sections",
+        "status": "observed"
+      },
+      "verdict": "KEEP (fixed by #177)"
+    },
+    "get_peft_model_random_state": {
+      "area": "get_peft_model(random_state=...) contract",
+      "row": {
+        "evidence": {
+          "process_global_state": "rng_contract row: same random_state, different pre-RNG consumption, different lora_A digests"
+        },
+        "owner": "#184",
+        "reason": null,
+        "source": "characterization sections",
+        "status": "observed"
+      },
+      "verdict": "linked defect -> #188"
+    },
+    "installation_only_fast_path_success": {
+      "area": "Installation-only fast-path success",
+      "row": {
+        "evidence": {
+          "fourbit_contract": "liveness now proven by execution, not installation (#177)",
+          "mutation_ledger": "success_signal is warning-only on every fast hook row"
+        },
+        "owner": "#184",
+        "reason": null,
+        "source": "characterization sections",
+        "status": "observed"
+      },
+      "verdict": "REPLACE -> #185"
+    },
+    "integration_callbacks_into_loader": {
+      "area": "Integration callbacks into loader private functions",
+      "row": {
+        "evidence": {
+          "integrations_section": "resolver seams"
+        },
+        "owner": "#184",
+        "reason": null,
+        "source": "characterization sections",
+        "status": "observed"
+      },
+      "verdict": "EXTRACT -> #185"
+    },
+    "methodspec_registryhub": {
+      "area": "MethodSpec / RegistryHub",
+      "row": {
+        "evidence": {
+          "import_probe": "default hub bootstrapped with 7 axes at import"
+        },
+        "owner": "#184",
+        "reason": null,
+        "source": "characterization sections",
+        "status": "observed"
+      },
+      "verdict": "KEEP"
+    },
+    "root_export_growth": {
+      "area": "Root export growth",
+      "row": {
+        "evidence": {
+          "public_api": {
+            "declared_but_none": [
+              "GaLoreProjector",
+              "QGaLoreAdamW8bit",
+              "UnslothAdamW",
+              "UnslothAdamW8bit",
+              "UnslothAdamWScheduleFree"
+            ],
+            "unturtle_all_count": 71
+          }
+        },
+        "owner": "#184",
+        "reason": null,
+        "source": "characterization sections",
+        "status": "observed"
+      },
+      "verdict": "DEPRECATE"
+    },
+    "save_reload_global_state_instability": {
+      "area": "Full-suite save/reload global-state instability",
+      "row": {
+        "evidence": {
+          "persistence.native_fp": {
+            "attribution": "rope_extension mutation row (load-path only)",
+            "buffer_diffs": [
+              "model.layers.0.self_attn.rotary_emb.inv_freq",
+              "model.layers.1.self_attn.rotary_emb.inv_freq",
+              "model.rotary_emb.inv_freq"
+            ],
+            "output_bit_identical": false,
+            "state_dict": "identical"
+          }
+        },
+        "owner": "#184",
+        "reason": null,
+        "source": "characterization sections",
+        "status": "observed"
+      },
+      "verdict": "UNDECIDABLE -> #174"
+    },
+    "signature_guessing_generation": {
+      "area": "Signature-guessing generation invocation",
+      "row": {
+        "evidence": {
+          "generation_probe": "sampler resolves call signatures via inspection \u2014 a signature-hiding wrapper changed dispatch during probing"
+        },
+        "owner": "#184",
+        "reason": null,
+        "source": "characterization sections",
+        "status": "observed"
+      },
+      "verdict": "REPLACE -> #186"
+    },
+    "transformers_native_model_inheritance": {
+      "area": "Transformers-native model inheritance",
+      "row": {
+        "evidence": {
+          "models_section": "all families subclass PreTrainedModel (MRO rows)"
+        },
+        "owner": "#184",
+        "reason": null,
+        "source": "characterization sections",
+        "status": "observed"
+      },
+      "verdict": "KEEP"
+    },
+    "universal_hierarchy": {
+      "area": "Universal model/state/solver/trainer hierarchy",
+      "row": {
+        "evidence": {
+          "models_section": "families are peers; no shared unturtle base class"
+        },
+        "owner": "#184",
+        "reason": null,
+        "source": "characterization sections",
+        "status": "observed"
+      },
+      "verdict": "DO NOT CREATE"
+    }
+  }
+}
