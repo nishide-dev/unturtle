@@ -146,11 +146,41 @@ def prepare_model_for_kbit_training(
     use_gradient_checkpointing=True,
     use_reentrant: bool = True,
 ):
-    """Thin wrapper around ``peft.prepare_model_for_kbit_training``.
+    """Prepare a quantized model for LoRA training with unsloth's semantics.
 
-    Accepts ``use_reentrant`` (used by the unsloth version) and maps it to
-    PEFT's ``gradient_checkpointing_kwargs``.
+    peft's ``prepare_model_for_kbit_training`` upcasts every non-quantized
+    fp16/bf16 parameter to fp32, so a 4-bit model's real hidden states become
+    fp32 while its weights dequantize to the 16-bit compute dtype. The fused
+    LoRA paths (unsloth ``matmul_lora`` — behind Unturtle's bias-aware QKV AND
+    unsloth's own MLP/O hooks) multiply the activation directly against the
+    dequantized weight, so under that preparation no fused path can execute
+    (#177). Unsloth's preparation keeps frozen parameters at their loaded
+    dtype — only trainable LoRA parameters are upcast to fp32, and
+    ``matmul_lora`` casts those to the activation dtype per matmul — so
+    activations stay in the compute dtype and every fused path runs.
+
+    Falls back to the peft implementation when unsloth is unavailable; on that
+    path no fused kernel can be installed either (they import from unsloth),
+    so peft's fp32 upcast cannot conflict with ``matmul_lora``.
     """
+    if use_gradient_checkpointing not in (True, False, "unsloth"):
+        # unsloth asserts this exact domain; peft accepted any truthy value.
+        use_gradient_checkpointing = bool(use_gradient_checkpointing)
+
+    try:
+        from unsloth.models._utils import (
+            prepare_model_for_kbit_training as _unsloth_prepare,
+        )
+    except (ImportError, OSError, AttributeError):
+        _unsloth_prepare = None
+
+    if _unsloth_prepare is not None:
+        return _unsloth_prepare(
+            model,
+            use_gradient_checkpointing=use_gradient_checkpointing,
+            use_reentrant=use_reentrant,
+        )
+
     from peft import prepare_model_for_kbit_training as _peft_prepare
 
     return _peft_prepare(

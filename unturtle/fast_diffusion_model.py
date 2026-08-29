@@ -616,6 +616,36 @@ def _find_quantized_linear_modules(model: Any) -> list[tuple[str, Any]]:
     ]
 
 
+def _fast_path_dtype_incompatibility(model: Any) -> str | None:
+    """Typed reason when no fast path can execute on this model, else ``None``.
+
+    The fused LoRA paths (unsloth ``matmul_lora``) multiply the activation
+    directly against the dequantized quantized weight, and the fast attention
+    forwards assume 16-bit hidden states. When the hidden-state dtype (its
+    origin: the input embedding) does not match the quantization compute
+    dtype — e.g. after peft's own ``prepare_model_for_kbit_training`` upcast
+    everything to fp32 — none of them can run (#177). Such a model must be
+    left entirely on the standard PEFT path, never partially fast.
+    """
+    quantized = _find_quantized_linear_modules(model)
+    if not quantized:
+        return None
+    quant_dtypes = {
+        getattr(module.weight.quant_state, "dtype", None) for _, module in quantized
+    }
+    quant_dtypes.discard(None)
+    if not quant_dtypes:
+        return None
+    get_embeddings = getattr(model, "get_input_embeddings", None)
+    embedding = get_embeddings() if callable(get_embeddings) else None
+    weight = getattr(embedding, "weight", None)
+    if weight is None:
+        return None
+    if weight.dtype not in quant_dtypes:
+        return "incompatible_compute_dtype"
+    return None
+
+
 def _dequantize_merged_model_(model: Any) -> Any:
     """Dequantize bnb 4-bit Linear modules in *model* to 16-bit, in place.
 
@@ -1449,9 +1479,25 @@ class FastDiffusionModel:
                 f"FastDiffusionModel cannot PEFT-patch model_type={model_type!r}: "
                 f"the {integration.name!r} patcher could not be imported."
             )
-        counts = patcher(model, lora_dropout, bias)
-        if integration.peft_report is not None:
-            _warn_once(integration.peft_report(model, counts))
+
+        incompatibility = _fast_path_dtype_incompatibility(model)
+        if incompatibility is not None:
+            # All-or-nothing: a model whose hidden states cannot feed the fused
+            # kernels must not end up with SOME fast hooks installed (#177) —
+            # the pre-fix failure mode was exactly a fully-hooked model whose
+            # first forward raised. The standard PEFT path handles the dtype
+            # itself (bnb casts activations to the compute dtype internally).
+            _warn_once(
+                "FastDiffusionModel: skipping ALL fast-path patching "
+                f"(reason={incompatibility}): the model's hidden-state dtype "
+                "does not match its quantization compute dtype, so neither the "
+                "fused LoRA kernels nor the fast attention forwards can "
+                "execute (#177). The standard PEFT path is retained."
+            )
+        else:
+            counts = patcher(model, lora_dropout, bias)
+            if integration.peft_report is not None:
+                _warn_once(integration.peft_report(model, counts))
 
         # Propagate max_seq_length through the wrapped model hierarchy
         if hasattr(model, "max_seq_length"):
