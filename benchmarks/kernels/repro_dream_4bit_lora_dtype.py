@@ -40,6 +40,13 @@ The existing test only asserts the callable is INSTALLED
 never executes a forward, and it uses a tiny non-quantized fixture, so neither
 the 4-bit path nor any execution is covered.
 
+RESOLVED by #177: ``unturtle.save.prepare_model_for_kbit_training`` now uses
+unsloth semantics (frozen parameters keep their loaded dtype), so the model's
+real hidden states stay bf16 and this script's final line reports the mismatch
+does not arise. The fp32 probe still fails by design — that is the kernel's
+dtype contract, enforced model-wide by ``patch_peft_model`` (an fp32-upcasted
+model gets no fast hooks at all, reason ``incompatible_compute_dtype``).
+
 Run::
 
     .venv/bin/python benchmarks/kernels/repro_dream_4bit_lora_dtype.py
