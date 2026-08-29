@@ -319,18 +319,130 @@ def provenance(command: str, occupancy: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+class MeasurementInvalid(RuntimeError):
+    """The cell cannot be measured, as distinct from measuring badly."""
+
+
+def arm_preflight(model, batch: int) -> dict[str, Any]:
+    """Prove both arms are LIVE and agree, before any timing is recorded.
+
+    The failure this exists to catch already happened once: a dtype guard
+    rejected every real call, so the "specialized" arm silently executed the
+    reference and the producer reported a confident 0.0% from a
+    reference-vs-reference comparison. Nothing in the timing data could reveal
+    it — the arms were genuinely identical.
+
+    So the producer now proves, per cell and outside the timed span:
+      - the specialized arm takes the fast path on every state update
+      - the reference arm takes it on none
+      - the two arms emit bit-identical public tokens
+
+    Raises rather than recording a warning: a cell that cannot show this has
+    not measured the specialization, whatever its stopwatch says.
+    """
+    from unturtle_flm import state_update
+    from unturtle_flm.sampler import run_fmlm_request
+
+    expected_updates = STEPS - 1
+    counts = {"fast": 0, "reference": 0}
+    original = state_update.fast_path_applies
+
+    def counting_guard(*call_args, **call_kwargs):
+        verdict = original(*call_args, **call_kwargs)
+        counts["fast" if verdict else "reference"] += 1
+        return verdict
+
+    state_update.fast_path_applies = counting_guard
+    try:
+        specialized_tokens = run_fmlm_request(model, Request(batch))["tokens"].cpu()
+    finally:
+        state_update.fast_path_applies = original
+    specialized_counts = dict(counts)
+
+    counts = {"fast": 0, "reference": 0}
+    with fast_path_disabled():
+        forced = state_update.fast_path_applies
+
+        def counting_forced(*call_args, **call_kwargs):
+            verdict = forced(*call_args, **call_kwargs)
+            counts["fast" if verdict else "reference"] += 1
+            return verdict
+
+        state_update.fast_path_applies = counting_forced
+        reference_tokens = run_fmlm_request(model, Request(batch))["tokens"].cpu()
+    reference_counts = dict(counts)
+
+    changed = int((specialized_tokens != reference_tokens).sum())
+    record = {
+        "specialized_fast_decisions": specialized_counts["fast"],
+        "specialized_fallback_decisions": specialized_counts["reference"],
+        "reference_forced_decisions": reference_counts["reference"],
+        "reference_fast_decisions": reference_counts["fast"],
+        "expected_state_updates": expected_updates,
+        "changed_token_positions": changed,
+        "total_token_positions": int(specialized_tokens.numel()),
+        "tokens_exactly_equal": changed == 0,
+        "basis": (
+            "run outside the timed span; proves the two arms are distinct and "
+            "agree, so a timing result cannot come from comparing the reference "
+            "against itself"
+        ),
+    }
+
+    if specialized_counts["fast"] != expected_updates:
+        raise MeasurementInvalid(
+            f"batch {batch}: specialized arm took the fast path "
+            f"{specialized_counts['fast']} times, expected {expected_updates}. "
+            "The specialization is not live; any timing would compare the "
+            "reference against itself."
+        )
+    if specialized_counts["reference"]:
+        raise MeasurementInvalid(
+            f"batch {batch}: specialized arm fell back "
+            f"{specialized_counts['reference']} times."
+        )
+    if reference_counts["fast"]:
+        raise MeasurementInvalid(
+            f"batch {batch}: reference arm took the fast path "
+            f"{reference_counts['fast']} times; it is not forced."
+        )
+    if reference_counts["reference"] != expected_updates:
+        raise MeasurementInvalid(
+            f"batch {batch}: reference arm made "
+            f"{reference_counts['reference']} decisions, expected "
+            f"{expected_updates}."
+        )
+    if changed:
+        raise MeasurementInvalid(
+            f"batch {batch}: the arms disagree on {changed} token positions. "
+            "A speedup from a different output is not a speedup."
+        )
+    return record
+
+
+def require_exclusive(device: str, when: str) -> dict[str, Any]:
+    """Refuse to measure while another workload holds the device.
+
+    Checked before EVERY cell, not only at startup: a process that arrives
+    midway would otherwise land inside a later cell's timing while the artifact
+    still recorded a clean start.
+    """
+    occupancy = device_occupancy(device)
+    if occupancy["foreign_process_count"]:
+        raise MeasurementInvalid(
+            f"{device} became shared {when}: {occupancy['compute_processes']}. "
+            "Latency and peak memory would be attributable to another workload."
+        )
+    return occupancy
+
+
 def main() -> None:
     import torch
 
     args = parse_args()
     index = int(args.device.split(":")[1])
     torch.cuda.set_device(index)
-    occupancy = device_occupancy(args.device)
-    if occupancy["foreign_process_count"]:
-        raise SystemExit(
-            f"{args.device} is shared: {occupancy['compute_processes']}. "
-            "Latency and peak memory would be attributable to another workload."
-        )
+    occupancy = require_exclusive(args.device, "at start")
     out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -340,15 +452,21 @@ def main() -> None:
 
     cells = []
     for batch in BATCH_SIZES:
+        before = require_exclusive(args.device, f"before batch {batch}")
+        preflight = arm_preflight(model, batch)
+        torch.cuda.empty_cache()
         trials = paired_trials(model, batch)
         latency = summarize(trials)
         memory = memory_summary(trials)
+        after = require_exclusive(args.device, f"during batch {batch}")
         cells.append(
             {
                 "batch": batch,
                 "steps": STEPS,
                 "gamma": GAMMA,
-                "device_occupancy_before": device_occupancy(args.device),
+                "device_occupancy_before": before,
+                "device_occupancy_after": after,
+                "arm_preflight": preflight,
                 "trials": trials,
                 "latency": latency,
                 "memory": memory,

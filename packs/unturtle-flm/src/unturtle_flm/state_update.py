@@ -76,6 +76,47 @@ _ACCUMULATOR_DTYPE = torch.float32
 _PREDICTION_DTYPES = (torch.float32, torch.bfloat16)
 
 
+#: The execution cell the Stage-2 outer-wall measurement actually covers.
+#: `batch` is a tuple because three sizes were measured; every other axis was
+#: held at a single value. A caller outside ANY of these axes gets the
+#: reference: widening the scope is a new claim needing its own measurement,
+#: not an inference from this one.
+MEASURED_CONTEXT: dict[str, Any] = {
+    "gamma": 1.0,
+    "steps": 32,
+    "batch": (1, 8, 32),
+    "length": 1024,
+    "vocab": 50258,
+    # repo_id AND revision: the measurement was made against one pinned commit,
+    # and a moved tag would be a different model wearing the same name.
+    "checkpoint": "david3684/FMLM-B-OWT@483ea1b38bba56632cd40dc5a3c70a2340bb4946",
+    "torch_version": "2.10.0+cu128",
+    "cuda_version": "12.8",
+    "gpu_name": "NVIDIA RTX 6000 Ada Generation",
+    "compiled": False,
+}
+
+
+def _context_is_measured(context: Any) -> bool:
+    """Whether the caller has SHOWN it is inside the measured cell.
+
+    A missing or incomplete context is a rejection, not a default-allow: a
+    caller that supplies nothing has not demonstrated anything.
+    """
+    if not isinstance(context, dict):
+        return False
+    for axis, measured in MEASURED_CONTEXT.items():
+        if axis not in context:
+            return False
+        value = context[axis]
+        if isinstance(measured, tuple):
+            if value not in measured:
+                return False
+        elif value != measured:
+            return False
+    return True
+
+
 def fast_path_applies(
     z: Any,
     d_pred: Any,
@@ -84,12 +125,15 @@ def fast_path_applies(
     mean_adjustment: Any,
     noise_std: Any,
     eps: Any,
+    context: Any = None,
 ) -> bool:
     """Whether the measured-scope conditions hold for these inputs.
 
     Deliberately conservative: a false negative costs a little speed, while a
     false positive changes generated tokens.
     """
+    if not _context_is_measured(context):
+        return False
     tensors = (z, d_pred, weight_z, weight_d, mean_adjustment, noise_std, eps)
     if not all(isinstance(t, torch.Tensor) for t in tensors):
         return False
@@ -140,6 +184,7 @@ def apply_state_update(
     mean_adjustment: Any,
     noise_std: Any,
     eps: Any,
+    context: Any = None,
 ) -> Any:
     """Compute the next latent, taking the fast path only inside the measured
     scope.
@@ -150,11 +195,18 @@ def apply_state_update(
     chosen = (
         _fast_update
         if fast_path_applies(
-            z, d_pred, weight_z, weight_d, mean_adjustment, noise_std, eps
+            z,
+            d_pred,
+            weight_z,
+            weight_d,
+            mean_adjustment,
+            noise_std,
+            eps,
+            context=context,
         )
         else _reference_update
     )
     return chosen(z, d_pred, weight_z, weight_d, mean_adjustment, noise_std, eps)
 
 
-__all__ = ["apply_state_update", "fast_path_applies"]
+__all__ = ["MEASURED_CONTEXT", "apply_state_update", "fast_path_applies"]

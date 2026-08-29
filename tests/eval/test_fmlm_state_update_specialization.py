@@ -44,6 +44,29 @@ def _code_only(source: str) -> str:
     return " ".join(kept)
 
 
+def _measured_context(args=None, **overrides):
+    """A context describing the measured cell.
+
+    Tensor-level guard tests need this: without a valid context the scope gate
+    rejects first, and each such test would pass without ever reaching the
+    clause it is named after.
+
+    Shape axes stay at their MEASURED values even when the test tensors are
+    small. Deriving them from the tensors instead would make every one of these
+    tests fail for a shape reason rather than the property under test — which is
+    exactly the "passes for the wrong reason" failure this battery exists to
+    prevent, inverted.
+
+    `args` is accepted and ignored for call-site symmetry.
+    """
+    from unturtle_flm import state_update
+
+    context = dict(state_update.MEASURED_CONTEXT)
+    context["batch"] = context["batch"][0]
+    context.update(overrides)
+    return context
+
+
 def _inputs(batch=2, length=8, vocab=16, seed=0, device="cpu", dtype=torch.float32):
     g = torch.Generator(device=device).manual_seed(seed)
     make = lambda: torch.randn(  # noqa: E731
@@ -92,7 +115,7 @@ class TestBitIdentity:
 
         args = _inputs(batch=batch, vocab=64, device="cuda")
         expected = reference_expression(**args)
-        got = state_update.apply_state_update(**args)
+        got = state_update.apply_state_update(**args, context=_measured_context(args))
         assert torch.equal(expected, got)
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
@@ -100,9 +123,14 @@ class TestBitIdentity:
         from unturtle_flm import state_update
 
         args = _inputs(vocab=64, device="cuda")
-        first = state_update.apply_state_update(**args)
+        first = state_update.apply_state_update(**args, context=_measured_context(args))
         for _ in range(4):
-            assert torch.equal(first, state_update.apply_state_update(**args))
+            assert torch.equal(
+                first,
+                state_update.apply_state_update(
+                    **args, context=_measured_context(args)
+                ),
+            )
 
     def test_the_test_would_catch_a_wrong_update(self):
         """Guards the guard: a gate that cannot fail proves nothing."""
@@ -121,7 +149,10 @@ class TestScopeGuards:
         from unturtle_flm import state_update
 
         args = _inputs(device="cpu")
-        assert state_update.fast_path_applies(**args) is False
+        assert (
+            state_update.fast_path_applies(**args, context=_measured_context(args))
+            is False
+        )
 
     def test_the_cpu_result_still_matches_the_reference_exactly(self):
         """Falling back means falling back to the reference arithmetic."""
@@ -129,7 +160,8 @@ class TestScopeGuards:
 
         args = _inputs(device="cpu")
         assert torch.equal(
-            reference_expression(**args), state_update.apply_state_update(**args)
+            reference_expression(**args),
+            state_update.apply_state_update(**args, context=_measured_context(args)),
         )
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
@@ -138,7 +170,10 @@ class TestScopeGuards:
         from unturtle_flm import state_update
 
         args = _inputs(vocab=64, device="cuda", dtype=dtype)
-        assert state_update.fast_path_applies(**args) is False
+        assert (
+            state_update.fast_path_applies(**args, context=_measured_context(args))
+            is False
+        )
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
     def test_non_contiguous_input_does_not_take_the_fast_path(self):
@@ -147,7 +182,10 @@ class TestScopeGuards:
         args = _inputs(vocab=64, device="cuda")
         args["d_pred"] = args["d_pred"].transpose(1, 2).transpose(1, 2)
         args["z"] = args["z"][:, :, ::2]
-        assert state_update.fast_path_applies(**args) is False
+        assert (
+            state_update.fast_path_applies(**args, context=_measured_context(args))
+            is False
+        )
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
     def test_autocast_does_not_take_the_fast_path(self):
@@ -157,15 +195,20 @@ class TestScopeGuards:
 
         args = _inputs(vocab=64, device="cuda")
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            assert state_update.fast_path_applies(**args) is False
+            assert (
+                state_update.fast_path_applies(**args, context=_measured_context(args))
+                is False
+            )
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
     def test_the_measured_configuration_does_take_it(self):
         """The guards must not be so strict that nothing qualifies."""
         from unturtle_flm import state_update
 
+        args = _inputs(vocab=64, device="cuda")
         assert (
-            state_update.fast_path_applies(**_inputs(vocab=64, device="cuda")) is True
+            state_update.fast_path_applies(**args, context=_measured_context(args))
+            is True
         )
 
     @pytest.mark.skipif(
@@ -180,7 +223,10 @@ class TestScopeGuards:
 
         args = _inputs(vocab=64, device="cuda:0")
         args["d_pred"] = args["d_pred"].to("cuda:1")
-        assert state_update.fast_path_applies(**args) is False
+        assert (
+            state_update.fast_path_applies(**args, context=_measured_context(args))
+            is False
+        )
 
 
 class TestSemanticsPreservation:
@@ -189,7 +235,7 @@ class TestSemanticsPreservation:
 
         args = _inputs()
         before = {k: v.clone() for k, v in args.items()}
-        state_update.apply_state_update(**args)
+        state_update.apply_state_update(**args, context=_measured_context(args))
         for name, original in before.items():
             assert torch.equal(args[name], original), f"{name} was mutated"
 
@@ -197,7 +243,7 @@ class TestSemanticsPreservation:
         from unturtle_flm import state_update
 
         args = _inputs()
-        out = state_update.apply_state_update(**args)
+        out = state_update.apply_state_update(**args, context=_measured_context(args))
         for name, tensor in args.items():
             assert out.data_ptr() != tensor.data_ptr(), f"result aliases {name}"
 
@@ -208,7 +254,7 @@ class TestSemanticsPreservation:
 
         args = _inputs()
         before = torch.get_rng_state()
-        state_update.apply_state_update(**args)
+        state_update.apply_state_update(**args, context=_measured_context(args))
         assert torch.equal(before, torch.get_rng_state())
 
 
@@ -295,7 +341,10 @@ class TestRealSamplerConfiguration:
         """This is the production configuration, not an edge case."""
         from unturtle_flm import state_update
 
-        assert state_update.fast_path_applies(**self._real_inputs()) is True
+        args = self._real_inputs()
+        assert (
+            state_update.fast_path_applies(**args, context=_measured_context()) is True
+        )
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
     def test_it_is_bit_identical_with_a_bfloat16_d_pred(self):
@@ -303,7 +352,8 @@ class TestRealSamplerConfiguration:
 
         args = self._real_inputs()
         assert torch.equal(
-            reference_expression(**args), state_update.apply_state_update(**args)
+            reference_expression(**args),
+            state_update.apply_state_update(**args, context=_measured_context(args)),
         )
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
@@ -315,7 +365,10 @@ class TestRealSamplerConfiguration:
 
         args = self._real_inputs()
         args["z"] = args["z"].to(torch.bfloat16)
-        assert state_update.fast_path_applies(**args) is False
+        assert (
+            state_update.fast_path_applies(**args, context=_measured_context(args))
+            is False
+        )
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
     def test_a_float16_d_pred_is_still_rejected(self):
@@ -324,7 +377,10 @@ class TestRealSamplerConfiguration:
 
         args = self._real_inputs()
         args["d_pred"] = args["d_pred"].to(torch.float16)
-        assert state_update.fast_path_applies(**args) is False
+        assert (
+            state_update.fast_path_applies(**args, context=_measured_context(args))
+            is False
+        )
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
     def test_the_fast_path_runs_for_every_step_of_a_real_request(self):
@@ -349,7 +405,9 @@ class TestRealSamplerConfiguration:
             model = load_fmlm_model(device="cuda").eval()
 
             class _Request:
-                kwargs = {"steps": 4, "num_samples": 1, "seed": 100, "gamma": 1.0}
+                # 32 steps: the measured cell. A shorter request is correctly
+                # declined by the scope gate, which is asserted separately.
+                kwargs = {"steps": 32, "num_samples": 1, "seed": 100, "gamma": 1.0}
 
             run_fmlm_request(model, _Request())
         finally:
@@ -436,7 +494,12 @@ class TestSamplerCallSiteWiring:
         def capturing(**kwargs):
             result = original(**kwargs)
             if len(captured) < 3:
-                captured.append({k: v.detach().clone() for k, v in kwargs.items()})
+                captured.append(
+                    {
+                        k: v.detach().clone() if torch.is_tensor(v) else v
+                        for k, v in kwargs.items()
+                    }
+                )
             return result
 
         sampler_module.apply_state_update = capturing
@@ -534,7 +597,199 @@ class TestMixedDtypeIdentitySweep:
             noise_std=ns,
             eps=eps,
         )
-        assert state_update.fast_path_applies(**args) is True
+        # Calls `_fast_update` directly: this asserts the ARITHMETIC is
+        # identical, which is a property of the expression rather than of the
+        # measured cell. Routing through the dispatcher would test the scope
+        # gate instead, and these shapes are deliberately not the measured ones.
         assert torch.equal(
-            reference_expression(**args), state_update.apply_state_update(**args)
+            reference_expression(**args), state_update._fast_update(**args)
         )
+
+
+class TestMeasuredScopeGuards:
+    """The Stage-2 verdict is bounded to gamma == 1, 32 steps, length 1024,
+    batch 1/8/32, a frozen checkpoint, and one torch/CUDA/GPU combination. The
+    first version of this guard checked only tensor properties, so it would have
+    admitted the fast path at gamma 0.5, at 8 steps, at length 512, on a
+    different GPU — none of which was measured.
+
+    Widening is a separate decision requiring its own measurement, so anything
+    outside the verdict falls back to the reference.
+    """
+
+    @staticmethod
+    def _measured_context(**overrides):
+        """The measured cell itself, NOT shaped to the test tensors: these tests
+        vary one context axis at a time, so the shape axes must stay at their
+        measured values or the rejection could come from the wrong clause."""
+        from unturtle_flm import state_update
+
+        context = dict(state_update.MEASURED_CONTEXT)
+        context["batch"] = context["batch"][0]
+        context.update(overrides)
+        return context
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+    def test_the_measured_context_is_admitted(self):
+        """The guards must not be so strict that the measured cell is rejected."""
+        from unturtle_flm import state_update
+
+        args = _inputs(vocab=64, device="cuda")
+        args["d_pred"] = args["d_pred"].to(torch.bfloat16)
+        assert (
+            state_update.fast_path_applies(**args, context=self._measured_context())
+            is True
+        )
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+    @pytest.mark.parametrize(
+        "override",
+        [
+            {"gamma": 0.0},
+            {"gamma": 0.5},
+            {"gamma": 1.5},
+            {"steps": 8},
+            {"steps": 64},
+            {"batch": 2},
+            {"batch": 16},
+            {"length": 512},
+            {"vocab": 32000},
+            {"checkpoint": "some/other-checkpoint"},
+            {"torch_version": "2.9.0+cu124"},
+            {"cuda_version": "12.4"},
+            {"gpu_name": "NVIDIA A100-SXM4-80GB"},
+            {"compiled": True},
+        ],
+    )
+    def test_anything_outside_the_measured_cell_falls_back(self, override):
+        from unturtle_flm import state_update
+
+        args = _inputs(vocab=64, device="cuda")
+        args["d_pred"] = args["d_pred"].to(torch.bfloat16)
+        context = self._measured_context(**override)
+        assert state_update.fast_path_applies(**args, context=context) is False, (
+            f"{override} was admitted but never measured"
+        )
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+    def test_a_missing_context_falls_back(self):
+        """Absence of evidence is not evidence of scope: a caller that supplies
+        no context has not shown it is inside the measured cell."""
+        from unturtle_flm import state_update
+
+        args = _inputs(vocab=64, device="cuda")
+        args["d_pred"] = args["d_pred"].to(torch.bfloat16)
+        assert state_update.fast_path_applies(**args, context=None) is False
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+    def test_an_incomplete_context_falls_back(self):
+        """A context missing a key cannot be checked against the verdict."""
+        from unturtle_flm import state_update
+
+        args = _inputs(vocab=64, device="cuda")
+        args["d_pred"] = args["d_pred"].to(torch.bfloat16)
+        partial = self._measured_context()
+        partial.pop("gamma")
+        assert state_update.fast_path_applies(**args, context=partial) is False
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+    def test_the_result_is_still_correct_when_the_context_rejects(self):
+        """Falling back means falling back to the reference arithmetic, not to
+        something merely close."""
+        from unturtle_flm import state_update
+
+        args = _inputs(vocab=64, device="cuda")
+        args["d_pred"] = args["d_pred"].to(torch.bfloat16)
+        assert torch.equal(
+            reference_expression(**args),
+            state_update.apply_state_update(**args, context=None),
+        )
+
+    def test_the_measured_context_records_the_verdict_axes(self):
+        from unturtle_flm import state_update
+
+        for axis in (
+            "gamma",
+            "steps",
+            "batch",
+            "length",
+            "vocab",
+            "checkpoint",
+            "torch_version",
+            "cuda_version",
+            "gpu_name",
+            "compiled",
+        ):
+            assert axis in state_update.MEASURED_CONTEXT, axis
+
+
+class TestSamplerSuppliesTheExecutionContext:
+    def test_a_real_request_inside_the_measured_cell_takes_the_fast_path(self):
+        pytest.importorskip("unturtle_flm.loader")
+        if not torch.cuda.is_available():
+            pytest.skip("needs CUDA")
+
+        from unturtle_flm import state_update
+        from unturtle_flm.loader import load_fmlm_model
+        from unturtle_flm.sampler import run_fmlm_request
+
+        taken = {"fast": 0, "reference": 0}
+        original = state_update.fast_path_applies
+
+        def counting_guard(*args, **kwargs):
+            result = original(*args, **kwargs)
+            taken["fast" if result else "reference"] += 1
+            return result
+
+        state_update.fast_path_applies = counting_guard
+        try:
+            model = load_fmlm_model(device="cuda").eval()
+
+            class _Request:
+                kwargs = {
+                    "steps": 32,
+                    "num_samples": 1,
+                    "seed": 100,
+                    "gamma": 1.0,
+                }
+
+            run_fmlm_request(model, _Request())
+        finally:
+            state_update.fast_path_applies = original
+
+        assert taken == {"fast": 31, "reference": 0}, taken
+
+    def test_a_request_outside_the_measured_cell_falls_back_entirely(self):
+        """Same model, same everything except a step count that was never
+        measured. Every call must take the reference."""
+        pytest.importorskip("unturtle_flm.loader")
+        if not torch.cuda.is_available():
+            pytest.skip("needs CUDA")
+
+        from unturtle_flm import state_update
+        from unturtle_flm.loader import load_fmlm_model
+        from unturtle_flm.sampler import run_fmlm_request
+
+        taken = {"fast": 0, "reference": 0}
+        original = state_update.fast_path_applies
+
+        def counting_guard(*args, **kwargs):
+            result = original(*args, **kwargs)
+            taken["fast" if result else "reference"] += 1
+            return result
+
+        state_update.fast_path_applies = counting_guard
+        try:
+            model = load_fmlm_model(device="cuda").eval()
+
+            class _Request:
+                kwargs = {"steps": 8, "num_samples": 1, "seed": 100, "gamma": 1.0}
+
+            run_fmlm_request(model, _Request())
+        finally:
+            state_update.fast_path_applies = original
+
+        assert taken["fast"] == 0, (
+            f"{taken['fast']} unmeasured calls took the fast path"
+        )
+        assert taken["reference"] == 7
