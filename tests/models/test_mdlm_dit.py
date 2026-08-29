@@ -503,7 +503,17 @@ class TestMDLMDiTRegistration:
         reloaded = MDLMDiTForMaskedDiffusionLM.from_pretrained(tmp_path).cpu().eval()
         with torch.no_grad():
             got = reloaded(input_ids=input_ids).logits
-        assert torch.allclose(ref, got, atol=1e-5)
+        # Tolerance unchanged (#174 PR 0): the assertion now reports WHAT
+        # diverged (first mismatching persistent key, non-persistent buffer
+        # census incl. finiteness, output delta, process state) instead of a
+        # bare False. Known mechanism: from_pretrained re-materializes
+        # non-persistent buffers with torch.empty_like and MDLM-DiT's
+        # _init_weights is a no-op, so rotary.inv_freq is uninitialized memory.
+        from unturtle.diagnostics.persistence import persistence_parity_report
+
+        assert torch.allclose(ref, got, atol=1e-5), persistence_parity_report(
+            model, reloaded, ref, got
+        )
 
 
 class TestMDLMDiTTrainingSmoke:

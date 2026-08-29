@@ -377,4 +377,10 @@ class TestTrainingAndPersistencePlumbing:
         with torch.no_grad():
             before = conditioned(input_ids=ids, latents=latents).logits
             after = reloaded(input_ids=ids, latents=latents).logits
-        assert torch.equal(before, after)
+        # Exact equality unchanged (#174 PR 0); see test_mdlm_dit.py for the
+        # diagnosed mechanism (uninitialized non-persistent rotary buffer).
+        from unturtle.diagnostics.persistence import persistence_parity_report
+
+        assert torch.equal(before, after), persistence_parity_report(
+            conditioned, reloaded, before, after
+        )
