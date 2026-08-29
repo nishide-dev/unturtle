@@ -117,6 +117,31 @@ def _context_is_measured(context: Any) -> bool:
     return True
 
 
+def _shapes_match_context(
+    z: Any,
+    d_pred: Any,
+    weight_z: Any,
+    weight_d: Any,
+    mean_adjustment: Any,
+    noise_std: Any,
+    eps: Any,
+    context: dict[str, Any],
+) -> bool:
+    """Whether the tensors are the shape the context claims.
+
+    State tensors are [batch, length, vocab]; coefficients are [batch, 1, 1].
+    Coefficients are checked exactly rather than by broadcast compatibility: a
+    scalar or a full-size tensor broadcasts to the same VALUE but is a different
+    kernel shape, and only the [batch, 1, 1] form was measured.
+    """
+    expected_state = (context["batch"], context["length"], context["vocab"])
+    if any(tuple(t.shape) != expected_state for t in (z, d_pred, eps)):
+        return False
+    expected_coefficient = (context["batch"], 1, 1)
+    coefficients = (weight_z, weight_d, mean_adjustment, noise_std)
+    return all(tuple(t.shape) == expected_coefficient for t in coefficients)
+
+
 def fast_path_applies(
     z: Any,
     d_pred: Any,
@@ -136,6 +161,13 @@ def fast_path_applies(
         return False
     tensors = (z, d_pred, weight_z, weight_d, mean_adjustment, noise_std, eps)
     if not all(isinstance(t, torch.Tensor) for t in tensors):
+        return False
+    # The context is metadata the CALLER supplies. Checking it alone would let a
+    # stale or wrong context admit tensors of an entirely unmeasured shape, so
+    # the tensors must agree with the cell they claim to be in.
+    if not _shapes_match_context(
+        z, d_pred, weight_z, weight_d, mean_adjustment, noise_std, eps, context
+    ):
         return False
     if any(t.device.type != "cuda" for t in tensors):
         return False

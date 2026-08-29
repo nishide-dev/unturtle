@@ -242,6 +242,20 @@ def run_flm_request(model: Any, request: Any) -> dict[str, Any]:
     }
 
 
+def _reference_uses_compile() -> bool:
+    """Whether the reference DIT was imported with compilation enabled.
+
+    Read live rather than cached: the flag is a module attribute, and reading it
+    at call time is what makes the compiled axis testable at all.
+    """
+    try:
+        from unturtle_flm._reference import dit
+    except ImportError:
+        # Cannot show it is eager, so do not claim it is.
+        return True
+    return bool(getattr(dit, "USE_COMPILE", True))
+
+
 def _execution_context(
     model: Any,
     steps: int,
@@ -283,10 +297,13 @@ def _execution_context(
         "torch_version": torch.__version__,
         "cuda_version": cuda_version,
         "gpu_name": gpu_name,
-        # `_reference.dit` honours a USE_COMPILE flag; a compiled graph was not
-        # measured, and torch.compile may reassociate the very arithmetic whose
-        # bit identity the fast path depends on.
-        "compiled": bool(getattr(model, "_unturtle_compiled", False)),
+        # Read from the reference module that actually decides it (DIT_USE_COMPILE
+        # at import time). An earlier version read `model._unturtle_compiled`,
+        # an attribute nothing ever assigns — so it was a constant False, and a
+        # compiled model would have been labelled eager and admitted.
+        # torch.compile may reassociate the very arithmetic whose bit identity
+        # the fast path depends on, so this axis has to be real.
+        "compiled": _reference_uses_compile(),
     }
 
 

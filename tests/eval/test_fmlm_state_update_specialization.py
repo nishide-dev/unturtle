@@ -44,6 +44,18 @@ def _code_only(source: str) -> str:
     return " ".join(kept)
 
 
+def _cell_inputs(device="cuda"):
+    """Tensors at the real measured shape [1, 1024, 50258], bf16 `d_pred`.
+
+    Admission tests need these: the guard cross-checks tensors against the
+    context, and `vocab` is itself a measured axis, so a smaller tensor cannot
+    honestly claim the measured cell. About 0.48 GiB at batch 1.
+    """
+    args = _inputs(batch=1, length=1024, vocab=50258, device=device)
+    args["d_pred"] = args["d_pred"].to(torch.bfloat16)
+    return args
+
+
 def _measured_context(args=None, **overrides):
     """A context describing the measured cell.
 
@@ -51,23 +63,27 @@ def _measured_context(args=None, **overrides):
     rejects first, and each such test would pass without ever reaching the
     clause it is named after.
 
-    Shape axes stay at their MEASURED values even when the test tensors are
-    small. Deriving them from the tensors instead would make every one of these
-    tests fail for a shape reason rather than the property under test — which is
-    exactly the "passes for the wrong reason" failure this battery exists to
-    prevent, inverted.
-
-    `args` is accepted and ignored for call-site symmetry.
+    When `args` is given, the shape axes are taken FROM those tensors. The guard
+    now cross-checks tensors against context, so a context describing the full
+    formal cell would be rejected for a shape mismatch — again passing the test
+    for the wrong reason. Tests that deliberately probe a shape mismatch build
+    their context explicitly instead.
     """
     from unturtle_flm import state_update
 
     context = dict(state_update.MEASURED_CONTEXT)
     context["batch"] = context["batch"][0]
+    if args is not None:
+        batch, length, vocab = args["z"].shape
+        context.update(batch=batch, length=length, vocab=vocab)
     context.update(overrides)
     return context
 
 
-def _inputs(batch=2, length=8, vocab=16, seed=0, device="cpu", dtype=torch.float32):
+def _inputs(batch=1, length=8, vocab=16, seed=0, device="cpu", dtype=torch.float32):
+    """Default batch is 1 because 1 IS a measured batch size. At batch 2 every
+    admission test would be rejected by the context gate before reaching the
+    tensor clause it is named after."""
     g = torch.Generator(device=device).manual_seed(seed)
     make = lambda: torch.randn(  # noqa: E731
         batch, length, vocab, device=device, dtype=dtype, generator=g
@@ -205,7 +221,7 @@ class TestScopeGuards:
         """The guards must not be so strict that nothing qualifies."""
         from unturtle_flm import state_update
 
-        args = _inputs(vocab=64, device="cuda")
+        args = _cell_inputs()
         assert (
             state_update.fast_path_applies(**args, context=_measured_context(args))
             is True
@@ -341,9 +357,10 @@ class TestRealSamplerConfiguration:
         """This is the production configuration, not an edge case."""
         from unturtle_flm import state_update
 
-        args = self._real_inputs()
+        args = _cell_inputs()
         assert (
-            state_update.fast_path_applies(**args, context=_measured_context()) is True
+            state_update.fast_path_applies(**args, context=_measured_context(args))
+            is True
         )
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
@@ -617,11 +634,15 @@ class TestMeasuredScopeGuards:
     outside the verdict falls back to the reference.
     """
 
-    @staticmethod
-    def _measured_context(**overrides):
-        """The measured cell itself, NOT shaped to the test tensors: these tests
-        vary one context axis at a time, so the shape axes must stay at their
-        measured values or the rejection could come from the wrong clause."""
+    @classmethod
+    def _measured_context(cls, **overrides):
+        """The measured cell itself.
+
+        `vocab` is NOT reduced to suit the test tensors: it is one of the
+        measured axes, so overriding it would make the context unmeasured by
+        definition and every test would pass for that reason instead of the axis
+        it varies.
+        """
         from unturtle_flm import state_update
 
         context = dict(state_update.MEASURED_CONTEXT)
@@ -629,15 +650,26 @@ class TestMeasuredScopeGuards:
         context.update(overrides)
         return context
 
+    @classmethod
+    def _cell_inputs(cls):
+        """Tensors at the real formal shape [1, 1024, 50258].
+
+        Roughly 0.48 GiB total at batch 1 — cheap enough that approximating the
+        shape would trade correctness of the test for nothing.
+        """
+        args = _inputs(batch=1, length=1024, vocab=50258, device="cuda")
+        args["d_pred"] = args["d_pred"].to(torch.bfloat16)
+        return args
+
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
     def test_the_measured_context_is_admitted(self):
         """The guards must not be so strict that the measured cell is rejected."""
         from unturtle_flm import state_update
 
-        args = _inputs(vocab=64, device="cuda")
-        args["d_pred"] = args["d_pred"].to(torch.bfloat16)
         assert (
-            state_update.fast_path_applies(**args, context=self._measured_context())
+            state_update.fast_path_applies(
+                **self._cell_inputs(), context=self._measured_context()
+            )
             is True
         )
 
@@ -664,12 +696,11 @@ class TestMeasuredScopeGuards:
     def test_anything_outside_the_measured_cell_falls_back(self, override):
         from unturtle_flm import state_update
 
-        args = _inputs(vocab=64, device="cuda")
-        args["d_pred"] = args["d_pred"].to(torch.bfloat16)
         context = self._measured_context(**override)
-        assert state_update.fast_path_applies(**args, context=context) is False, (
-            f"{override} was admitted but never measured"
-        )
+        assert (
+            state_update.fast_path_applies(**self._cell_inputs(), context=context)
+            is False
+        ), f"{override} was admitted but never measured"
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
     def test_a_missing_context_falls_back(self):
@@ -677,20 +708,21 @@ class TestMeasuredScopeGuards:
         no context has not shown it is inside the measured cell."""
         from unturtle_flm import state_update
 
-        args = _inputs(vocab=64, device="cuda")
-        args["d_pred"] = args["d_pred"].to(torch.bfloat16)
-        assert state_update.fast_path_applies(**args, context=None) is False
+        assert (
+            state_update.fast_path_applies(**self._cell_inputs(), context=None) is False
+        )
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
     def test_an_incomplete_context_falls_back(self):
         """A context missing a key cannot be checked against the verdict."""
         from unturtle_flm import state_update
 
-        args = _inputs(vocab=64, device="cuda")
-        args["d_pred"] = args["d_pred"].to(torch.bfloat16)
         partial = self._measured_context()
         partial.pop("gamma")
-        assert state_update.fast_path_applies(**args, context=partial) is False
+        assert (
+            state_update.fast_path_applies(**self._cell_inputs(), context=partial)
+            is False
+        )
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
     def test_the_result_is_still_correct_when_the_context_rejects(self):
@@ -698,8 +730,7 @@ class TestMeasuredScopeGuards:
         something merely close."""
         from unturtle_flm import state_update
 
-        args = _inputs(vocab=64, device="cuda")
-        args["d_pred"] = args["d_pred"].to(torch.bfloat16)
+        args = self._cell_inputs()
         assert torch.equal(
             reference_expression(**args),
             state_update.apply_state_update(**args, context=None),
@@ -793,3 +824,120 @@ class TestSamplerSuppliesTheExecutionContext:
             f"{taken['fast']} unmeasured calls took the fast path"
         )
         assert taken["reference"] == 7
+
+
+class TestShapesAreValidatedAgainstTheTensors:
+    """The context is metadata the CALLER supplies. Checking it alone means a
+    stale or wrong context admits tensors of an entirely unmeasured shape — the
+    guard would be describing the boundary rather than enforcing it.
+
+    So the tensors themselves must agree with the context they arrive with.
+    """
+
+    @staticmethod
+    def _cuda_args():
+        """Tensors at the MEASURED cell. Perturbing one of these is then the
+        only difference from an admitted call, so the shape clause is what
+        decides — at a smaller shape the context gate would reject first and
+        these tests would pass without exercising anything."""
+        return _cell_inputs()
+
+    @staticmethod
+    def _context():
+        return _measured_context(_cell_inputs())
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+    def test_a_context_that_disagrees_with_the_tensors_is_rejected(self):
+        """The exploit: tiny tensors wearing the formal context. Before this
+        check, a [2, 8, 16] batch was admitted while the context claimed
+        [1, 1024, 50258]."""
+        from unturtle_flm import state_update
+
+        args = _inputs(batch=2, length=8, vocab=16, device="cuda")
+        args["d_pred"] = args["d_pred"].to(torch.bfloat16)
+        lying = dict(state_update.MEASURED_CONTEXT)
+        lying["batch"] = 1
+        assert state_update.fast_path_applies(**args, context=lying) is False
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+    @pytest.mark.parametrize("field", ["z", "d_pred", "eps"])
+    def test_a_state_tensor_of_the_wrong_shape_is_rejected(self, field):
+        from unturtle_flm import state_update
+
+        args = self._cuda_args()
+        args[field] = args[field][:, :2, :].contiguous()
+        assert state_update.fast_path_applies(**args, context=self._context()) is False
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+    @pytest.mark.parametrize(
+        "field", ["weight_z", "weight_d", "mean_adjustment", "noise_std"]
+    )
+    def test_a_coefficient_of_the_wrong_shape_is_rejected(self, field):
+        """Coefficients must be [batch, 1, 1]. A scalar or a full-size tensor
+        broadcasts to the same result but is not what was measured."""
+        from unturtle_flm import state_update
+
+        args = self._cuda_args()
+        args[field] = args[field].reshape(-1)
+        assert state_update.fast_path_applies(**args, context=self._context()) is False
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+    def test_a_full_size_coefficient_is_rejected(self):
+        from unturtle_flm import state_update
+
+        args = self._cuda_args()
+        args["noise_std"] = args["noise_std"].expand_as(args["z"]).contiguous()
+        assert state_update.fast_path_applies(**args, context=self._context()) is False
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+    def test_matching_shapes_are_still_admitted(self):
+        """The check must not be so strict that the real call is rejected."""
+        from unturtle_flm import state_update
+
+        args = _cell_inputs()
+        assert (
+            state_update.fast_path_applies(**args, context=_measured_context(args))
+            is True
+        )
+
+
+class TestTheCompiledAxisReflectsReality:
+    """`_execution_context` read `model._unturtle_compiled`, an attribute
+    nothing on this branch ever assigns. It was therefore a constant False: a
+    compiled model would have been labelled eager and admitted. The reference
+    derives compilation from DIT_USE_COMPILE via `_reference.dit.USE_COMPILE`,
+    so that is what must be reported."""
+
+    def test_the_context_reports_the_reference_compile_flag(self):
+        import unturtle_flm._reference.dit as dit
+        from unturtle_flm.sampler import _execution_context
+
+        original = dit.USE_COMPILE
+        try:
+            dit.USE_COMPILE = True
+            context = _execution_context(
+                object(), 32, 1.0, 1, 1024, 50258, torch.device("cpu")
+            )
+            assert context["compiled"] is True
+            dit.USE_COMPILE = False
+            context = _execution_context(
+                object(), 32, 1.0, 1, 1024, 50258, torch.device("cpu")
+            )
+            assert context["compiled"] is False
+        finally:
+            dit.USE_COMPILE = original
+
+    def test_a_compiled_model_is_not_admitted(self):
+        import unturtle_flm._reference.dit as dit
+        from unturtle_flm import state_update
+        from unturtle_flm.sampler import _execution_context
+
+        original = dit.USE_COMPILE
+        try:
+            dit.USE_COMPILE = True
+            context = _execution_context(
+                object(), 32, 1.0, 1, 1024, 50258, torch.device("cpu")
+            )
+        finally:
+            dit.USE_COMPILE = original
+        assert state_update._context_is_measured(context) is False
