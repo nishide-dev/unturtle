@@ -316,10 +316,37 @@
         "default_hub_created": true,
         "module_imported": true
       },
-      "environ_added_keys": [],
-      "environ_changed_keys": [
-        "UNSLOTH_IGNORED_TOKENIZER_NAMES"
+      "environ_added_keys": [
+        "DIFFUSERS_VERBOSITY",
+        "ENABLE_AOT_AUTOGRAD_CACHE",
+        "FLA_INTRACARD_CP",
+        "FLA_TILELANG",
+        "HF_HUB_ENABLE_HF_TRANSFER",
+        "HF_XET_CHUNK_CACHE_SIZE_BYTES",
+        "HF_XET_HIGH_PERFORMANCE",
+        "HF_XET_NUM_CONCURRENT_RANGE_GETS",
+        "HF_XET_RECONSTRUCT_WRITE_SEQUENTIALLY",
+        "KMP_DUPLICATE_LIB_OK",
+        "KMP_INIT_AT_FORK",
+        "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION",
+        "PYTORCH_ALLOC_CONF",
+        "TOKENIZERS_PARALLELISM",
+        "TORCHINDUCTOR_AUTOTUNE_REMOTE_CACHE",
+        "TORCHINDUCTOR_CACHE_DIR",
+        "TORCHINDUCTOR_FX_GRAPH_CACHE",
+        "TRACKIO_LOGO_DARK_URL",
+        "TRACKIO_LOGO_LIGHT_URL",
+        "TRACKIO_PLOT_ORDER",
+        "TRITON_DISABLE_LINE_INFO",
+        "TRITON_FRONT_END_DEBUGGING",
+        "UNSLOTH_ENABLE_CCE",
+        "UNSLOTH_HAS_FBGEMM",
+        "UNSLOTH_IGNORED_TOKENIZER_NAMES",
+        "UNSLOTH_IS_PRESENT",
+        "UNSLOTH_PATCHED",
+        "UNSLOTH_ZOO_IS_PRESENT"
       ],
+      "environ_changed_keys": [],
       "module": "unturtle",
       "modules_after": {
         "top_level": [
@@ -358,7 +385,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "5c5a6d822a73a090"
+        "torch_cpu_rng_digest": "4122b898cfdadf7b"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -443,10 +470,37 @@
         "default_hub_created": true,
         "module_imported": true
       },
-      "environ_added_keys": [],
-      "environ_changed_keys": [
-        "UNSLOTH_IGNORED_TOKENIZER_NAMES"
+      "environ_added_keys": [
+        "DIFFUSERS_VERBOSITY",
+        "ENABLE_AOT_AUTOGRAD_CACHE",
+        "FLA_INTRACARD_CP",
+        "FLA_TILELANG",
+        "HF_HUB_ENABLE_HF_TRANSFER",
+        "HF_XET_CHUNK_CACHE_SIZE_BYTES",
+        "HF_XET_HIGH_PERFORMANCE",
+        "HF_XET_NUM_CONCURRENT_RANGE_GETS",
+        "HF_XET_RECONSTRUCT_WRITE_SEQUENTIALLY",
+        "KMP_DUPLICATE_LIB_OK",
+        "KMP_INIT_AT_FORK",
+        "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION",
+        "PYTORCH_ALLOC_CONF",
+        "TOKENIZERS_PARALLELISM",
+        "TORCHINDUCTOR_AUTOTUNE_REMOTE_CACHE",
+        "TORCHINDUCTOR_CACHE_DIR",
+        "TORCHINDUCTOR_FX_GRAPH_CACHE",
+        "TRACKIO_LOGO_DARK_URL",
+        "TRACKIO_LOGO_LIGHT_URL",
+        "TRACKIO_PLOT_ORDER",
+        "TRITON_DISABLE_LINE_INFO",
+        "TRITON_FRONT_END_DEBUGGING",
+        "UNSLOTH_ENABLE_CCE",
+        "UNSLOTH_HAS_FBGEMM",
+        "UNSLOTH_IGNORED_TOKENIZER_NAMES",
+        "UNSLOTH_IS_PRESENT",
+        "UNSLOTH_PATCHED",
+        "UNSLOTH_ZOO_IS_PRESENT"
       ],
+      "environ_changed_keys": [],
       "module": "unturtle.fast_diffusion_model",
       "modules_after": {
         "top_level": [
@@ -485,7 +539,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "cf95cd15f2e0b08c"
+        "torch_cpu_rng_digest": "8225049a43a9b18c"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -570,10 +624,37 @@
         "default_hub_created": true,
         "module_imported": true
       },
-      "environ_added_keys": [],
-      "environ_changed_keys": [
-        "UNSLOTH_IGNORED_TOKENIZER_NAMES"
+      "environ_added_keys": [
+        "DIFFUSERS_VERBOSITY",
+        "ENABLE_AOT_AUTOGRAD_CACHE",
+        "FLA_INTRACARD_CP",
+        "FLA_TILELANG",
+        "HF_HUB_ENABLE_HF_TRANSFER",
+        "HF_XET_CHUNK_CACHE_SIZE_BYTES",
+        "HF_XET_HIGH_PERFORMANCE",
+        "HF_XET_NUM_CONCURRENT_RANGE_GETS",
+        "HF_XET_RECONSTRUCT_WRITE_SEQUENTIALLY",
+        "KMP_DUPLICATE_LIB_OK",
+        "KMP_INIT_AT_FORK",
+        "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION",
+        "PYTORCH_ALLOC_CONF",
+        "TOKENIZERS_PARALLELISM",
+        "TORCHINDUCTOR_AUTOTUNE_REMOTE_CACHE",
+        "TORCHINDUCTOR_CACHE_DIR",
+        "TORCHINDUCTOR_FX_GRAPH_CACHE",
+        "TRACKIO_LOGO_DARK_URL",
+        "TRACKIO_LOGO_LIGHT_URL",
+        "TRACKIO_PLOT_ORDER",
+        "TRITON_DISABLE_LINE_INFO",
+        "TRITON_FRONT_END_DEBUGGING",
+        "UNSLOTH_ENABLE_CCE",
+        "UNSLOTH_HAS_FBGEMM",
+        "UNSLOTH_IGNORED_TOKENIZER_NAMES",
+        "UNSLOTH_IS_PRESENT",
+        "UNSLOTH_PATCHED",
+        "UNSLOTH_ZOO_IS_PRESENT"
       ],
+      "environ_changed_keys": [],
       "module": "unturtle.methods",
       "modules_after": {
         "top_level": [
@@ -612,7 +693,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "bc497ceab184474b"
+        "torch_cpu_rng_digest": "eff2a473d7c5d7c9"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -697,10 +778,37 @@
         "default_hub_created": true,
         "module_imported": true
       },
-      "environ_added_keys": [],
-      "environ_changed_keys": [
-        "UNSLOTH_IGNORED_TOKENIZER_NAMES"
+      "environ_added_keys": [
+        "DIFFUSERS_VERBOSITY",
+        "ENABLE_AOT_AUTOGRAD_CACHE",
+        "FLA_INTRACARD_CP",
+        "FLA_TILELANG",
+        "HF_HUB_ENABLE_HF_TRANSFER",
+        "HF_XET_CHUNK_CACHE_SIZE_BYTES",
+        "HF_XET_HIGH_PERFORMANCE",
+        "HF_XET_NUM_CONCURRENT_RANGE_GETS",
+        "HF_XET_RECONSTRUCT_WRITE_SEQUENTIALLY",
+        "KMP_DUPLICATE_LIB_OK",
+        "KMP_INIT_AT_FORK",
+        "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION",
+        "PYTORCH_ALLOC_CONF",
+        "TOKENIZERS_PARALLELISM",
+        "TORCHINDUCTOR_AUTOTUNE_REMOTE_CACHE",
+        "TORCHINDUCTOR_CACHE_DIR",
+        "TORCHINDUCTOR_FX_GRAPH_CACHE",
+        "TRACKIO_LOGO_DARK_URL",
+        "TRACKIO_LOGO_LIGHT_URL",
+        "TRACKIO_PLOT_ORDER",
+        "TRITON_DISABLE_LINE_INFO",
+        "TRITON_FRONT_END_DEBUGGING",
+        "UNSLOTH_ENABLE_CCE",
+        "UNSLOTH_HAS_FBGEMM",
+        "UNSLOTH_IGNORED_TOKENIZER_NAMES",
+        "UNSLOTH_IS_PRESENT",
+        "UNSLOTH_PATCHED",
+        "UNSLOTH_ZOO_IS_PRESENT"
       ],
+      "environ_changed_keys": [],
       "module": "unturtle.models",
       "modules_after": {
         "top_level": [
@@ -739,7 +847,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "ff8ba52bfa2db399"
+        "torch_cpu_rng_digest": "746b8409b3661147"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -824,10 +932,37 @@
         "default_hub_created": true,
         "module_imported": true
       },
-      "environ_added_keys": [],
-      "environ_changed_keys": [
-        "UNSLOTH_IGNORED_TOKENIZER_NAMES"
+      "environ_added_keys": [
+        "DIFFUSERS_VERBOSITY",
+        "ENABLE_AOT_AUTOGRAD_CACHE",
+        "FLA_INTRACARD_CP",
+        "FLA_TILELANG",
+        "HF_HUB_ENABLE_HF_TRANSFER",
+        "HF_XET_CHUNK_CACHE_SIZE_BYTES",
+        "HF_XET_HIGH_PERFORMANCE",
+        "HF_XET_NUM_CONCURRENT_RANGE_GETS",
+        "HF_XET_RECONSTRUCT_WRITE_SEQUENTIALLY",
+        "KMP_DUPLICATE_LIB_OK",
+        "KMP_INIT_AT_FORK",
+        "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION",
+        "PYTORCH_ALLOC_CONF",
+        "TOKENIZERS_PARALLELISM",
+        "TORCHINDUCTOR_AUTOTUNE_REMOTE_CACHE",
+        "TORCHINDUCTOR_CACHE_DIR",
+        "TORCHINDUCTOR_FX_GRAPH_CACHE",
+        "TRACKIO_LOGO_DARK_URL",
+        "TRACKIO_LOGO_LIGHT_URL",
+        "TRACKIO_PLOT_ORDER",
+        "TRITON_DISABLE_LINE_INFO",
+        "TRITON_FRONT_END_DEBUGGING",
+        "UNSLOTH_ENABLE_CCE",
+        "UNSLOTH_HAS_FBGEMM",
+        "UNSLOTH_IGNORED_TOKENIZER_NAMES",
+        "UNSLOTH_IS_PRESENT",
+        "UNSLOTH_PATCHED",
+        "UNSLOTH_ZOO_IS_PRESENT"
       ],
+      "environ_changed_keys": [],
       "module": "unturtle.plugins",
       "modules_after": {
         "top_level": [
@@ -866,7 +1001,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "90b505dbda29710c"
+        "torch_cpu_rng_digest": "449fb80d96fdda4c"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -951,10 +1086,37 @@
         "default_hub_created": true,
         "module_imported": true
       },
-      "environ_added_keys": [],
-      "environ_changed_keys": [
-        "UNSLOTH_IGNORED_TOKENIZER_NAMES"
+      "environ_added_keys": [
+        "DIFFUSERS_VERBOSITY",
+        "ENABLE_AOT_AUTOGRAD_CACHE",
+        "FLA_INTRACARD_CP",
+        "FLA_TILELANG",
+        "HF_HUB_ENABLE_HF_TRANSFER",
+        "HF_XET_CHUNK_CACHE_SIZE_BYTES",
+        "HF_XET_HIGH_PERFORMANCE",
+        "HF_XET_NUM_CONCURRENT_RANGE_GETS",
+        "HF_XET_RECONSTRUCT_WRITE_SEQUENTIALLY",
+        "KMP_DUPLICATE_LIB_OK",
+        "KMP_INIT_AT_FORK",
+        "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION",
+        "PYTORCH_ALLOC_CONF",
+        "TOKENIZERS_PARALLELISM",
+        "TORCHINDUCTOR_AUTOTUNE_REMOTE_CACHE",
+        "TORCHINDUCTOR_CACHE_DIR",
+        "TORCHINDUCTOR_FX_GRAPH_CACHE",
+        "TRACKIO_LOGO_DARK_URL",
+        "TRACKIO_LOGO_LIGHT_URL",
+        "TRACKIO_PLOT_ORDER",
+        "TRITON_DISABLE_LINE_INFO",
+        "TRITON_FRONT_END_DEBUGGING",
+        "UNSLOTH_ENABLE_CCE",
+        "UNSLOTH_HAS_FBGEMM",
+        "UNSLOTH_IGNORED_TOKENIZER_NAMES",
+        "UNSLOTH_IS_PRESENT",
+        "UNSLOTH_PATCHED",
+        "UNSLOTH_ZOO_IS_PRESENT"
       ],
+      "environ_changed_keys": [],
       "module": "unturtle.registry",
       "modules_after": {
         "top_level": [
@@ -993,7 +1155,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "9d4b083d3c85ab82"
+        "torch_cpu_rng_digest": "1e579932d5c5f0d6"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -2294,8 +2456,8 @@
       "output": {
         "bit_identical": false,
         "volatile": {
-          "max_abs_delta": 0.005476832389831543,
-          "relative_norm": 0.007319338154047728
+          "max_abs_delta": 0.005457580089569092,
+          "relative_norm": 0.00641678599640727
         },
         "within_rel_norm_0p05": true
       },
@@ -2388,7 +2550,7 @@
     }
   },
   "producer": {
-    "commit": "addf94cc510a638dedbcec892539815801c0825b",
+    "commit": "0cab4da611f8096b81ae6e41a7a8637dbde07099",
     "dirty_paths": [],
     "import_root": "<repo>",
     "peft": "0.19.1",
@@ -2858,7 +3020,7 @@
       }
     ],
     "python": "3.12.7",
-    "torch": "2.10.0+cu128",
+    "torch": "2.10.0",
     "transformers": "5.15.0",
     "unsloth": "2026.7.2",
     "worktree_clean": true
@@ -4691,7 +4853,7 @@
     "unclaimed_hits": []
   },
   "schema_version": 1,
-  "semantic_digest": "08b77487eaebb89b5887b56f42e8e76086ddb96b41bb06d747a03d7b42d0643f",
+  "semantic_digest": "83ad014cb7ce0433e21608eb804d15a202044c28bc564781e09f9051d907d147",
   "verdicts": {
     "diffusion_gemma_class_swap": {
       "area": "DiffusionGemma runtime class swap",
