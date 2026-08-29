@@ -41,6 +41,7 @@ TOP_SECTIONS = {
     "generation",
     "persistence",
     "process_global_state",
+    "registry_hub",
     "verdicts",
 }
 
@@ -147,6 +148,7 @@ def test_required_verdicts_present(artifact):
         "universal_hierarchy": "DO NOT CREATE",
         "get_peft_model_random_state": "linked defect -> #188",
         "save_reload_global_state_instability": "UNDECIDABLE -> #174",
+        "registry_hub_explicit_contract": "KEEP",
     }
     for key, value in required.items():
         assert key in verdicts, key

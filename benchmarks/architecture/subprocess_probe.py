@@ -1028,6 +1028,156 @@ def probe_process_global(args: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# case: registry-hub — the standalone RegistryHub contract (#184 blocker):
+# an explicit hub must be constructible empty and side-effect-free, builtin
+# bootstrap must be deterministic in content AND order, re-bootstrap behavior
+# is frozen as observed, and two hubs must not share backing storage. This is
+# the foundation for #185/#186 and external plugins using supplied hubs
+# instead of the process default.
+# ---------------------------------------------------------------------------
+
+_HUB_AXES = (
+    "generation_algorithms",
+    "backbone_integrations",
+    "processes",
+    "training_recipes",
+    "conversions",
+    "post_training_recipes",
+    "methods",
+)
+
+
+def probe_registry_hub(args: dict) -> dict:
+    import types as types_mod
+
+    import torch
+
+    import unturtle.registry as registry_mod
+
+    _verify_import_root()
+    from unturtle.registry import RegistryHub, bootstrap_builtin_hub
+
+    def ordered_axis_names(hub) -> dict:
+        return {
+            axis: [value.name for value in getattr(hub, axis).values()]
+            for axis in _HUB_AXES
+        }
+
+    def default_hub_snapshot():
+        hub = registry_mod._default_hub
+        return None if hub is None else ordered_axis_names(hub)
+
+    def surroundings():
+        random.seed(2025)
+        torch.manual_seed(2025)
+        return {
+            "default_hub": default_hub_snapshot(),
+            "autoclass": _autoclass_extra_registrations(),
+            "environ": dict(os.environ),
+            "py_rng": _digest(str(random.getstate())),
+            "torch_rng": _digest(str(torch.get_rng_state().numpy().tobytes())),
+        }
+
+    def surroundings_delta(before) -> dict:
+        after_environ = dict(os.environ)
+        return {
+            "default_hub_changed": default_hub_snapshot() != before["default_hub"],
+            "autoclass_changed": _autoclass_extra_registrations()
+            != before["autoclass"],
+            "environ_changed_keys": sorted(
+                key
+                for key in set(after_environ) | set(before["environ"])
+                if after_environ.get(key) != before["environ"].get(key)
+            ),
+            "python_rng_consumed": _digest(str(random.getstate())) != before["py_rng"],
+            "torch_rng_consumed": _digest(str(torch.get_rng_state().numpy().tobytes()))
+            != before["torch_rng"],
+        }
+
+    # -- cell 1: fresh_empty_hub -------------------------------------------
+    before = surroundings()
+    empty_hub = RegistryHub()
+    cell_fresh = {
+        "status": "observed",
+        "axis_names": ordered_axis_names(empty_hub),
+        "all_axes_empty": all(
+            not getattr(empty_hub, axis)._items for axis in _HUB_AXES
+        ),
+        "bootstrapped_flag": bool(empty_hub._bootstrapped),
+        "surroundings": surroundings_delta(before),
+    }
+
+    # -- cell 2: explicit_builtin_bootstrap ----------------------------------
+    before = surroundings()
+    hub_b = bootstrap_builtin_hub(RegistryHub())
+    order_b = ordered_axis_names(hub_b)
+    hub_c = bootstrap_builtin_hub(RegistryHub())
+    order_c = ordered_axis_names(hub_c)
+    cell_bootstrap = {
+        "status": "observed",
+        "ordered_axis_names": order_b,
+        "deterministic_across_two_bootstraps": order_b == order_c,
+        "bootstrapped_flag": bool(hub_b._bootstrapped),
+        "surroundings": surroundings_delta(before),
+    }
+
+    # -- cell 3: repeat_bootstrap (frozen as observed) -----------------------
+    before_counts = {axis: len(getattr(hub_b, axis)._items) for axis in _HUB_AXES}
+    try:
+        bootstrap_builtin_hub(hub_b)
+        raised = None
+    except Exception as exc:  # noqa: BLE001 — the raise IS the observation
+        raised = f"{type(exc).__name__}: {str(exc)[:160]}"
+    after_counts = {axis: len(getattr(hub_b, axis)._items) for axis in _HUB_AXES}
+    cell_repeat = {
+        "status": "observed",
+        "raised": raised,
+        "behavior": "duplicate_rejection" if raised else "idempotent_or_duplicated",
+        "axis_counts_unchanged": before_counts == after_counts,
+    }
+
+    # -- cell 4: hub_isolation ------------------------------------------------
+    before = surroundings()
+    hub_a = RegistryHub()
+    sentinel = types_mod.SimpleNamespace(name="probe-sentinel-a")
+    hub_a.processes.register(sentinel)
+    try:
+        hub_a.processes.register(types_mod.SimpleNamespace(name="probe-sentinel-a"))
+        duplicate_raised = None
+    except Exception as exc:  # noqa: BLE001
+        duplicate_raised = f"{type(exc).__name__}: {str(exc)[:120]}"
+    default_hub = registry_mod._default_hub
+    cell_isolation = {
+        "status": "observed",
+        "sentinel_visible_in_registering_hub": hub_a.processes.find("probe-sentinel-a")
+        is sentinel,
+        "sentinel_leaked_to_other_hub": hub_b.processes.find("probe-sentinel-a")
+        is not None,
+        "sentinel_leaked_to_default_hub": (
+            default_hub is not None
+            and default_hub.processes.find("probe-sentinel-a") is not None
+        ),
+        "registry_objects_shared": any(
+            getattr(hub_a, axis) is getattr(hub_b, axis) for axis in _HUB_AXES
+        ),
+        "backing_storage_shared": any(
+            getattr(hub_a, axis)._items is getattr(hub_b, axis)._items
+            for axis in _HUB_AXES
+        ),
+        "duplicate_registration_raised": duplicate_raised,
+        "surroundings": surroundings_delta(before),
+    }
+
+    return {
+        "status": "observed",
+        "fresh_empty_hub": cell_fresh,
+        "explicit_builtin_bootstrap": cell_bootstrap,
+        "repeat_bootstrap": cell_repeat,
+        "hub_isolation": cell_isolation,
+    }
+
+
+# ---------------------------------------------------------------------------
 # case: fourbit-contract (CUDA)
 # ---------------------------------------------------------------------------
 
@@ -1245,6 +1395,7 @@ CASES = {
     "generation": probe_generation,
     "persistence": probe_persistence,
     "process-global": probe_process_global,
+    "registry-hub": probe_registry_hub,
     "fourbit-contract": probe_fourbit_contract,
 }
 

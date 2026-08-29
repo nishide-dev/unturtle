@@ -1002,6 +1002,33 @@ def build_verdicts(sections: dict) -> dict:
             status="unverified",
             reason="input_embedding_unresolvable",
         ),
+        "registry_hub_explicit_contract": verdict(
+            "RegistryHub explicit-hub contract",
+            "KEEP",
+            {
+                "registry_hub": {
+                    "fresh_empty_hub": sections.get("registry_hub", {})
+                    .get("fresh_empty_hub", {})
+                    .get("all_axes_empty"),
+                    "bootstrap_deterministic": sections.get("registry_hub", {})
+                    .get("explicit_builtin_bootstrap", {})
+                    .get("deterministic_across_two_bootstraps"),
+                    "repeat_bootstrap_behavior": sections.get("registry_hub", {})
+                    .get("repeat_bootstrap", {})
+                    .get("behavior"),
+                    "hubs_isolated": not sections.get("registry_hub", {})
+                    .get("hub_isolation", {})
+                    .get("backing_storage_shared", True),
+                    "note": (
+                        "re-bootstrap of the same hub is DUPLICATE REJECTION "
+                        "(ValueError, counts unchanged), not idempotent — "
+                        "frozen as observed; #185/#186 and external plugins "
+                        "can rely on supplied hubs being empty, deterministic "
+                        "to bootstrap, and storage-isolated"
+                    ),
+                }
+            },
+        ),
         "fourbit_peft_contract": verdict(
             "4-bit + PEFT preparation/fast-path contract",
             "KEEP (fixed by #177)",
@@ -1083,6 +1110,7 @@ def capture(device: str, *, allow_dirty: bool = False) -> dict:
     process_global = {
         case: probe("process-global", {"case": case}) for case in PROCESS_GLOBAL_CASES
     }
+    registry_hub = probe("registry-hub")
     process_global["unsloth_environment_mutation"] = persistence[
         "fourbit_contract"
     ].get(
@@ -1101,6 +1129,7 @@ def capture(device: str, *, allow_dirty: bool = False) -> dict:
         "generation": generation,
         "persistence": persistence,
         "process_global_state": process_global,
+        "registry_hub": registry_hub,
     }
     artifact = {
         "schema_version": 1,
@@ -1240,6 +1269,34 @@ def render_markdown(artifact: dict) -> str:
             )
         if row.get("buffer_diffs"):
             add(f"  - buffer diffs: {row['buffer_diffs']}")
+    add("")
+
+    add("## RegistryHub explicit-hub contract")
+    add("")
+    hub_section = artifact.get("registry_hub", {})
+    add(
+        f"- fresh `RegistryHub()`: all axes empty = "
+        f"{hub_section.get('fresh_empty_hub', {}).get('all_axes_empty')}; "
+        f"side effects: {hub_section.get('fresh_empty_hub', {}).get('surroundings')}"
+    )
+    bootstrap_cell = hub_section.get("explicit_builtin_bootstrap", {})
+    add(
+        f"- explicit builtin bootstrap deterministic across two hubs: "
+        f"{bootstrap_cell.get('deterministic_across_two_bootstraps')}"
+    )
+    for axis, names in sorted(bootstrap_cell.get("ordered_axis_names", {}).items()):
+        add(f"  - {axis}: {', '.join(names)}")
+    add(
+        f"- repeat bootstrap: {hub_section.get('repeat_bootstrap', {}).get('behavior')} "
+        f"(`{hub_section.get('repeat_bootstrap', {}).get('raised')}`)"
+    )
+    isolation_cell = hub_section.get("hub_isolation", {})
+    add(
+        f"- isolation: leaked_to_other_hub="
+        f"{isolation_cell.get('sentinel_leaked_to_other_hub')}, "
+        f"leaked_to_default={isolation_cell.get('sentinel_leaked_to_default_hub')}, "
+        f"backing_storage_shared={isolation_cell.get('backing_storage_shared')}"
+    )
     add("")
 
     add("## Verdicts")
