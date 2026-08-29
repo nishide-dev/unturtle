@@ -1,8 +1,8 @@
 {
   "run": {
-    "head_sha": "9e867bcc2f25bb458031fc93253ca476e3013b28",
+    "head_sha": "a9b21b9ba7f699556f784c53310102ebeb0509cd",
     "worktree_clean": true,
-    "command": "/home/nishide.21066/.claude/jobs/1492d35a/tmp/wt-ow2/benchmarks/flm/state_update_outer_wall.py --device cuda:3 --out /home/nishide.21066/.claude/jobs/1492d35a/tmp/ow-out2",
+    "command": "/home/nishide.21066/.claude/jobs/1492d35a/tmp/wt-ow3/benchmarks/flm/state_update_outer_wall.py --device cuda:3 --out /home/nishide.21066/.claude/jobs/1492d35a/tmp/ow-out3",
     "purpose": "adoption gate for the #166 Stage-2 specialization: paired outer-wall latency and peak memory through the PUBLIC entry point",
     "records_end_to_end_latency": true,
     "arms": {
@@ -22,7 +22,7 @@
       "total_bytes": 50867404800,
       "compute_processes": [
         {
-          "pid": 1116233,
+          "pid": 1471908,
           "used_mib": 426
         }
       ],
@@ -58,15 +58,38 @@
       "gamma": 1.0,
       "device_occupancy_before": {
         "device": "cuda:3",
+        "free_bytes": 49664753664,
+        "total_bytes": 50867404800,
+        "compute_processes": [
+          {
+            "pid": 1471908,
+            "used_mib": 1124
+          }
+        ],
+        "foreign_process_count": 0
+      },
+      "device_occupancy_after": {
+        "device": "cuda:3",
         "free_bytes": 47513075712,
         "total_bytes": 50867404800,
         "compute_processes": [
           {
-            "pid": 1116233,
+            "pid": 1471908,
             "used_mib": 3176
           }
         ],
         "foreign_process_count": 0
+      },
+      "arm_preflight": {
+        "specialized_fast_decisions": 31,
+        "specialized_fallback_decisions": 0,
+        "reference_forced_decisions": 31,
+        "reference_fast_decisions": 0,
+        "expected_state_updates": 31,
+        "changed_token_positions": 0,
+        "total_token_positions": 1024,
+        "tokens_exactly_equal": true,
+        "basis": "run outside the timed span; proves the two arms are distinct and agree, so a timing result cannot come from comparing the reference against itself"
       },
       "trials": [
         {
@@ -75,9 +98,9 @@
             "off",
             "on"
           ],
-          "reference_wall_seconds": 0.5792993559734896,
-          "specialized_wall_seconds": 0.5225211689248681,
-          "paired_delta_seconds": 0.056778187048621476,
+          "reference_wall_seconds": 0.56331705104094,
+          "specialized_wall_seconds": 0.5185342200566083,
+          "paired_delta_seconds": 0.04478283098433167,
           "reference_peak_allocated_bytes": 2132444672,
           "specialized_peak_allocated_bytes": 1926587904,
           "reference_peak_reserved_bytes": 2795503616,
@@ -89,9 +112,9 @@
             "on",
             "off"
           ],
-          "reference_wall_seconds": 0.5814843350090086,
-          "specialized_wall_seconds": 0.5260395320365205,
-          "paired_delta_seconds": 0.055444802972488105,
+          "reference_wall_seconds": 0.5670927700120956,
+          "specialized_wall_seconds": 0.5156433929223567,
+          "paired_delta_seconds": 0.051449377089738846,
           "reference_peak_allocated_bytes": 2132444672,
           "specialized_peak_allocated_bytes": 1926587904,
           "reference_peak_reserved_bytes": 2795503616,
@@ -103,9 +126,9 @@
             "off",
             "on"
           ],
-          "reference_wall_seconds": 0.5846505300141871,
-          "specialized_wall_seconds": 0.5193375770468265,
-          "paired_delta_seconds": 0.06531295296736062,
+          "reference_wall_seconds": 0.5697834569728002,
+          "specialized_wall_seconds": 0.5151137879583985,
+          "paired_delta_seconds": 0.054669669014401734,
           "reference_peak_allocated_bytes": 2132444672,
           "specialized_peak_allocated_bytes": 1926587904,
           "reference_peak_reserved_bytes": 2795503616,
@@ -114,31 +137,31 @@
       ],
       "latency": {
         "reference_wall_trials": [
-          0.5792993559734896,
-          0.5814843350090086,
-          0.5846505300141871
+          0.56331705104094,
+          0.5670927700120956,
+          0.5697834569728002
         ],
         "specialized_wall_trials": [
-          0.5225211689248681,
-          0.5260395320365205,
-          0.5193375770468265
+          0.5185342200566083,
+          0.5156433929223567,
+          0.5151137879583985
         ],
-        "reference_wall_median": 0.5814843350090086,
-        "specialized_wall_median": 0.5225211689248681,
+        "reference_wall_median": 0.5670927700120956,
+        "specialized_wall_median": 0.5156433929223567,
         "paired_delta_trials": [
-          0.056778187048621476,
-          0.055444802972488105,
-          0.06531295296736062
+          0.04478283098433167,
+          0.051449377089738846,
+          0.054669669014401734
         ],
-        "median_paired_delta_seconds": 0.056778187048621476,
-        "median_paired_speedup": 1.1086619842894545,
+        "median_paired_delta_seconds": 0.051449377089738846,
+        "median_paired_speedup": 1.099777050954061,
         "per_trial_speedup": [
-          1.1086619842894545,
-          1.1054004491978728,
-          1.1257620396713015
+          1.0863642730839302,
+          1.099777050954061,
+          1.106131247682341
         ],
-        "median_relative_improvement": 0.09764353677342287,
-        "reference_trial_spread_seconds": 0.005351174040697515,
+        "median_relative_improvement": 0.09072479814659157,
+        "reference_trial_spread_seconds": 0.0064664059318602085,
         "direction_consistent": true,
         "resolvable": null,
         "resolution_status": "not_assessed",
@@ -169,15 +192,38 @@
       "gamma": 1.0,
       "device_occupancy_before": {
         "device": "cuda:3",
+        "free_bytes": 49551507456,
+        "total_bytes": 50867404800,
+        "compute_processes": [
+          {
+            "pid": 1471908,
+            "used_mib": 1232
+          }
+        ],
+        "foreign_process_count": 0
+      },
+      "device_occupancy_after": {
+        "device": "cuda:3",
         "free_bytes": 35047604224,
         "total_bytes": 50867404800,
         "compute_processes": [
           {
-            "pid": 1116233,
+            "pid": 1471908,
             "used_mib": 15064
           }
         ],
         "foreign_process_count": 0
+      },
+      "arm_preflight": {
+        "specialized_fast_decisions": 31,
+        "specialized_fallback_decisions": 0,
+        "reference_forced_decisions": 31,
+        "reference_fast_decisions": 0,
+        "expected_state_updates": 31,
+        "changed_token_positions": 0,
+        "total_token_positions": 8192,
+        "tokens_exactly_equal": true,
+        "basis": "run outside the timed span; proves the two arms are distinct and agree, so a timing result cannot come from comparing the reference against itself"
       },
       "trials": [
         {
@@ -186,9 +232,9 @@
             "off",
             "on"
           ],
-          "reference_wall_seconds": 2.700352838030085,
-          "specialized_wall_seconds": 2.462410992011428,
-          "paired_delta_seconds": 0.2379418460186571,
+          "reference_wall_seconds": 2.8330741520039737,
+          "specialized_wall_seconds": 2.5865060400683433,
+          "paired_delta_seconds": 0.24656811193563044,
           "reference_peak_allocated_bytes": 12220933632,
           "specialized_peak_allocated_bytes": 10574079488,
           "reference_peak_reserved_bytes": 15260975104,
@@ -200,9 +246,9 @@
             "on",
             "off"
           ],
-          "reference_wall_seconds": 2.7355463749263436,
-          "specialized_wall_seconds": 2.4847327260067686,
-          "paired_delta_seconds": 0.2508136489195749,
+          "reference_wall_seconds": 2.850712610059418,
+          "specialized_wall_seconds": 2.5998336009215564,
+          "paired_delta_seconds": 0.25087900913786143,
           "reference_peak_allocated_bytes": 12220933632,
           "specialized_peak_allocated_bytes": 10574079488,
           "reference_peak_reserved_bytes": 15260975104,
@@ -214,9 +260,9 @@
             "off",
             "on"
           ],
-          "reference_wall_seconds": 2.7485760180279613,
-          "specialized_wall_seconds": 2.528852033079602,
-          "paired_delta_seconds": 0.21972398494835943,
+          "reference_wall_seconds": 2.8563168920809403,
+          "specialized_wall_seconds": 2.6275705009466037,
+          "paired_delta_seconds": 0.2287463911343366,
           "reference_peak_allocated_bytes": 12220933632,
           "specialized_peak_allocated_bytes": 10574079488,
           "reference_peak_reserved_bytes": 15260975104,
@@ -225,31 +271,31 @@
       ],
       "latency": {
         "reference_wall_trials": [
-          2.700352838030085,
-          2.7355463749263436,
-          2.7485760180279613
+          2.8330741520039737,
+          2.850712610059418,
+          2.8563168920809403
         ],
         "specialized_wall_trials": [
-          2.462410992011428,
-          2.4847327260067686,
-          2.528852033079602
+          2.5865060400683433,
+          2.5998336009215564,
+          2.6275705009466037
         ],
-        "reference_wall_median": 2.7355463749263436,
-        "specialized_wall_median": 2.4847327260067686,
+        "reference_wall_median": 2.850712610059418,
+        "specialized_wall_median": 2.5998336009215564,
         "paired_delta_trials": [
-          0.2379418460186571,
-          0.2508136489195749,
-          0.21972398494835943
+          0.24656811193563044,
+          0.25087900913786143,
+          0.2287463911343366
         ],
-        "median_paired_delta_seconds": 0.2379418460186571,
-        "median_paired_speedup": 1.096629623076972,
+        "median_paired_delta_seconds": 0.24656811193563044,
+        "median_paired_speedup": 1.0953286433961373,
         "per_trial_speedup": [
-          1.096629623076972,
-          1.1009419026418423,
-          1.0868868490817878
+          1.0953286433961373,
+          1.0964981024358378,
+          1.087056233525201
         ],
-        "median_relative_improvement": 0.08698147039275246,
-        "reference_trial_spread_seconds": 0.048223179997876287,
+        "median_relative_improvement": 0.08649350027973925,
+        "reference_trial_spread_seconds": 0.023242740076966584,
         "direction_consistent": true,
         "resolvable": null,
         "resolution_status": "not_assessed",
@@ -280,15 +326,38 @@
       "gamma": 1.0,
       "device_occupancy_before": {
         "device": "cuda:3",
+        "free_bytes": 49551507456,
+        "total_bytes": 50867404800,
+        "compute_processes": [
+          {
+            "pid": 1471908,
+            "used_mib": 1232
+          }
+        ],
+        "foreign_process_count": 0
+      },
+      "device_occupancy_after": {
+        "device": "cuda:3",
         "free_bytes": 3426746368,
         "total_bytes": 50867404800,
         "compute_processes": [
           {
-            "pid": 1116233,
+            "pid": 1471908,
             "used_mib": 45220
           }
         ],
         "foreign_process_count": 0
+      },
+      "arm_preflight": {
+        "specialized_fast_decisions": 31,
+        "specialized_fallback_decisions": 0,
+        "reference_forced_decisions": 31,
+        "reference_fast_decisions": 0,
+        "expected_state_updates": 31,
+        "changed_token_positions": 0,
+        "total_token_positions": 32768,
+        "tokens_exactly_equal": true,
+        "basis": "run outside the timed span; proves the two arms are distinct and agree, so a timing result cannot come from comparing the reference against itself"
       },
       "trials": [
         {
@@ -297,9 +366,9 @@
             "off",
             "on"
           ],
-          "reference_wall_seconds": 12.484333327040076,
-          "specialized_wall_seconds": 11.127714429050684,
-          "paired_delta_seconds": 1.3566188979893923,
+          "reference_wall_seconds": 12.655790910008363,
+          "specialized_wall_seconds": 11.445179900038056,
+          "paired_delta_seconds": 1.2106110099703074,
           "reference_peak_allocated_bytes": 46803363328,
           "specialized_peak_allocated_bytes": 40215946752,
           "reference_peak_reserved_bytes": 46881832960,
@@ -311,9 +380,9 @@
             "on",
             "off"
           ],
-          "reference_wall_seconds": 12.569802697980776,
-          "specialized_wall_seconds": 11.187216512975283,
-          "paired_delta_seconds": 1.3825861850054935,
+          "reference_wall_seconds": 12.696831557899714,
+          "specialized_wall_seconds": 11.468571487930603,
+          "paired_delta_seconds": 1.2282600699691102,
           "reference_peak_allocated_bytes": 46803363328,
           "specialized_peak_allocated_bytes": 40215946752,
           "reference_peak_reserved_bytes": 46881832960,
@@ -325,9 +394,9 @@
             "off",
             "on"
           ],
-          "reference_wall_seconds": 12.571022182935849,
-          "specialized_wall_seconds": 11.336294225999154,
-          "paired_delta_seconds": 1.2347279569366947,
+          "reference_wall_seconds": 12.674041863996536,
+          "specialized_wall_seconds": 11.483459091046825,
+          "paired_delta_seconds": 1.1905827729497105,
           "reference_peak_allocated_bytes": 46803363328,
           "specialized_peak_allocated_bytes": 40215946752,
           "reference_peak_reserved_bytes": 46881832960,
@@ -336,31 +405,31 @@
       ],
       "latency": {
         "reference_wall_trials": [
-          12.484333327040076,
-          12.569802697980776,
-          12.571022182935849
+          12.655790910008363,
+          12.696831557899714,
+          12.674041863996536
         ],
         "specialized_wall_trials": [
-          11.127714429050684,
-          11.187216512975283,
-          11.336294225999154
+          11.445179900038056,
+          11.468571487930603,
+          11.483459091046825
         ],
-        "reference_wall_median": 12.569802697980776,
-        "specialized_wall_median": 11.187216512975283,
+        "reference_wall_median": 12.674041863996536,
+        "specialized_wall_median": 11.468571487930603,
         "paired_delta_trials": [
-          1.3566188979893923,
-          1.3825861850054935,
-          1.2347279569366947
+          1.2106110099703074,
+          1.2282600699691102,
+          1.1905827729497105
         ],
-        "median_paired_delta_seconds": 1.3566188979893923,
-        "median_paired_speedup": 1.121913525606635,
+        "median_paired_delta_seconds": 1.2106110099703074,
+        "median_paired_speedup": 1.1057747471462884,
         "per_trial_speedup": [
-          1.121913525606635,
-          1.1235862543110635,
-          1.108918129004178
+          1.1057747471462884,
+          1.10709791287099,
+          1.1036780610711592
         ],
-        "median_relative_improvement": 0.10792682515273853,
-        "reference_trial_spread_seconds": 0.08668885589577258,
+        "median_relative_improvement": 0.0955189372862433,
+        "reference_trial_spread_seconds": 0.04104064789135009,
         "direction_consistent": true,
         "resolvable": null,
         "resolution_status": "not_assessed",
@@ -389,9 +458,9 @@
   "summary": {
     "any_memory_regression": false,
     "median_relative_improvement": {
-      "1": 0.09764353677342287,
-      "8": 0.08698147039275246,
-      "32": 0.10792682515273853
+      "1": 0.09072479814659157,
+      "8": 0.08649350027973925,
+      "32": 0.0955189372862433
     }
   }
 }
