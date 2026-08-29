@@ -38,6 +38,8 @@ from __future__ import annotations
 from contextvars import ContextVar
 from typing import Any
 
+from unturtle_flm.state_update import apply_state_update
+
 # --- private profiling seam (#166 Stage 1) -----------------------------------
 #
 # DEFAULT OFF. `_OBSERVER` is None in every normal run, so the only cost on the
@@ -312,20 +314,29 @@ def run_fmlm_request(model: Any, request: Any) -> dict[str, Any]:
                     weight_D = (t_tilde.view(-1, 1, 1) - t_curr.view(-1, 1, 1)) / (
                         1.0 - t_curr.view(-1, 1, 1)
                     )
-                    z_tilde = weight_z * z + weight_D * D_st_pred
-
                     if gamma > 0:
                         noise_std = gamma * sigma_target.view(-1, 1, 1)
                         mean_adjustment = sigma_tilde.view(
                             -1, 1, 1
                         ) - sigma_target.view(-1, 1, 1)
-                        z = (
-                            z_tilde
-                            + mean_adjustment * D_st_pred
-                            + noise_std * torch.randn_like(z)
+                        # `eps` is drawn HERE, not inside the helper, so the RNG
+                        # stream advances identically whichever path runs.
+                        eps = torch.randn_like(z)
+                        z = apply_state_update(
+                            z=z,
+                            d_pred=D_st_pred,
+                            weight_z=weight_z,
+                            weight_d=weight_D,
+                            mean_adjustment=mean_adjustment,
+                            noise_std=noise_std,
+                            eps=eps,
                         )
                     else:
-                        z = z_tilde
+                        # gamma == 0 is unspecialized: the fast path was only
+                        # measured for the churn branch, and z_tilde is computed
+                        # here rather than above so the gamma>0 path does not
+                        # materialize a value it recomputes.
+                        z = weight_z * z + weight_D * D_st_pred
 
         with _scope(observer, "endpoint_decode"):
             tokens = z.argmax(dim=-1)  # algo.py:1566
