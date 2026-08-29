@@ -47,8 +47,9 @@ The split between accumulator and prediction dtype is not cosmetic. An earlier
 version of this guard demanded float32 everywhere; because the model emits
 `d_pred` in bfloat16, it rejected all 31 calls of every real request and the
 specialization was silently inert — a paired outer-wall benchmark measured 0.0%
-before the cause was found. Identity in the mixed configuration was then
-measured over 144 combinations of seed, shape and weight extremes.
+before the cause was found. Identity in the mixed configuration is pinned by
+`TestMixedDtypeIdentitySweep` in the test battery, which re-derives it on every
+run rather than citing a stored number.
 
 `torch.addcmul` is NOT universally equivalent to a separate mul followed by an
 add. On CPU it contracts to an FMA, leaving the product unrounded, and the result

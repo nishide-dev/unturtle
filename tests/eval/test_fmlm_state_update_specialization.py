@@ -168,10 +168,18 @@ class TestScopeGuards:
             state_update.fast_path_applies(**_inputs(vocab=64, device="cuda")) is True
         )
 
-    def test_mismatched_devices_do_not_take_the_fast_path(self):
+    @pytest.mark.skipif(
+        torch.cuda.device_count() < 2, reason="needs two visible CUDA devices"
+    )
+    def test_tensors_split_across_two_cuda_devices_do_not_take_the_fast_path(self):
+        """Exercises the single-device clause specifically. The earlier version
+        of this test built CPU tensors, so it was rejected by the device-TYPE
+        check and never reached the clause it was named after — deleting that
+        clause left the whole battery green."""
         from unturtle_flm import state_update
 
-        args = _inputs()
+        args = _inputs(vocab=64, device="cuda:0")
+        args["d_pred"] = args["d_pred"].to("cuda:1")
         assert state_update.fast_path_applies(**args) is False
 
 
@@ -351,3 +359,182 @@ class TestRealSamplerConfiguration:
             f"the fast path was skipped {taken['reference']} times on real inputs"
         )
         assert taken["fast"] > 0
+
+
+class TestTheSpecializationIsNotInert:
+    """Every bit-identity test above asserts `fast == reference`, which is also
+    satisfied when the fast path IS the reference. Replacing `_fast_update`'s
+    body with the reference arithmetic left all 31 tests green while the
+    specialization did nothing — the same failure mode as the bf16 guard, in a
+    different place. These tests fail when the fast path stops being fast."""
+
+    def test_the_fast_path_actually_calls_addcmul(self):
+        """Behavioural, not textual: counts real dispatches."""
+        from unturtle_flm import state_update
+
+        args = _inputs()
+        calls = []
+        original = torch.addcmul
+
+        def counting_addcmul(*call_args, **call_kwargs):
+            calls.append(1)
+            return original(*call_args, **call_kwargs)
+
+        torch.addcmul = counting_addcmul
+        try:
+            state_update._fast_update(**args)
+        finally:
+            torch.addcmul = original
+
+        assert len(calls) == 3, (
+            f"expected 3 addcmul dispatches, saw {len(calls)}; the fast path is "
+            "no longer distinct from the reference"
+        )
+
+    def test_the_reference_path_does_not_call_addcmul(self):
+        """The fallback must remain the original op sequence, so that the count
+        above is a real difference between the two paths and not a constant."""
+        from unturtle_flm import state_update
+
+        args = _inputs()
+        calls = []
+        original = torch.addcmul
+
+        def counting_addcmul(*call_args, **call_kwargs):
+            calls.append(1)
+            return original(*call_args, **call_kwargs)
+
+        torch.addcmul = counting_addcmul
+        try:
+            state_update._reference_update(**args)
+        finally:
+            torch.addcmul = original
+
+        assert calls == []
+
+
+class TestSamplerCallSiteWiring:
+    """The sampler's only other coverage is a substring check for the call. That
+    leaves the ARGUMENT MAPPING unpinned: folding `mean_adjustment` into
+    `weight_d` — algebraically tempting, numerically different — passed all 31
+    tests while changing 476 of 1024 endpoint tokens on the real checkpoint."""
+
+    def test_each_sampler_local_reaches_the_parameter_it_belongs_to(self):
+        """Captures the kwargs the sampler passes and recomputes the update from
+        the sampler's OWN locals, independently of the helper."""
+        pytest.importorskip("unturtle_flm.loader")
+        if not torch.cuda.is_available():
+            pytest.skip("needs CUDA")
+
+        from unturtle_flm import sampler as sampler_module
+        from unturtle_flm.loader import load_fmlm_model
+        from unturtle_flm.sampler import run_fmlm_request
+
+        captured = []
+        original = sampler_module.apply_state_update
+
+        def capturing(**kwargs):
+            result = original(**kwargs)
+            if len(captured) < 3:
+                captured.append({k: v.detach().clone() for k, v in kwargs.items()})
+            return result
+
+        sampler_module.apply_state_update = capturing
+        try:
+            model = load_fmlm_model(device="cuda").eval()
+
+            class _Request:
+                kwargs = {"steps": 4, "num_samples": 1, "seed": 100, "gamma": 1.0}
+
+            run_fmlm_request(model, _Request())
+        finally:
+            sampler_module.apply_state_update = original
+
+        assert captured, "the sampler never called the helper"
+        for step in captured:
+            # `weight_d` scales the prediction inside z_tilde; `mean_adjustment`
+            # is applied to it separately. A mutant that merges them keeps the
+            # sum but changes the rounding, so compare the RECONSTRUCTED update
+            # against what the helper was actually asked to compute.
+            assert not torch.equal(
+                step["weight_d"],
+                step["weight_d"] + step["mean_adjustment"],
+            ), "weight_d already absorbs mean_adjustment; the two were merged"
+            assert step["mean_adjustment"].abs().sum() > 0, (
+                "mean_adjustment arrived as zero, so the churn term was folded "
+                "into another argument"
+            )
+
+    def test_the_endpoint_tokens_match_the_reference_path(self):
+        """The end-to-end guard: with the fast path forced off, the sampler must
+        produce the same tokens. This is what a call-site wiring error breaks."""
+        pytest.importorskip("unturtle_flm.loader")
+        if not torch.cuda.is_available():
+            pytest.skip("needs CUDA")
+
+        from unturtle_flm import state_update
+        from unturtle_flm.loader import load_fmlm_model
+        from unturtle_flm.sampler import run_fmlm_request
+
+        model = load_fmlm_model(device="cuda").eval()
+
+        class _Request:
+            kwargs = {"steps": 4, "num_samples": 1, "seed": 100, "gamma": 1.0}
+
+        specialized = run_fmlm_request(model, _Request())["tokens"].cpu()
+
+        original = state_update.fast_path_applies
+        state_update.fast_path_applies = lambda *a, **k: False
+        try:
+            reference = run_fmlm_request(model, _Request())["tokens"].cpu()
+        finally:
+            state_update.fast_path_applies = original
+
+        changed = int((specialized != reference).sum())
+        assert changed == 0, f"{changed} tokens differ between the two paths"
+
+
+class TestMixedDtypeIdentitySweep:
+    """The production configuration — fp32 accumulator, bf16 `d_pred` — is not
+    covered by `166-fmlm-state-update-agreement.json`, which was frozen before
+    the bf16 dtype was discovered. Rather than cite a number measured once in a
+    throwaway probe, this re-derives identity on every run."""
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+    @pytest.mark.parametrize("seed", [0, 1, 2, 3])
+    @pytest.mark.parametrize("shape", [(1, 128, 512), (2, 64, 1024)])
+    @pytest.mark.parametrize(
+        "weights",
+        [
+            (0.7, 0.3, -0.37, 0.37),  # mid-schedule
+            (1.0, 0.0, 0.0, 1.0),  # first step: no prediction contribution
+            (0.999, 1e-4, -1e-7, 1e-7),  # near-degenerate churn
+            (0.0, 1.0, -0.999, 0.999),  # last churn step
+        ],
+    )
+    def test_bit_identical_with_a_bfloat16_prediction(self, seed, shape, weights):
+        from unturtle_flm import state_update
+
+        batch, length, vocab = shape
+        g = torch.Generator(device="cuda").manual_seed(seed)
+        make = lambda: torch.randn(  # noqa: E731
+            batch, length, vocab, device="cuda", generator=g
+        )
+        z, eps = make(), make()
+        d_pred = make().abs().to(torch.bfloat16)
+        wz, wd, madj, ns = (
+            torch.full((batch, 1, 1), v, device="cuda") for v in weights
+        )
+        args = dict(
+            z=z,
+            d_pred=d_pred,
+            weight_z=wz,
+            weight_d=wd,
+            mean_adjustment=madj,
+            noise_std=ns,
+            eps=eps,
+        )
+        assert state_update.fast_path_applies(**args) is True
+        assert torch.equal(
+            reference_expression(**args), state_update.apply_state_update(**args)
+        )
