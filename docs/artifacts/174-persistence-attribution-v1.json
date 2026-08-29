@@ -60,7 +60,7 @@
         },
         "persistent_digest": "bd32d36c11f147e4",
         "volatile": {
-          "object_id": 22439190214944
+          "object_id": 23113510640416
         }
       },
       "original": {
@@ -122,7 +122,7 @@
         },
         "persistent_digest": "bd32d36c11f147e4",
         "volatile": {
-          "object_id": 22439208261568
+          "object_id": 23113511626144
         }
       },
       "reload": {
@@ -186,7 +186,7 @@
         },
         "persistent_digest": "bd32d36c11f147e4",
         "volatile": {
-          "object_id": 22439200322048
+          "object_id": 23113511923264
         }
       },
       "reload_restored": {
@@ -251,7 +251,7 @@
           "model.rotary.inv_freq"
         ],
         "volatile": {
-          "object_id": 22439191283760
+          "object_id": 23113500544608
         }
       }
     },
@@ -264,8 +264,6 @@
       "after": {
         "autocast_cpu_enabled": false,
         "autoclass_owner_for_config_type": "MDLMDiTConfig",
-        "cpu_rng_digest": "d57f33415962ab64",
-        "cuda_rng_digest": "374708fff7719dd5",
         "cudnn_allow_tf32": true,
         "cudnn_benchmark": false,
         "cudnn_deterministic": false,
@@ -318,7 +316,6 @@
         "deterministic_algorithms": false,
         "float32_matmul_precision": "highest",
         "matmul_allow_tf32": false,
-        "python_rng_digest": "85f98229b6ab9378",
         "sdpa_flags": {
           "cudnn": true,
           "flash": true,
@@ -332,13 +329,16 @@
           "UNSLOTH_IS_PRESENT": "1",
           "UNSLOTH_PATCHED": "1",
           "UNSLOTH_ZOO_IS_PRESENT": "1"
+        },
+        "volatile": {
+          "cpu_rng_digest": "d57f33415962ab64",
+          "cuda_rng_digest": "374708fff7719dd5",
+          "python_rng_digest": "aede0ffe8f365b0e"
         }
       },
       "before": {
         "autocast_cpu_enabled": false,
         "autoclass_owner_for_config_type": "MDLMDiTConfig",
-        "cpu_rng_digest": "804607d66c3ffcaa",
-        "cuda_rng_digest": "374708fff7719dd5",
         "cudnn_allow_tf32": true,
         "cudnn_benchmark": false,
         "cudnn_deterministic": false,
@@ -391,7 +391,6 @@
         "deterministic_algorithms": false,
         "float32_matmul_precision": "highest",
         "matmul_allow_tf32": false,
-        "python_rng_digest": "85f98229b6ab9378",
         "sdpa_flags": {
           "cudnn": true,
           "flash": true,
@@ -405,6 +404,11 @@
           "UNSLOTH_IS_PRESENT": "1",
           "UNSLOTH_PATCHED": "1",
           "UNSLOTH_ZOO_IS_PRESENT": "1"
+        },
+        "volatile": {
+          "cpu_rng_digest": "804607d66c3ffcaa",
+          "cuda_rng_digest": "374708fff7719dd5",
+          "python_rng_digest": "aede0ffe8f365b0e"
         }
       },
       "changed_keys": [
@@ -528,7 +532,7 @@
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 23442007293632
+                "object_id": 22490943683952
               }
             },
             "original": {
@@ -612,7 +616,7 @@
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 23442007278704
+                "object_id": 22490942788320
               }
             },
             "reload": {
@@ -706,7 +710,7 @@
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 23442008828688
+                "object_id": 22490939570272
               }
             },
             "reload_restored": {
@@ -795,7 +799,7 @@
                 "model.rotary_emb.inv_freq"
               ],
               "volatile": {
-                "object_id": 23442016704976
+                "object_id": 22490931908672
               }
             }
           },
@@ -808,8 +812,6 @@
             "after": {
               "autocast_cpu_enabled": false,
               "autoclass_owner_for_config_type": null,
-              "cpu_rng_digest": "d97336e56492e520",
-              "cuda_rng_digest": "374708fff7719dd5",
               "cudnn_allow_tf32": true,
               "cudnn_benchmark": false,
               "cudnn_deterministic": false,
@@ -862,7 +864,6 @@
               "deterministic_algorithms": false,
               "float32_matmul_precision": "highest",
               "matmul_allow_tf32": false,
-              "python_rng_digest": "00839f6abef15a7f",
               "sdpa_flags": {
                 "cudnn": true,
                 "flash": true,
@@ -876,13 +877,16 @@
                 "UNSLOTH_IS_PRESENT": "1",
                 "UNSLOTH_PATCHED": "1",
                 "UNSLOTH_ZOO_IS_PRESENT": "1"
+              },
+              "volatile": {
+                "cpu_rng_digest": "d97336e56492e520",
+                "cuda_rng_digest": "374708fff7719dd5",
+                "python_rng_digest": "17a80c0bf5dd102b"
               }
             },
             "before": {
               "autocast_cpu_enabled": false,
               "autoclass_owner_for_config_type": null,
-              "cpu_rng_digest": "1fc712890a7443a4",
-              "cuda_rng_digest": "374708fff7719dd5",
               "cudnn_allow_tf32": true,
               "cudnn_benchmark": false,
               "cudnn_deterministic": false,
@@ -935,7 +939,6 @@
               "deterministic_algorithms": false,
               "float32_matmul_precision": "highest",
               "matmul_allow_tf32": false,
-              "python_rng_digest": "00839f6abef15a7f",
               "sdpa_flags": {
                 "cudnn": true,
                 "flash": true,
@@ -949,6 +952,11 @@
                 "UNSLOTH_IS_PRESENT": "1",
                 "UNSLOTH_PATCHED": "1",
                 "UNSLOTH_ZOO_IS_PRESENT": "1"
+              },
+              "volatile": {
+                "cpu_rng_digest": "1fc712890a7443a4",
+                "cuda_rng_digest": "374708fff7719dd5",
+                "python_rng_digest": "17a80c0bf5dd102b"
               }
             },
             "changed_keys": [
@@ -1064,7 +1072,7 @@
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 22894397438192
+                "object_id": 22783719665456
               }
             },
             "original": {
@@ -1148,7 +1156,7 @@
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 22894771249200
+                "object_id": 22784070425328
               }
             },
             "reload": {
@@ -1242,7 +1250,7 @@
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 22894771515856
+                "object_id": 22784074591184
               }
             },
             "reload_restored": {
@@ -1331,7 +1339,7 @@
                 "model.rotary_emb.inv_freq"
               ],
               "volatile": {
-                "object_id": 22894766840512
+                "object_id": 22784063625824
               }
             }
           },
@@ -1344,8 +1352,6 @@
             "after": {
               "autocast_cpu_enabled": false,
               "autoclass_owner_for_config_type": null,
-              "cpu_rng_digest": "d97336e56492e520",
-              "cuda_rng_digest": "374708fff7719dd5",
               "cudnn_allow_tf32": true,
               "cudnn_benchmark": false,
               "cudnn_deterministic": false,
@@ -1398,7 +1404,6 @@
               "deterministic_algorithms": false,
               "float32_matmul_precision": "highest",
               "matmul_allow_tf32": false,
-              "python_rng_digest": "fd1cfa7627a865d4",
               "sdpa_flags": {
                 "cudnn": true,
                 "flash": true,
@@ -1412,13 +1417,16 @@
                 "UNSLOTH_IS_PRESENT": "1",
                 "UNSLOTH_PATCHED": "1",
                 "UNSLOTH_ZOO_IS_PRESENT": "1"
+              },
+              "volatile": {
+                "cpu_rng_digest": "d97336e56492e520",
+                "cuda_rng_digest": "374708fff7719dd5",
+                "python_rng_digest": "df2394b3ab590f53"
               }
             },
             "before": {
               "autocast_cpu_enabled": false,
               "autoclass_owner_for_config_type": null,
-              "cpu_rng_digest": "1fc712890a7443a4",
-              "cuda_rng_digest": "374708fff7719dd5",
               "cudnn_allow_tf32": true,
               "cudnn_benchmark": false,
               "cudnn_deterministic": false,
@@ -1471,7 +1479,6 @@
               "deterministic_algorithms": false,
               "float32_matmul_precision": "highest",
               "matmul_allow_tf32": false,
-              "python_rng_digest": "fd1cfa7627a865d4",
               "sdpa_flags": {
                 "cudnn": true,
                 "flash": true,
@@ -1485,6 +1492,11 @@
                 "UNSLOTH_IS_PRESENT": "1",
                 "UNSLOTH_PATCHED": "1",
                 "UNSLOTH_ZOO_IS_PRESENT": "1"
+              },
+              "volatile": {
+                "cpu_rng_digest": "1fc712890a7443a4",
+                "cuda_rng_digest": "374708fff7719dd5",
+                "python_rng_digest": "df2394b3ab590f53"
               }
             },
             "changed_keys": [
@@ -1605,7 +1617,7 @@
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 23158990868160
+                "object_id": 22888625003344
               }
             },
             "original": {
@@ -1689,7 +1701,7 @@
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 23159347459232
+                "object_id": 22888630076576
               }
             },
             "reload": {
@@ -1783,7 +1795,7 @@
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 23159342577856
+                "object_id": 22888625649616
               }
             },
             "reload_restored": {
@@ -1872,7 +1884,7 @@
                 "model.rotary_emb.inv_freq"
               ],
               "volatile": {
-                "object_id": 23159342568064
+                "object_id": 22888617895328
               }
             }
           },
@@ -1885,8 +1897,6 @@
             "after": {
               "autocast_cpu_enabled": false,
               "autoclass_owner_for_config_type": null,
-              "cpu_rng_digest": "d97336e56492e520",
-              "cuda_rng_digest": "374708fff7719dd5",
               "cudnn_allow_tf32": true,
               "cudnn_benchmark": false,
               "cudnn_deterministic": false,
@@ -1939,7 +1949,6 @@
               "deterministic_algorithms": false,
               "float32_matmul_precision": "highest",
               "matmul_allow_tf32": false,
-              "python_rng_digest": "0d70c364ae38eea3",
               "sdpa_flags": {
                 "cudnn": true,
                 "flash": true,
@@ -1953,13 +1962,16 @@
                 "UNSLOTH_IS_PRESENT": "1",
                 "UNSLOTH_PATCHED": "1",
                 "UNSLOTH_ZOO_IS_PRESENT": "1"
+              },
+              "volatile": {
+                "cpu_rng_digest": "d97336e56492e520",
+                "cuda_rng_digest": "374708fff7719dd5",
+                "python_rng_digest": "2a173c1c5a73fa77"
               }
             },
             "before": {
               "autocast_cpu_enabled": false,
               "autoclass_owner_for_config_type": null,
-              "cpu_rng_digest": "1fc712890a7443a4",
-              "cuda_rng_digest": "374708fff7719dd5",
               "cudnn_allow_tf32": true,
               "cudnn_benchmark": false,
               "cudnn_deterministic": false,
@@ -2012,7 +2024,6 @@
               "deterministic_algorithms": false,
               "float32_matmul_precision": "highest",
               "matmul_allow_tf32": false,
-              "python_rng_digest": "0d70c364ae38eea3",
               "sdpa_flags": {
                 "cudnn": true,
                 "flash": true,
@@ -2026,6 +2037,11 @@
                 "UNSLOTH_IS_PRESENT": "1",
                 "UNSLOTH_PATCHED": "1",
                 "UNSLOTH_ZOO_IS_PRESENT": "1"
+              },
+              "volatile": {
+                "cpu_rng_digest": "1fc712890a7443a4",
+                "cuda_rng_digest": "374708fff7719dd5",
+                "python_rng_digest": "2a173c1c5a73fa77"
               }
             },
             "changed_keys": [
@@ -2109,7 +2125,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 23185184047376,
+                "object_id": 23321203386192,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -2189,7 +2205,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 23184835386336,
+                "object_id": 23321447856080,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -2227,7 +2243,7 @@
                 "buffers": {
                   "model.layers.0.self_attn.rotary_emb.inv_freq": {
                     "device": "cpu",
-                    "digest": "870a3bfa902f59a1",
+                    "digest": "0c29f2c125d1bc24",
                     "dtype": "torch.float32",
                     "equals_formula": false,
                     "equals_reference": false,
@@ -2238,7 +2254,7 @@
                   },
                   "model.layers.1.self_attn.rotary_emb.inv_freq": {
                     "device": "cpu",
-                    "digest": "7e7dc4f88f081a33",
+                    "digest": "a470c45b4b4af93b",
                     "dtype": "torch.float32",
                     "equals_formula": false,
                     "equals_reference": false,
@@ -2249,7 +2265,7 @@
                   },
                   "model.rotary_emb.inv_freq": {
                     "device": "cpu",
-                    "digest": "587e1866ef109727",
+                    "digest": "a470c45b4b4af93b",
                     "dtype": "torch.float32",
                     "equals_formula": false,
                     "equals_reference": false,
@@ -2269,7 +2285,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 23185172978032,
+                "object_id": 23321203892272,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -2289,8 +2305,8 @@
                     0
                   ],
                   "label": "logits",
-                  "max_abs_delta": 0.006026342511177063,
-                  "max_rel_delta": 76.95566905556093,
+                  "max_abs_delta": 0.006315380334854126,
+                  "max_rel_delta": 76.71543030275322,
                   "non_equal_count": 12288,
                   "shape": [
                     [
@@ -2353,7 +2369,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 23185172975392,
+                "object_id": 23321209369328,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -2456,7 +2472,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "b7cf922a4f3b743c",
+                "python_rng_digest": "8af8a272f8e12d5e",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -2529,7 +2545,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "b7cf922a4f3b743c",
+                "python_rng_digest": "8af8a272f8e12d5e",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -2623,7 +2639,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 22877342792688,
+                "object_id": 22999181356992,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -2703,7 +2719,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 22877349851408,
+                "object_id": 22999566103712,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -2741,7 +2757,7 @@
                 "buffers": {
                   "model.layers.0.self_attn.rotary_emb.inv_freq": {
                     "device": "cpu",
-                    "digest": "15d34e0b98a263a4",
+                    "digest": "e2ac2caf1d56ea7d",
                     "dtype": "torch.float32",
                     "equals_formula": false,
                     "equals_reference": false,
@@ -2752,7 +2768,7 @@
                   },
                   "model.layers.1.self_attn.rotary_emb.inv_freq": {
                     "device": "cpu",
-                    "digest": "91e601558b18d1a5",
+                    "digest": "8e91713ee1a618b4",
                     "dtype": "torch.float32",
                     "equals_formula": false,
                     "equals_reference": false,
@@ -2763,7 +2779,7 @@
                   },
                   "model.rotary_emb.inv_freq": {
                     "device": "cpu",
-                    "digest": "d5dbbca10a1e4516",
+                    "digest": "ffeea59d9e9925fd",
                     "dtype": "torch.float32",
                     "equals_formula": false,
                     "equals_reference": false,
@@ -2783,7 +2799,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 22877350082800,
+                "object_id": 22999548000736,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -2867,7 +2883,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 22877350072672,
+                "object_id": 22999548682864,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -2970,7 +2986,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "99891613b6d5c783",
+                "python_rng_digest": "0ea1b8e8822f67d1",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -3043,7 +3059,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "99891613b6d5c783",
+                "python_rng_digest": "0ea1b8e8822f67d1",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -3137,7 +3153,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 22556004760944,
+                "object_id": 22646967377104,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -3217,7 +3233,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 22555994151136,
+                "object_id": 22646967170160,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -3255,7 +3271,7 @@
                 "buffers": {
                   "model.layers.0.self_attn.rotary_emb.inv_freq": {
                     "device": "cuda:0",
-                    "digest": "4d53964e85b3024b",
+                    "digest": "b6e48261f4c61c46",
                     "dtype": "torch.float32",
                     "equals_formula": false,
                     "equals_reference": false,
@@ -3266,7 +3282,7 @@
                   },
                   "model.layers.1.self_attn.rotary_emb.inv_freq": {
                     "device": "cuda:0",
-                    "digest": "1383ca1e98d4d829",
+                    "digest": "4a3c80e24ecc51b1",
                     "dtype": "torch.float32",
                     "equals_formula": false,
                     "equals_reference": false,
@@ -3277,7 +3293,7 @@
                   },
                   "model.rotary_emb.inv_freq": {
                     "device": "cuda:0",
-                    "digest": "afce33955688aecc",
+                    "digest": "a9a4716f18cb119f",
                     "dtype": "torch.float32",
                     "equals_formula": false,
                     "equals_reference": false,
@@ -3297,7 +3313,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 22556002725968,
+                "object_id": 22646967613056,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -3317,8 +3333,8 @@
                     0
                   ],
                   "label": "logits",
-                  "max_abs_delta": 0.007927084690891206,
-                  "max_rel_delta": 69.76746745788668,
+                  "max_abs_delta": 0.006026282906532288,
+                  "max_rel_delta": 76.98419155181215,
                   "non_equal_count": 12288,
                   "shape": [
                     [
@@ -3381,7 +3397,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 22555994834800,
+                "object_id": 22646960025872,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -3484,7 +3500,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "d07301d277fe4025",
+                "python_rng_digest": "cbe57f8d129b7247",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -3557,7 +3573,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "d07301d277fe4025",
+                "python_rng_digest": "cbe57f8d129b7247",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -3684,7 +3700,7 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 23319910047168
+                "object_id": 23046563500048
               }
             },
             "original": {
@@ -3746,7 +3762,7 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 23331248446048
+                "object_id": 23035585426112
               }
             },
             "reload": {
@@ -3810,7 +3826,7 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 23320261455616
+                "object_id": 23035595859552
               }
             },
             "reload_restored": {
@@ -3875,7 +3891,7 @@
                 "model.rotary.inv_freq"
               ],
               "volatile": {
-                "object_id": 23320278213760
+                "object_id": 23035586687728
               }
             }
           },
@@ -3888,8 +3904,6 @@
             "after": {
               "autocast_cpu_enabled": false,
               "autoclass_owner_for_config_type": null,
-              "cpu_rng_digest": "3dbcff81a8a34865",
-              "cuda_rng_digest": "374708fff7719dd5",
               "cudnn_allow_tf32": true,
               "cudnn_benchmark": false,
               "cudnn_deterministic": false,
@@ -3942,7 +3956,6 @@
               "deterministic_algorithms": false,
               "float32_matmul_precision": "highest",
               "matmul_allow_tf32": false,
-              "python_rng_digest": "6ca04e49949e4720",
               "sdpa_flags": {
                 "cudnn": true,
                 "flash": true,
@@ -3956,13 +3969,16 @@
                 "UNSLOTH_IS_PRESENT": "1",
                 "UNSLOTH_PATCHED": "1",
                 "UNSLOTH_ZOO_IS_PRESENT": "1"
+              },
+              "volatile": {
+                "cpu_rng_digest": "3dbcff81a8a34865",
+                "cuda_rng_digest": "374708fff7719dd5",
+                "python_rng_digest": "1e7329d01564033c"
               }
             },
             "before": {
               "autocast_cpu_enabled": false,
               "autoclass_owner_for_config_type": null,
-              "cpu_rng_digest": "1943de2787227442",
-              "cuda_rng_digest": "374708fff7719dd5",
               "cudnn_allow_tf32": true,
               "cudnn_benchmark": false,
               "cudnn_deterministic": false,
@@ -4015,7 +4031,6 @@
               "deterministic_algorithms": false,
               "float32_matmul_precision": "highest",
               "matmul_allow_tf32": false,
-              "python_rng_digest": "6ca04e49949e4720",
               "sdpa_flags": {
                 "cudnn": true,
                 "flash": true,
@@ -4029,6 +4044,11 @@
                 "UNSLOTH_IS_PRESENT": "1",
                 "UNSLOTH_PATCHED": "1",
                 "UNSLOTH_ZOO_IS_PRESENT": "1"
+              },
+              "volatile": {
+                "cpu_rng_digest": "1943de2787227442",
+                "cuda_rng_digest": "374708fff7719dd5",
+                "python_rng_digest": "1e7329d01564033c"
               }
             },
             "changed_keys": [
@@ -4116,7 +4136,7 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 22997945719968
+                "object_id": 23291210281664
               }
             },
             "original": {
@@ -4178,7 +4198,7 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 22997950083296
+                "object_id": 23291215554144
               }
             },
             "reload": {
@@ -4246,7 +4266,7 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 22997948589760
+                "object_id": 23291204280080
               }
             },
             "reload_restored": {
@@ -4311,7 +4331,7 @@
                 "model.rotary.inv_freq"
               ],
               "volatile": {
-                "object_id": 22997940403376
+                "object_id": 23291211756800
               }
             }
           },
@@ -4324,8 +4344,6 @@
             "after": {
               "autocast_cpu_enabled": false,
               "autoclass_owner_for_config_type": null,
-              "cpu_rng_digest": "3dbcff81a8a34865",
-              "cuda_rng_digest": "374708fff7719dd5",
               "cudnn_allow_tf32": true,
               "cudnn_benchmark": false,
               "cudnn_deterministic": false,
@@ -4378,7 +4396,6 @@
               "deterministic_algorithms": false,
               "float32_matmul_precision": "highest",
               "matmul_allow_tf32": false,
-              "python_rng_digest": "34905f047003a2e0",
               "sdpa_flags": {
                 "cudnn": true,
                 "flash": true,
@@ -4392,13 +4409,16 @@
                 "UNSLOTH_IS_PRESENT": "1",
                 "UNSLOTH_PATCHED": "1",
                 "UNSLOTH_ZOO_IS_PRESENT": "1"
+              },
+              "volatile": {
+                "cpu_rng_digest": "3dbcff81a8a34865",
+                "cuda_rng_digest": "374708fff7719dd5",
+                "python_rng_digest": "aa312a92a81a0613"
               }
             },
             "before": {
               "autocast_cpu_enabled": false,
               "autoclass_owner_for_config_type": null,
-              "cpu_rng_digest": "1943de2787227442",
-              "cuda_rng_digest": "374708fff7719dd5",
               "cudnn_allow_tf32": true,
               "cudnn_benchmark": false,
               "cudnn_deterministic": false,
@@ -4451,7 +4471,6 @@
               "deterministic_algorithms": false,
               "float32_matmul_precision": "highest",
               "matmul_allow_tf32": false,
-              "python_rng_digest": "34905f047003a2e0",
               "sdpa_flags": {
                 "cudnn": true,
                 "flash": true,
@@ -4465,6 +4484,11 @@
                 "UNSLOTH_IS_PRESENT": "1",
                 "UNSLOTH_PATCHED": "1",
                 "UNSLOTH_ZOO_IS_PRESENT": "1"
+              },
+              "volatile": {
+                "cpu_rng_digest": "1943de2787227442",
+                "cuda_rng_digest": "374708fff7719dd5",
+                "python_rng_digest": "aa312a92a81a0613"
               }
             },
             "changed_keys": [
@@ -4557,7 +4581,7 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 22617038715216
+                "object_id": 22568721874576
               }
             },
             "original": {
@@ -4619,7 +4643,7 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 22628029121840
+                "object_id": 22568727342944
               }
             },
             "reload": {
@@ -4687,7 +4711,7 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 22617029994464
+                "object_id": 22568717397808
               }
             },
             "reload_restored": {
@@ -4752,7 +4776,7 @@
                 "model.rotary.inv_freq"
               ],
               "volatile": {
-                "object_id": 22617037305424
+                "object_id": 22568710355808
               }
             }
           },
@@ -4765,8 +4789,6 @@
             "after": {
               "autocast_cpu_enabled": false,
               "autoclass_owner_for_config_type": null,
-              "cpu_rng_digest": "3dbcff81a8a34865",
-              "cuda_rng_digest": "374708fff7719dd5",
               "cudnn_allow_tf32": true,
               "cudnn_benchmark": false,
               "cudnn_deterministic": false,
@@ -4819,7 +4841,6 @@
               "deterministic_algorithms": false,
               "float32_matmul_precision": "highest",
               "matmul_allow_tf32": false,
-              "python_rng_digest": "94b1b0d4352766e6",
               "sdpa_flags": {
                 "cudnn": true,
                 "flash": true,
@@ -4833,13 +4854,16 @@
                 "UNSLOTH_IS_PRESENT": "1",
                 "UNSLOTH_PATCHED": "1",
                 "UNSLOTH_ZOO_IS_PRESENT": "1"
+              },
+              "volatile": {
+                "cpu_rng_digest": "3dbcff81a8a34865",
+                "cuda_rng_digest": "374708fff7719dd5",
+                "python_rng_digest": "1c3503d2a506b6f2"
               }
             },
             "before": {
               "autocast_cpu_enabled": false,
               "autoclass_owner_for_config_type": null,
-              "cpu_rng_digest": "1943de2787227442",
-              "cuda_rng_digest": "374708fff7719dd5",
               "cudnn_allow_tf32": true,
               "cudnn_benchmark": false,
               "cudnn_deterministic": false,
@@ -4892,7 +4916,6 @@
               "deterministic_algorithms": false,
               "float32_matmul_precision": "highest",
               "matmul_allow_tf32": false,
-              "python_rng_digest": "94b1b0d4352766e6",
               "sdpa_flags": {
                 "cudnn": true,
                 "flash": true,
@@ -4906,6 +4929,11 @@
                 "UNSLOTH_IS_PRESENT": "1",
                 "UNSLOTH_PATCHED": "1",
                 "UNSLOTH_ZOO_IS_PRESENT": "1"
+              },
+              "volatile": {
+                "cpu_rng_digest": "1943de2787227442",
+                "cuda_rng_digest": "374708fff7719dd5",
+                "python_rng_digest": "1c3503d2a506b6f2"
               }
             },
             "changed_keys": [
@@ -4961,7 +4989,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22872291867728,
+                "object_id": 22409277828528,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5019,7 +5047,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22872289279584,
+                "object_id": 22409270014656,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5057,7 +5085,7 @@
                 "buffers": {
                   "model.rotary.inv_freq": {
                     "device": "cpu",
-                    "digest": "8a964acc50e4b76d",
+                    "digest": "e45a61bf69d03cc1",
                     "dtype": "torch.float32",
                     "equals_formula": false,
                     "equals_reference": false,
@@ -5077,7 +5105,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22872286844816,
+                "object_id": 22409277013456,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": true,
@@ -5139,7 +5167,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22872280589200,
+                "object_id": 22409260921872,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5240,7 +5268,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "1a8d0f3db70653a2",
+                "python_rng_digest": "a9524e58a80ae124",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -5313,7 +5341,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "1a8d0f3db70653a2",
+                "python_rng_digest": "a9524e58a80ae124",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -5379,7 +5407,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22454500028208,
+                "object_id": 23270811032928,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5437,7 +5465,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22454500909248,
+                "object_id": 23270815377040,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5475,7 +5503,7 @@
                 "buffers": {
                   "model.rotary.inv_freq": {
                     "device": "cpu",
-                    "digest": "c275892e4337dfc0",
+                    "digest": "8a318416a9ce2819",
                     "dtype": "torch.float32",
                     "equals_formula": false,
                     "equals_reference": false,
@@ -5495,7 +5523,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22454490686928,
+                "object_id": 23270811034848,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5553,7 +5581,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22454492722432,
+                "object_id": 23270804499456,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5654,7 +5682,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "5049356944b4511e",
+                "python_rng_digest": "dde3b1052935eeed",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -5727,7 +5755,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "5049356944b4511e",
+                "python_rng_digest": "dde3b1052935eeed",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -5793,7 +5821,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22576192595312,
+                "object_id": 22975870479936,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5851,7 +5879,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22576205144256,
+                "object_id": 22975870828368,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5889,7 +5917,7 @@
                 "buffers": {
                   "model.rotary.inv_freq": {
                     "device": "cuda:0",
-                    "digest": "ba2b814138a85f5e",
+                    "digest": "d2637185b65de7bb",
                     "dtype": "torch.float32",
                     "equals_formula": false,
                     "equals_reference": false,
@@ -5909,11 +5937,11 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22576192828384,
+                "object_id": 22975860550752,
                 "output_vs_original": {
                   "any_inf": false,
-                  "any_nan": true,
-                  "bit_identical_after_cpu_serialization": false,
+                  "any_nan": false,
+                  "bit_identical_after_cpu_serialization": true,
                   "device": [
                     "cuda:0",
                     "cuda:0"
@@ -5922,16 +5950,12 @@
                     "torch.float32",
                     "torch.float32"
                   ],
-                  "equal": false,
-                  "first_differing_index": [
-                    0,
-                    0,
-                    0
-                  ],
+                  "equal": true,
+                  "first_differing_index": null,
                   "label": "logits",
-                  "max_abs_delta": null,
-                  "max_rel_delta": null,
-                  "non_equal_count": 384,
+                  "max_abs_delta": 0.0,
+                  "max_rel_delta": 0.0,
+                  "non_equal_count": 0,
                   "shape": [
                     [
                       2,
@@ -5971,7 +5995,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22576194150304,
+                "object_id": 22975861726032,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -6072,7 +6096,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "a7006905f5a806f0",
+                "python_rng_digest": "c29f8fd5f82fc883",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -6145,7 +6169,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "a7006905f5a806f0",
+                "python_rng_digest": "c29f8fd5f82fc883",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -6177,9 +6201,9 @@
                 "model.rotary.inv_freq"
               ],
               "reasons": [
-                "persistent weights identical; reload diverges; restoring every changed non-persistent buffer removes the divergence"
+                "reload output equals original under this backend/poison condition; nothing to attribute"
               ],
-              "verdict": "ROPE LOAD-PATH CAUSAL"
+              "verdict": "NO DIVERGENCE UNDER THIS CONDITION"
             },
             "volatile": {
               "tmp_dir": "<tmp>"
@@ -6266,7 +6290,7 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 23413151229824
+                "object_id": 22397152892048
               }
             },
             "original": {
@@ -6328,7 +6352,7 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 23413519246224
+                "object_id": 22397164784240
               }
             },
             "reload": {
@@ -6392,7 +6416,7 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 23413519805008
+                "object_id": 22397153912320
               }
             },
             "reload_restored": {
@@ -6457,7 +6481,7 @@
                 "model.rotary.inv_freq"
               ],
               "volatile": {
-                "object_id": 23413511209808
+                "object_id": 22397158178400
               }
             }
           },
@@ -6470,8 +6494,6 @@
             "after": {
               "autocast_cpu_enabled": false,
               "autoclass_owner_for_config_type": "MDLMDiTConfig",
-              "cpu_rng_digest": "d57f33415962ab64",
-              "cuda_rng_digest": "374708fff7719dd5",
               "cudnn_allow_tf32": true,
               "cudnn_benchmark": false,
               "cudnn_deterministic": false,
@@ -6524,7 +6546,6 @@
               "deterministic_algorithms": false,
               "float32_matmul_precision": "highest",
               "matmul_allow_tf32": false,
-              "python_rng_digest": "16e865915f310340",
               "sdpa_flags": {
                 "cudnn": true,
                 "flash": true,
@@ -6538,13 +6559,16 @@
                 "UNSLOTH_IS_PRESENT": "1",
                 "UNSLOTH_PATCHED": "1",
                 "UNSLOTH_ZOO_IS_PRESENT": "1"
+              },
+              "volatile": {
+                "cpu_rng_digest": "d57f33415962ab64",
+                "cuda_rng_digest": "374708fff7719dd5",
+                "python_rng_digest": "88618ffc128a1aa0"
               }
             },
             "before": {
               "autocast_cpu_enabled": false,
               "autoclass_owner_for_config_type": "MDLMDiTConfig",
-              "cpu_rng_digest": "804607d66c3ffcaa",
-              "cuda_rng_digest": "374708fff7719dd5",
               "cudnn_allow_tf32": true,
               "cudnn_benchmark": false,
               "cudnn_deterministic": false,
@@ -6597,7 +6621,6 @@
               "deterministic_algorithms": false,
               "float32_matmul_precision": "highest",
               "matmul_allow_tf32": false,
-              "python_rng_digest": "16e865915f310340",
               "sdpa_flags": {
                 "cudnn": true,
                 "flash": true,
@@ -6611,6 +6634,11 @@
                 "UNSLOTH_IS_PRESENT": "1",
                 "UNSLOTH_PATCHED": "1",
                 "UNSLOTH_ZOO_IS_PRESENT": "1"
+              },
+              "volatile": {
+                "cpu_rng_digest": "804607d66c3ffcaa",
+                "cuda_rng_digest": "374708fff7719dd5",
+                "python_rng_digest": "88618ffc128a1aa0"
               }
             },
             "changed_keys": [
@@ -6698,7 +6726,7 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 22833185850240
+                "object_id": 23029789226528
               }
             },
             "original": {
@@ -6760,7 +6788,7 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 22833194381440
+                "object_id": 23029803798448
               }
             },
             "reload": {
@@ -6828,7 +6856,7 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 22833194790464
+                "object_id": 23029790371440
               }
             },
             "reload_restored": {
@@ -6893,7 +6921,7 @@
                 "model.rotary.inv_freq"
               ],
               "volatile": {
-                "object_id": 22833186825152
+                "object_id": 23029790370336
               }
             }
           },
@@ -6906,8 +6934,6 @@
             "after": {
               "autocast_cpu_enabled": false,
               "autoclass_owner_for_config_type": "MDLMDiTConfig",
-              "cpu_rng_digest": "d57f33415962ab64",
-              "cuda_rng_digest": "374708fff7719dd5",
               "cudnn_allow_tf32": true,
               "cudnn_benchmark": false,
               "cudnn_deterministic": false,
@@ -6960,7 +6986,6 @@
               "deterministic_algorithms": false,
               "float32_matmul_precision": "highest",
               "matmul_allow_tf32": false,
-              "python_rng_digest": "4d8ef2e681edcc47",
               "sdpa_flags": {
                 "cudnn": true,
                 "flash": true,
@@ -6974,13 +6999,16 @@
                 "UNSLOTH_IS_PRESENT": "1",
                 "UNSLOTH_PATCHED": "1",
                 "UNSLOTH_ZOO_IS_PRESENT": "1"
+              },
+              "volatile": {
+                "cpu_rng_digest": "d57f33415962ab64",
+                "cuda_rng_digest": "374708fff7719dd5",
+                "python_rng_digest": "03f17980103d210b"
               }
             },
             "before": {
               "autocast_cpu_enabled": false,
               "autoclass_owner_for_config_type": "MDLMDiTConfig",
-              "cpu_rng_digest": "804607d66c3ffcaa",
-              "cuda_rng_digest": "374708fff7719dd5",
               "cudnn_allow_tf32": true,
               "cudnn_benchmark": false,
               "cudnn_deterministic": false,
@@ -7033,7 +7061,6 @@
               "deterministic_algorithms": false,
               "float32_matmul_precision": "highest",
               "matmul_allow_tf32": false,
-              "python_rng_digest": "4d8ef2e681edcc47",
               "sdpa_flags": {
                 "cudnn": true,
                 "flash": true,
@@ -7047,6 +7074,11 @@
                 "UNSLOTH_IS_PRESENT": "1",
                 "UNSLOTH_PATCHED": "1",
                 "UNSLOTH_ZOO_IS_PRESENT": "1"
+              },
+              "volatile": {
+                "cpu_rng_digest": "804607d66c3ffcaa",
+                "cuda_rng_digest": "374708fff7719dd5",
+                "python_rng_digest": "03f17980103d210b"
               }
             },
             "changed_keys": [
@@ -7139,7 +7171,7 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 22535568862016
+                "object_id": 23218661634608
               }
             },
             "original": {
@@ -7201,7 +7233,7 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 22535568752560
+                "object_id": 23229627652992
               }
             },
             "reload": {
@@ -7269,7 +7301,7 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 22535559161248
+                "object_id": 23218660167408
               }
             },
             "reload_restored": {
@@ -7334,7 +7366,7 @@
                 "model.rotary.inv_freq"
               ],
               "volatile": {
-                "object_id": 22535559152128
+                "object_id": 23218660166112
               }
             }
           },
@@ -7347,8 +7379,6 @@
             "after": {
               "autocast_cpu_enabled": false,
               "autoclass_owner_for_config_type": "MDLMDiTConfig",
-              "cpu_rng_digest": "d57f33415962ab64",
-              "cuda_rng_digest": "374708fff7719dd5",
               "cudnn_allow_tf32": true,
               "cudnn_benchmark": false,
               "cudnn_deterministic": false,
@@ -7401,7 +7431,6 @@
               "deterministic_algorithms": false,
               "float32_matmul_precision": "highest",
               "matmul_allow_tf32": false,
-              "python_rng_digest": "8a65edb764fca113",
               "sdpa_flags": {
                 "cudnn": true,
                 "flash": true,
@@ -7415,13 +7444,16 @@
                 "UNSLOTH_IS_PRESENT": "1",
                 "UNSLOTH_PATCHED": "1",
                 "UNSLOTH_ZOO_IS_PRESENT": "1"
+              },
+              "volatile": {
+                "cpu_rng_digest": "d57f33415962ab64",
+                "cuda_rng_digest": "374708fff7719dd5",
+                "python_rng_digest": "2626b3b711d24932"
               }
             },
             "before": {
               "autocast_cpu_enabled": false,
               "autoclass_owner_for_config_type": "MDLMDiTConfig",
-              "cpu_rng_digest": "804607d66c3ffcaa",
-              "cuda_rng_digest": "374708fff7719dd5",
               "cudnn_allow_tf32": true,
               "cudnn_benchmark": false,
               "cudnn_deterministic": false,
@@ -7474,7 +7506,6 @@
               "deterministic_algorithms": false,
               "float32_matmul_precision": "highest",
               "matmul_allow_tf32": false,
-              "python_rng_digest": "8a65edb764fca113",
               "sdpa_flags": {
                 "cudnn": true,
                 "flash": true,
@@ -7488,6 +7519,11 @@
                 "UNSLOTH_IS_PRESENT": "1",
                 "UNSLOTH_PATCHED": "1",
                 "UNSLOTH_ZOO_IS_PRESENT": "1"
+              },
+              "volatile": {
+                "cpu_rng_digest": "804607d66c3ffcaa",
+                "cuda_rng_digest": "374708fff7719dd5",
+                "python_rng_digest": "2626b3b711d24932"
               }
             },
             "changed_keys": [
@@ -7543,7 +7579,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22715008623264,
+                "object_id": 22508121152960,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -7601,7 +7637,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22714630950832,
+                "object_id": 22508127573712,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -7639,7 +7675,7 @@
                 "buffers": {
                   "model.rotary.inv_freq": {
                     "device": "cpu",
-                    "digest": "8da1a5db2ce2c8ac",
+                    "digest": "9f145ae81169233a",
                     "dtype": "torch.float32",
                     "equals_formula": false,
                     "equals_reference": false,
@@ -7659,7 +7695,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22715008947392,
+                "object_id": 22508119651056,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": true,
@@ -7721,7 +7757,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22715008949456,
+                "object_id": 22508119650192,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -7822,7 +7858,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "d8684ac5b0d0810d",
+                "python_rng_digest": "c2b727dfbe9200b6",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -7895,7 +7931,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "d8684ac5b0d0810d",
+                "python_rng_digest": "c2b727dfbe9200b6",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -7961,7 +7997,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22590795607520,
+                "object_id": 22602546077024,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -8019,7 +8055,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22590787582384,
+                "object_id": 22602543465632,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -8057,7 +8093,7 @@
                 "buffers": {
                   "model.rotary.inv_freq": {
                     "device": "cpu",
-                    "digest": "4bab043e57018274",
+                    "digest": "33bb115ae60da178",
                     "dtype": "torch.float32",
                     "equals_formula": false,
                     "equals_reference": false,
@@ -8077,7 +8113,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22590809952608,
+                "object_id": 22602543719984,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -8135,7 +8171,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22590796070992,
+                "object_id": 22602552081584,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -8236,7 +8272,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "db5655c9770b5ed5",
+                "python_rng_digest": "80141b4e95dcd843",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -8309,7 +8345,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "db5655c9770b5ed5",
+                "python_rng_digest": "80141b4e95dcd843",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -8375,7 +8411,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22897644602000,
+                "object_id": 23151571208480,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -8433,7 +8469,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22897661870928,
+                "object_id": 23151574418352,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -8471,7 +8507,7 @@
                 "buffers": {
                   "model.rotary.inv_freq": {
                     "device": "cuda:0",
-                    "digest": "f81d309f819e6c30",
+                    "digest": "218d36e86333ec95",
                     "dtype": "torch.float32",
                     "equals_formula": false,
                     "equals_reference": false,
@@ -8491,7 +8527,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22897644691936,
+                "object_id": 23151562715360,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -8549,7 +8585,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22897644694384,
+                "object_id": 23151562711856,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -8650,7 +8686,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "2a67ad010a035e0f",
+                "python_rng_digest": "37e137ce575ebb10",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -8723,7 +8759,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "2a67ad010a035e0f",
+                "python_rng_digest": "37e137ce575ebb10",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -14146,7 +14182,7 @@
     "status": "observed"
   },
   "producer": {
-    "commit": "c5f95162f8e9544d2d3a386f7d632f681a0f55cf",
+    "commit": "0305ad45bff03638020bae1adb5cc12b7cdf6c3b",
     "peft": "0.19.1",
     "platform": "Linux-5.15.0-122-generic-x86_64-with-glibc2.35",
     "probes": [
@@ -14664,5 +14700,5 @@
     "worktree_clean": true
   },
   "schema_version": 1,
-  "semantic_digest": "d6ba22f4a2bc43ba7d113c368805a1d2f633afb3e977fe031be2201e443feabc"
+  "semantic_digest": "805a3ff87dce04155146fae67ec7c8dbc2d252536bd76a825ec599c8dc5b358e"
 }
