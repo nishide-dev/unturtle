@@ -502,20 +502,26 @@ MUTATION_LEDGER: list[dict] = [
     _mutation(
         "rope_extension",
         owner="_extend_rope_if_possible (via _patch_for_diffusion)",
-        target="rotary_emb.inv_freq and RoPE tables (non-persistent buffers)",
-        applicability="every from_pretrained load; NOT applied to directly-instantiated models",
-        before="constructor-initialized inv_freq",
-        after="extended/regenerated inv_freq for max_seq_length",
-        idempotent="unverified",
-        reversible="no",
+        target="rotary_emb / rotary_embedding modules exposing extend_rope_embedding",
+        applicability=(
+            "every from_pretrained load — but no unturtle rotary module defines "
+            "extend_rope_embedding, so the call is a no-op on every current family"
+        ),
+        before="constructor-initialized RoPE state",
+        after="unchanged (no-op; see #174 for the actual load-path buffer defect)",
+        idempotent="yes (no-op)",
+        reversible="n/a",
         scope="object-local",
         success_signal="debug log only",
         liveness_evidence=(
-            "persistence.native_fp probe: identical state_dict, "
-            "buffer_diffs=[*.rotary_emb.inv_freq], output relnorm ~1e-2 — "
-            "load-path vs direct-instantiation divergence"
+            "#174 PR 0 attribution: the inv_freq divergence seen by the "
+            "persistence.native_fp probe is NOT this mutation — transformers' "
+            "from_pretrained re-materializes non-persistent buffers with "
+            "torch.empty_like and Dream/MDLM-DiT _init_weights never "
+            "re-initialize them (verdict ROPE LOAD-PATH CAUSAL, "
+            "docs/artifacts/174-persistence-attribution-v1.json)"
         ),
-        classification="UNDECIDABLE -> #174",
+        classification="linked defect -> #174 (attributed; this row itself is inert)",
         linked_issue=174,
         claims=[(FDM, "rope.extend_rope_embedding(max_seq_length)")],
     ),
@@ -975,7 +981,11 @@ def build_verdicts(sections: dict) -> dict:
                     "output_bit_identical": native_fp.get("output", {}).get(
                         "bit_identical"
                     ),
-                    "attribution": "rope_extension mutation row (load-path only)",
+                    "attribution": (
+                        "#174 PR 0: uninitialized non-persistent rotary buffers "
+                        "after from_pretrained (torch.empty_like + no-op "
+                        "_init_weights), not _extend_rope_if_possible"
+                    ),
                 }
             },
         ),

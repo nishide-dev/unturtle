@@ -134,5 +134,5 @@ def test_process_global_rows_flagged(artifact):
     assert rows["kbit_preparation_env"]["scope"] == "process-global"
     assert rows["autoclass_registration"]["scope"] == "process-global"
     assert rows["default_registry_bootstrap"]["scope"] == "process-global"
-    assert rows["rope_extension"]["classification"] == "UNDECIDABLE -> #174"
+    assert rows["rope_extension"]["classification"].startswith("linked defect -> #174")
     assert rows["rope_extension"]["linked_issue"] == 174
