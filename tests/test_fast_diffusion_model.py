@@ -2247,3 +2247,86 @@ class TestMergedSaveDequantizes:
                 model, "/nonexistent/should-not-write"
             )
         assert saved == []
+
+
+# ---------------------------------------------------------------------------
+# _fast_path_dtype_incompatibility — #177 all-or-nothing dtype gate (CPU)
+# ---------------------------------------------------------------------------
+
+
+class _GuardProbeModel(torch.nn.Module):
+    """Minimal model exposing exactly the structure the dtype gate reads."""
+
+    def __init__(self, embed_dtype=torch.bfloat16, quant_dtypes=(torch.bfloat16,)):
+        super().__init__()
+        self.embed = torch.nn.Embedding(8, 4).to(embed_dtype)
+        for index, quant_dtype in enumerate(quant_dtypes):
+            linear = _make_fake_quantized_linear(4, 4)
+            # _FakeQuantState.dtype is a class attribute; shadow per instance.
+            linear.weight.quant_state.dtype = quant_dtype
+            setattr(self, f"proj{index}", linear)
+
+    def get_input_embeddings(self):
+        return self.embed
+
+
+class TestFastPathDtypeGate:
+    """The #177 gate: quantized models whose hidden-state dtype cannot feed
+    the fused kernels are refused wholesale — and healthy or unresolvable
+    models are not (fail-open, since patchers keep their per-layer gates)."""
+
+    def _gate(self, model):
+        from unturtle.fast_diffusion_model import _fast_path_dtype_incompatibility
+
+        return _fast_path_dtype_incompatibility(model)
+
+    def test_non_quantized_model_is_compatible(self):
+        assert self._gate(torch.nn.Linear(4, 4)) is None
+
+    def test_matching_dtype_is_compatible(self):
+        model = _GuardProbeModel(
+            embed_dtype=torch.bfloat16, quant_dtypes=(torch.bfloat16,)
+        )
+        assert self._gate(model) is None
+
+    def test_fp32_embedding_is_incompatible(self):
+        """The pre-#177 state: peft's kbit prepare upcast the embedding."""
+        model = _GuardProbeModel(
+            embed_dtype=torch.float32, quant_dtypes=(torch.bfloat16,)
+        )
+        assert self._gate(model) == "incompatible_compute_dtype"
+
+    def test_quant_dtype_mismatch_is_incompatible(self):
+        """quant_state.dtype is what the weight DEQUANTIZES to in the fused
+        path (matmul_lora does not cast, unlike the standard bnb forward) —
+        measured on CUDA: bf16 activations against an fp16 quant_state fail."""
+        model = _GuardProbeModel(
+            embed_dtype=torch.bfloat16, quant_dtypes=(torch.float16,)
+        )
+        assert self._gate(model) == "incompatible_compute_dtype"
+
+    def test_mixed_quant_dtypes_are_incompatible(self):
+        """No single hidden-state dtype feeds {bf16, fp16} weights: patching
+        only the matching layers would create the partially-fast model the
+        contract forbids."""
+        model = _GuardProbeModel(
+            embed_dtype=torch.bfloat16,
+            quant_dtypes=(torch.bfloat16, torch.float16),
+        )
+        assert self._gate(model) == "incompatible_compute_dtype"
+
+    def test_raising_get_input_embeddings_fails_open(self):
+        """transformers raises NotImplementedError on exotic layouts; the
+        gate must return a verdict, never propagate."""
+        model = _GuardProbeModel()
+        model.get_input_embeddings = None  # not callable
+
+        raising = _GuardProbeModel()
+
+        def _boom():
+            raise NotImplementedError("not auto-handled")
+
+        raising.get_input_embeddings = _boom
+
+        assert self._gate(model) is None
+        assert self._gate(raising) is None

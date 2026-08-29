@@ -622,10 +622,25 @@ def _fast_path_dtype_incompatibility(model: Any) -> str | None:
     The fused LoRA paths (unsloth ``matmul_lora``) multiply the activation
     directly against the dequantized quantized weight, and the fast attention
     forwards assume 16-bit hidden states. When the hidden-state dtype (its
-    origin: the input embedding) does not match the quantization compute
-    dtype — e.g. after peft's own ``prepare_model_for_kbit_training`` upcast
-    everything to fp32 — none of them can run (#177). Such a model must be
-    left entirely on the standard PEFT path, never partially fast.
+    origin: the input embedding) does not match what the quantized weights
+    dequantize to — e.g. after peft's own ``prepare_model_for_kbit_training``
+    upcast everything to fp32 — none of them can run (#177). Such a model must
+    be left entirely on the standard PEFT path, never partially fast.
+
+    The comparison target is ``quant_state.dtype`` — the dtype the weight
+    actually DEQUANTIZES to in the fused path — deliberately NOT
+    ``Linear4bit.compute_dtype``: the standard bnb forward casts activations
+    to ``compute_dtype``, but ``matmul_lora`` never does. Measured: a bf16
+    activation against an fp16-``quant_state`` weight fails in ``matmul_lora``
+    while the standard forward succeeds, so gating on ``compute_dtype`` would
+    install hooks whose first forward raises — the exact #177 failure shape.
+    Mixed quant dtypes are likewise incompatible: no single hidden-state dtype
+    can feed them all, and the contract is all-or-nothing.
+
+    Never raises. A model whose structure cannot be resolved (no embedding,
+    exotic wrapper) returns ``None`` — fail-open, because the per-layer gates
+    in the patchers still apply and a false ``incompatible`` verdict would
+    silently disable every fast path on a healthy model.
     """
     quantized = _find_quantized_linear_modules(model)
     if not quantized:
@@ -636,12 +651,15 @@ def _fast_path_dtype_incompatibility(model: Any) -> str | None:
     quant_dtypes.discard(None)
     if not quant_dtypes:
         return None
-    get_embeddings = getattr(model, "get_input_embeddings", None)
-    embedding = get_embeddings() if callable(get_embeddings) else None
+    try:
+        get_embeddings = getattr(model, "get_input_embeddings", None)
+        embedding = get_embeddings() if callable(get_embeddings) else None
+    except Exception:  # noqa: BLE001 — e.g. NotImplementedError on exotic models
+        return None
     weight = getattr(embedding, "weight", None)
     if weight is None:
         return None
-    if weight.dtype not in quant_dtypes:
+    if len(quant_dtypes) != 1 or weight.dtype not in quant_dtypes:
         return "incompatible_compute_dtype"
     return None
 
