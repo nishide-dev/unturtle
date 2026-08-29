@@ -358,7 +358,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "d2f6aee533d70299"
+        "torch_cpu_rng_digest": "5c5a6d822a73a090"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -485,7 +485,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "59dc18b4ffd5e191"
+        "torch_cpu_rng_digest": "cf95cd15f2e0b08c"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -612,7 +612,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "503739fde41584e5"
+        "torch_cpu_rng_digest": "bc497ceab184474b"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -739,7 +739,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "57917ecf9bee1351"
+        "torch_cpu_rng_digest": "ff8ba52bfa2db399"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -866,7 +866,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "01674d0808f1b77a"
+        "torch_cpu_rng_digest": "90b505dbda29710c"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -993,7 +993,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "2c4f173f2cc8ef3b"
+        "torch_cpu_rng_digest": "9d4b083d3c85ab82"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1209,63 +1209,63 @@
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel._set_gradient_checkpointing",
-          "status": "present"
+          "resolution": "present"
         },
         "forward": {
           "defined_in": "transformers.models.diffusion_gemma.modeling_diffusion_gemma.DiffusionGemmaForBlockDiffusion",
           "kind": "function",
           "module": "transformers.models.diffusion_gemma.modeling_diffusion_gemma",
           "qualname": "DiffusionGemmaForBlockDiffusion.forward",
-          "status": "present"
+          "resolution": "present"
         },
         "from_pretrained": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "classmethod",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.from_pretrained",
-          "status": "present"
+          "resolution": "present"
         },
         "generate": {
           "defined_in": "unturtle.models.backbones.diffusion_gemma.modeling.UnturtleDiffusionGemmaForBlockDiffusion",
           "kind": "function",
           "module": "unturtle.models.backbones.diffusion_gemma.modeling",
           "qualname": "UnturtleDiffusionGemmaForBlockDiffusion.generate",
-          "status": "present"
+          "resolution": "present"
         },
         "get_input_embeddings": {
           "defined_in": "transformers.modeling_utils.EmbeddingAccessMixin",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "EmbeddingAccessMixin.get_input_embeddings",
-          "status": "present"
+          "resolution": "present"
         },
         "gradient_checkpointing_enable": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.gradient_checkpointing_enable",
-          "status": "present"
+          "resolution": "present"
         },
         "post_init": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.post_init",
-          "status": "present"
+          "resolution": "present"
         },
         "save_pretrained": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.save_pretrained",
-          "status": "present"
+          "resolution": "present"
         },
         "tie_weights": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.tie_weights",
-          "status": "present"
+          "resolution": "present"
         }
       },
       "model_class": "unturtle.models.backbones.diffusion_gemma.modeling.UnturtleDiffusionGemmaForBlockDiffusion",
@@ -1330,63 +1330,63 @@
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel._set_gradient_checkpointing",
-          "status": "present"
+          "resolution": "present"
         },
         "forward": {
           "defined_in": "unturtle.models.backbones.dream.modeling_dream.DreamModel",
           "kind": "function",
           "module": "unturtle.models.backbones.dream.modeling_dream",
           "qualname": "DreamModel.forward",
-          "status": "present"
+          "resolution": "present"
         },
         "from_pretrained": {
           "defined_in": "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel",
           "kind": "classmethod",
           "module": "unturtle.models.backbones.dream.modeling_dream",
           "qualname": "DreamPreTrainedModel.from_pretrained",
-          "status": "present"
+          "resolution": "present"
         },
         "generate": {
           "defined_in": "unturtle.models.backbones.dream.generation_utils.DreamGenerationMixin",
           "kind": "function",
           "module": "unturtle.models.backbones.dream.generation_utils",
           "qualname": "DreamGenerationMixin.generate",
-          "status": "present"
+          "resolution": "present"
         },
         "get_input_embeddings": {
           "defined_in": "unturtle.models.backbones.dream.modeling_dream.DreamModel",
           "kind": "function",
           "module": "unturtle.models.backbones.dream.modeling_dream",
           "qualname": "DreamModel.get_input_embeddings",
-          "status": "present"
+          "resolution": "present"
         },
         "gradient_checkpointing_enable": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.gradient_checkpointing_enable",
-          "status": "present"
+          "resolution": "present"
         },
         "post_init": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.post_init",
-          "status": "present"
+          "resolution": "present"
         },
         "save_pretrained": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.save_pretrained",
-          "status": "present"
+          "resolution": "present"
         },
         "tie_weights": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.tie_weights",
-          "status": "present"
+          "resolution": "present"
         }
       },
       "model_class": "unturtle.models.backbones.dream.modeling_dream.DreamModel",
@@ -1451,63 +1451,63 @@
           "kind": "function",
           "module": "unturtle.models.backbones.llada.modeling_llada",
           "qualname": "LLaDAPreTrainedModel._set_gradient_checkpointing",
-          "status": "present"
+          "resolution": "present"
         },
         "forward": {
           "defined_in": "unturtle.models.backbones.llada.modeling_llada.LLaDAModelLM",
           "kind": "function",
           "module": "unturtle.models.backbones.llada.modeling_llada",
           "qualname": "LLaDAModelLM.forward",
-          "status": "present"
+          "resolution": "present"
         },
         "from_pretrained": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "classmethod",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.from_pretrained",
-          "status": "present"
+          "resolution": "present"
         },
         "generate": {
           "defined_in": "unturtle.models.generation.diffusion_generation_utils.MaskedDiffusionGenerationMixin",
           "kind": "function",
           "module": "unturtle.models.generation.diffusion_generation_utils",
           "qualname": "MaskedDiffusionGenerationMixin.generate",
-          "status": "present"
+          "resolution": "present"
         },
         "get_input_embeddings": {
           "defined_in": "unturtle.models.backbones.llada.modeling_llada.LLaDAModelLM",
           "kind": "function",
           "module": "unturtle.models.backbones.llada.modeling_llada",
           "qualname": "LLaDAModelLM.get_input_embeddings",
-          "status": "present"
+          "resolution": "present"
         },
         "gradient_checkpointing_enable": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.gradient_checkpointing_enable",
-          "status": "present"
+          "resolution": "present"
         },
         "post_init": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.post_init",
-          "status": "present"
+          "resolution": "present"
         },
         "save_pretrained": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.save_pretrained",
-          "status": "present"
+          "resolution": "present"
         },
         "tie_weights": {
           "defined_in": "unturtle.models.backbones.llada.modeling_llada.LLaDAModelLM",
           "kind": "function",
           "module": "unturtle.models.backbones.llada.modeling_llada",
           "qualname": "LLaDAModelLM.tie_weights",
-          "status": "present"
+          "resolution": "present"
         }
       },
       "model_class": "unturtle.models.backbones.llada.modeling_llada.LLaDAModelLM",
@@ -1571,63 +1571,63 @@
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel._set_gradient_checkpointing",
-          "status": "present"
+          "resolution": "present"
         },
         "forward": {
           "defined_in": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTForMaskedDiffusionLM",
           "kind": "function",
           "module": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit",
           "qualname": "MDLMDiTForMaskedDiffusionLM.forward",
-          "status": "present"
+          "resolution": "present"
         },
         "from_pretrained": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "classmethod",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.from_pretrained",
-          "status": "present"
+          "resolution": "present"
         },
         "generate": {
           "defined_in": "unturtle.models.generation.diffusion_generation_utils.MaskedDiffusionGenerationMixin",
           "kind": "function",
           "module": "unturtle.models.generation.diffusion_generation_utils",
           "qualname": "MaskedDiffusionGenerationMixin.generate",
-          "status": "present"
+          "resolution": "present"
         },
         "get_input_embeddings": {
           "defined_in": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTForMaskedDiffusionLM",
           "kind": "function",
           "module": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit",
           "qualname": "MDLMDiTForMaskedDiffusionLM.get_input_embeddings",
-          "status": "present"
+          "resolution": "present"
         },
         "gradient_checkpointing_enable": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.gradient_checkpointing_enable",
-          "status": "present"
+          "resolution": "present"
         },
         "post_init": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.post_init",
-          "status": "present"
+          "resolution": "present"
         },
         "save_pretrained": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.save_pretrained",
-          "status": "present"
+          "resolution": "present"
         },
         "tie_weights": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.tie_weights",
-          "status": "present"
+          "resolution": "present"
         }
       },
       "model_class": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTForMaskedDiffusionLM",
@@ -1689,63 +1689,63 @@
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel._set_gradient_checkpointing",
-          "status": "present"
+          "resolution": "present"
         },
         "forward": {
           "defined_in": "transformers.models.modernbert.modeling_modernbert.ModernBertForMaskedLM",
           "kind": "function",
           "module": "transformers.models.modernbert.modeling_modernbert",
           "qualname": "ModernBertForMaskedLM.forward",
-          "status": "present"
+          "resolution": "present"
         },
         "from_pretrained": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "classmethod",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.from_pretrained",
-          "status": "present"
+          "resolution": "present"
         },
         "generate": {
           "defined_in": "unturtle.models.generation.diffusion_generation_utils.MaskedDiffusionGenerationMixin",
           "kind": "function",
           "module": "unturtle.models.generation.diffusion_generation_utils",
           "qualname": "MaskedDiffusionGenerationMixin.generate",
-          "status": "present"
+          "resolution": "present"
         },
         "get_input_embeddings": {
           "defined_in": "transformers.modeling_utils.EmbeddingAccessMixin",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "EmbeddingAccessMixin.get_input_embeddings",
-          "status": "present"
+          "resolution": "present"
         },
         "gradient_checkpointing_enable": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.gradient_checkpointing_enable",
-          "status": "present"
+          "resolution": "present"
         },
         "post_init": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.post_init",
-          "status": "present"
+          "resolution": "present"
         },
         "save_pretrained": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.save_pretrained",
-          "status": "present"
+          "resolution": "present"
         },
         "tie_weights": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.tie_weights",
-          "status": "present"
+          "resolution": "present"
         }
       },
       "model_class": "unturtle.models.backbones.modernbert.modeling.DiffusionModernBertForMaskedLM",
@@ -1812,63 +1812,63 @@
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel._set_gradient_checkpointing",
-          "status": "present"
+          "resolution": "present"
         },
         "forward": {
           "defined_in": "transformers.models.llama.modeling_llama.LlamaForCausalLM",
           "kind": "function",
           "module": "transformers.models.llama.modeling_llama",
           "qualname": "LlamaForCausalLM.forward",
-          "status": "present"
+          "resolution": "present"
         },
         "from_pretrained": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "classmethod",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.from_pretrained",
-          "status": "present"
+          "resolution": "present"
         },
         "generate": {
           "defined_in": "unturtle.models.generation.diffusion_generation_utils.MaskedDiffusionGenerationMixin",
           "kind": "function",
           "module": "unturtle.models.generation.diffusion_generation_utils",
           "qualname": "MaskedDiffusionGenerationMixin.generate",
-          "status": "present"
+          "resolution": "present"
         },
         "get_input_embeddings": {
           "defined_in": "transformers.modeling_utils.EmbeddingAccessMixin",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "EmbeddingAccessMixin.get_input_embeddings",
-          "status": "present"
+          "resolution": "present"
         },
         "gradient_checkpointing_enable": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.gradient_checkpointing_enable",
-          "status": "present"
+          "resolution": "present"
         },
         "post_init": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.post_init",
-          "status": "present"
+          "resolution": "present"
         },
         "save_pretrained": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.save_pretrained",
-          "status": "present"
+          "resolution": "present"
         },
         "tie_weights": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.tie_weights",
-          "status": "present"
+          "resolution": "present"
         }
       },
       "model_class": "unturtle.models.conversion.a2d.tiny_a2d.modeling_llama.TinyA2DLlamaLMHeadModel",
@@ -1938,63 +1938,63 @@
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel._set_gradient_checkpointing",
-          "status": "present"
+          "resolution": "present"
         },
         "forward": {
           "defined_in": "transformers.models.qwen2.modeling_qwen2.Qwen2ForCausalLM",
           "kind": "function",
           "module": "transformers.models.qwen2.modeling_qwen2",
           "qualname": "Qwen2ForCausalLM.forward",
-          "status": "present"
+          "resolution": "present"
         },
         "from_pretrained": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "classmethod",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.from_pretrained",
-          "status": "present"
+          "resolution": "present"
         },
         "generate": {
           "defined_in": "unturtle.models.generation.diffusion_generation_utils.MaskedDiffusionGenerationMixin",
           "kind": "function",
           "module": "unturtle.models.generation.diffusion_generation_utils",
           "qualname": "MaskedDiffusionGenerationMixin.generate",
-          "status": "present"
+          "resolution": "present"
         },
         "get_input_embeddings": {
           "defined_in": "transformers.modeling_utils.EmbeddingAccessMixin",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "EmbeddingAccessMixin.get_input_embeddings",
-          "status": "present"
+          "resolution": "present"
         },
         "gradient_checkpointing_enable": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.gradient_checkpointing_enable",
-          "status": "present"
+          "resolution": "present"
         },
         "post_init": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.post_init",
-          "status": "present"
+          "resolution": "present"
         },
         "save_pretrained": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.save_pretrained",
-          "status": "present"
+          "resolution": "present"
         },
         "tie_weights": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.tie_weights",
-          "status": "present"
+          "resolution": "present"
         }
       },
       "model_class": "unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen2.TinyA2DQwen2LMHeadModel",
@@ -2064,63 +2064,63 @@
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel._set_gradient_checkpointing",
-          "status": "present"
+          "resolution": "present"
         },
         "forward": {
           "defined_in": "transformers.models.qwen3.modeling_qwen3.Qwen3ForCausalLM",
           "kind": "function",
           "module": "transformers.models.qwen3.modeling_qwen3",
           "qualname": "Qwen3ForCausalLM.forward",
-          "status": "present"
+          "resolution": "present"
         },
         "from_pretrained": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "classmethod",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.from_pretrained",
-          "status": "present"
+          "resolution": "present"
         },
         "generate": {
           "defined_in": "unturtle.models.generation.diffusion_generation_utils.MaskedDiffusionGenerationMixin",
           "kind": "function",
           "module": "unturtle.models.generation.diffusion_generation_utils",
           "qualname": "MaskedDiffusionGenerationMixin.generate",
-          "status": "present"
+          "resolution": "present"
         },
         "get_input_embeddings": {
           "defined_in": "transformers.modeling_utils.EmbeddingAccessMixin",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "EmbeddingAccessMixin.get_input_embeddings",
-          "status": "present"
+          "resolution": "present"
         },
         "gradient_checkpointing_enable": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.gradient_checkpointing_enable",
-          "status": "present"
+          "resolution": "present"
         },
         "post_init": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.post_init",
-          "status": "present"
+          "resolution": "present"
         },
         "save_pretrained": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.save_pretrained",
-          "status": "present"
+          "resolution": "present"
         },
         "tie_weights": {
           "defined_in": "transformers.modeling_utils.PreTrainedModel",
           "kind": "function",
           "module": "transformers.modeling_utils",
           "qualname": "PreTrainedModel.tie_weights",
-          "status": "present"
+          "resolution": "present"
         }
       },
       "model_class": "unturtle.models.conversion.a2d.tiny_a2d.modeling_qwen3.TinyA2DQwen3LMHeadModel",
@@ -2294,8 +2294,8 @@
       "output": {
         "bit_identical": false,
         "volatile": {
-          "max_abs_delta": 0.005457580089569092,
-          "relative_norm": 0.00641678599640727
+          "max_abs_delta": 0.005476832389831543,
+          "relative_norm": 0.007319338154047728
         },
         "within_rel_norm_0p05": true
       },
@@ -2388,7 +2388,7 @@
     }
   },
   "producer": {
-    "commit": "320d1db74336b93d7b83ff21e557080202108bfe",
+    "commit": "addf94cc510a638dedbcec892539815801c0825b",
     "dirty_paths": [],
     "import_root": "<repo>",
     "peft": "0.19.1",
@@ -3602,10 +3602,10 @@
         "reversible": "no API (instance attr could be deleted)",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 156
+                "contains": "layer.self_attn.forward = types.MethodType(",
+                "file": "unturtle/fast_diffusion_model.py"
               }
             ]
           },
@@ -3637,14 +3637,10 @@
         "reversible": "no API",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 180
-              },
-              {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 321
+                "contains": "mlp.forward = types.MethodType(apply_lora_mlp_swiglu, mlp)",
+                "file": "unturtle/fast_diffusion_model.py"
               }
             ]
           },
@@ -3676,10 +3672,10 @@
         "reversible": "reassign stub",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 203
+                "contains": "layer.self_attn.apply_qkv = apply_lora_qkv",
+                "file": "unturtle/fast_diffusion_model.py"
               }
             ]
           },
@@ -3711,10 +3707,10 @@
         "reversible": "reassign stub",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 214
+                "contains": "layer.self_attn.apply_o = apply_lora_o",
+                "file": "unturtle/fast_diffusion_model.py"
               }
             ]
           },
@@ -3746,10 +3742,10 @@
         "reversible": "delete instance attr (no API)",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 259
+                "contains": "self_attn.forward = types.MethodType(DreamAttention_fast_forward",
+                "file": "unturtle/fast_diffusion_model.py"
               }
             ]
           },
@@ -3781,10 +3777,10 @@
         "reversible": "reassign stub",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 282
+                "contains": "self_attn.apply_qkv = apply_lora_qkv_with_bias",
+                "file": "unturtle/fast_diffusion_model.py"
               }
             ]
           },
@@ -3816,14 +3812,10 @@
         "reversible": "reassign stub",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 214
-              },
-              {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 298
+                "contains": "self_attn.apply_o = apply_lora_o",
+                "file": "unturtle/fast_diffusion_model.py"
               }
             ]
           },
@@ -3855,14 +3847,10 @@
         "reversible": "no API",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 180
-              },
-              {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 321
+                "contains": "mlp.forward = types.MethodType(apply_lora_mlp_swiglu, mlp)",
+                "file": "unturtle/fast_diffusion_model.py"
               }
             ]
           },
@@ -3894,10 +3882,10 @@
         "reversible": "no API",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 393
+                "contains": "rotary_emb.forward = types.MethodType(",
+                "file": "unturtle/fast_diffusion_model.py"
               }
             ]
           },
@@ -3929,10 +3917,10 @@
         "reversible": "reassign",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 419
+                "contains": "block.apply_qkv = apply_lora_qkv",
+                "file": "unturtle/fast_diffusion_model.py"
               }
             ]
           },
@@ -3964,10 +3952,10 @@
         "reversible": "reassign",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 435
+                "contains": "block.apply_o = apply_lora_o",
+                "file": "unturtle/fast_diffusion_model.py"
               }
             ]
           },
@@ -4003,14 +3991,14 @@
         "reversible": "reassign + alias removal (no API)",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 476
+                "contains": "block.apply_mlp = apply_lora_mlp_swiglu",
+                "file": "unturtle/fast_diffusion_model.py"
               },
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 474
+                "contains": "block.gate_proj = ff_proj",
+                "file": "unturtle/fast_diffusion_model.py"
               }
             ]
           },
@@ -4042,10 +4030,10 @@
         "reversible": "no API",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 538
+                "contains": "attn.forward = types.MethodType(ModernBertAttention_fast_forward",
+                "file": "unturtle/fast_diffusion_model.py"
               }
             ]
           },
@@ -4081,14 +4069,14 @@
         "reversible": "reassign",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 554
+                "contains": "attn.apply_wo = apply_lora_o",
+                "file": "unturtle/fast_diffusion_model.py"
               },
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 553
+                "contains": "attn.o_proj = attn.Wo",
+                "file": "unturtle/fast_diffusion_model.py"
               }
             ]
           },
@@ -4120,10 +4108,10 @@
         "reversible": "reassign original class (no API)",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 808
+                "contains": "model.__class__ = wrapper_cls",
+                "file": "unturtle/fast_diffusion_model.py"
               }
             ]
           },
@@ -4155,10 +4143,10 @@
         "reversible": "no (original saved as _old_generate by unsloth)",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 816
+                "contains": "model.__dict__.pop(\"generate\", None)",
+                "file": "unturtle/fast_diffusion_model.py"
               }
             ]
           },
@@ -4190,10 +4178,10 @@
         "reversible": "reassign",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 851
+                "contains": "model.generation_config = restored",
+                "file": "unturtle/fast_diffusion_model.py"
               }
             ]
           },
@@ -4229,14 +4217,14 @@
         "reversible": "delete attrs (no API)",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 1807
+                "contains": "module.apply_qkv = _original_apply_qkv",
+                "file": "unturtle/fast_diffusion_model.py"
               },
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 1809
+                "contains": "module.apply_o = _original_apply_o",
+                "file": "unturtle/fast_diffusion_model.py"
               }
             ]
           },
@@ -4268,10 +4256,10 @@
         "reversible": "delete attr",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/models/backbones/modernbert/_fast_forward.py",
-                "line": 111
+                "contains": "module.apply_wo = _original_apply_wo",
+                "file": "unturtle/models/backbones/modernbert/_fast_forward.py"
               }
             ]
           },
@@ -4303,10 +4291,10 @@
         "reversible": "n/a",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/models/backbones/llada/modeling_llada.py",
-                "line": 1128
+                "contains": "self.apply_mlp = LLaDALlamaBlock._default_apply_mlp",
+                "file": "unturtle/models/backbones/llada/modeling_llada.py"
               }
             ]
           },
@@ -4338,10 +4326,10 @@
         "reversible": "original retained on the instance",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/save.py",
-                "line": 61
+                "contains": "original_model.push_to_hub = types.MethodType(",
+                "file": "unturtle/save.py"
               }
             ]
           },
@@ -4373,10 +4361,10 @@
         "reversible": "no",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 1126
+                "contains": "rope.extend_rope_embedding(max_seq_length)",
+                "file": "unturtle/fast_diffusion_model.py"
               }
             ]
           },
@@ -4416,22 +4404,18 @@
         "reversible": "delete attrs",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 1144
+                "contains": "module.max_seq_length = max_seq_length",
+                "file": "unturtle/fast_diffusion_model.py"
               },
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 1140
+                "contains": "internal.max_seq_length = max_seq_length",
+                "file": "unturtle/fast_diffusion_model.py"
               },
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 1142
-              },
-              {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 1157
+                "contains": "model.max_seq_length = max_seq_length",
+                "file": "unturtle/fast_diffusion_model.py"
               }
             ]
           },
@@ -4463,10 +4447,10 @@
         "reversible": "reassign",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/models/backbones/dream/modeling_dream.py",
-                "line": 802
+                "contains": "_model.generation_config = DreamGenerationConfig.from_pretrained(",
+                "file": "unturtle/models/backbones/dream/modeling_dream.py"
               }
             ]
           },
@@ -4506,22 +4490,18 @@
         "reversible": "yes",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/models/backbones/dream/modeling_dream.py",
-                "line": 844
+                "contains": "self.gradient_checkpointing = False",
+                "file": "unturtle/models/backbones/dream/modeling_dream.py"
               },
               {
-                "file": "unturtle/models/backbones/mdlm_dit/modeling_mdlm_dit.py",
-                "line": 283
+                "contains": "self.gradient_checkpointing = False",
+                "file": "unturtle/models/backbones/mdlm_dit/modeling_mdlm_dit.py"
               },
               {
-                "file": "unturtle/models/backbones/llada/modeling_llada.py",
-                "line": 1387
-              },
-              {
-                "file": "unturtle/models/backbones/llada/modeling_llada.py",
-                "line": 1396
+                "contains": "gradient_checkpointing = enable",
+                "file": "unturtle/models/backbones/llada/modeling_llada.py"
               }
             ]
           },
@@ -4553,10 +4533,10 @@
         "reversible": "yes (mode round-trips)",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 1835
+                "contains": "module.gradient_checkpointing = bool(mode)",
+                "file": "unturtle/fast_diffusion_model.py"
               }
             ]
           },
@@ -4588,10 +4568,10 @@
         "reversible": "no (env persists for the process)",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/fast_diffusion_model.py",
-                "line": 1441
+                "contains": "model = prepare_model_for_kbit_training(",
+                "file": "unturtle/fast_diffusion_model.py"
               }
             ]
           },
@@ -4639,26 +4619,26 @@
         "reversible": "no",
         "row": {
           "evidence": {
-            "matched_sites": [
+            "matched_claims": [
               {
-                "file": "unturtle/models/backbones/mdlm_dit/modeling_mdlm_dit.py",
-                "line": 406
+                "contains": "transformers.AutoConfig.register(",
+                "file": "unturtle/models/backbones/mdlm_dit/modeling_mdlm_dit.py"
               },
               {
-                "file": "unturtle/models/backbones/modernbert/modeling.py",
-                "line": 92
+                "contains": "transformers.AutoConfig.register(",
+                "file": "unturtle/models/backbones/modernbert/modeling.py"
               },
               {
-                "file": "unturtle/models/conversion/a2d/tiny_a2d/modeling_llama.py",
-                "line": 217
+                "contains": "transformers.AutoConfig.register(",
+                "file": "unturtle/models/conversion/a2d/tiny_a2d/modeling_llama.py"
               },
               {
-                "file": "unturtle/models/conversion/a2d/tiny_a2d/modeling_qwen2.py",
-                "line": 225
+                "contains": "transformers.AutoConfig.register(",
+                "file": "unturtle/models/conversion/a2d/tiny_a2d/modeling_qwen2.py"
               },
               {
-                "file": "unturtle/models/conversion/a2d/tiny_a2d/modeling_qwen3.py",
-                "line": 225
+                "contains": "transformers.AutoConfig.register(",
+                "file": "unturtle/models/conversion/a2d/tiny_a2d/modeling_qwen3.py"
               }
             ]
           },
@@ -4690,12 +4670,17 @@
         "reversible": "no API",
         "row": {
           "evidence": {
-            "matched_sites": []
+            "matched_claims": [
+              {
+                "contains": "def ensure_default_hub",
+                "file": "unturtle/registry.py"
+              }
+            ]
           },
           "owner": "unturtle import chain (ensure_default_hub)",
-          "reason": "claim not found in production tree",
+          "reason": null,
           "source": "static scan + curated ledger",
-          "status": "unverified"
+          "status": "observed"
         },
         "scope": "process-global",
         "success_signal": "silent",
@@ -4706,7 +4691,7 @@
     "unclaimed_hits": []
   },
   "schema_version": 1,
-  "semantic_digest": "59b609033d1a775c2eff50c6a332620f3965b79e43960db070010fbb3d6157f9",
+  "semantic_digest": "08b77487eaebb89b5887b56f42e8e76086ddb96b41bb06d747a03d7b42d0643f",
   "verdicts": {
     "diffusion_gemma_class_swap": {
       "area": "DiffusionGemma runtime class swap",
