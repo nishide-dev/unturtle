@@ -385,7 +385,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "ab0801e019195860"
+        "torch_cpu_rng_digest": "a8080c0e53b5b2e0"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -539,7 +539,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "569a77e774b7ff68"
+        "torch_cpu_rng_digest": "5f85f6a3f9625b28"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -693,7 +693,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "2b26000d747651bd"
+        "torch_cpu_rng_digest": "f01bb17e4ffb2589"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -847,7 +847,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "294bd8264b59dc51"
+        "torch_cpu_rng_digest": "09f575ec5baec33a"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1001,7 +1001,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "bad6212d768d9da9"
+        "torch_cpu_rng_digest": "be5e056d792e38c4"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1155,7 +1155,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "aa59177a8b635e4a"
+        "torch_cpu_rng_digest": "75e8b98748631beb"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -2456,8 +2456,8 @@
       "output": {
         "bit_identical": false,
         "volatile": {
-          "max_abs_delta": 0.007845096290111542,
-          "relative_norm": 0.01120704784989357
+          "max_abs_delta": 0.005123451352119446,
+          "relative_norm": 0.007502253167331219
         },
         "within_rel_norm_0p05": true
       },
@@ -2550,7 +2550,7 @@
     }
   },
   "producer": {
-    "commit": "3d84422fd1a2ccc7b62d9a7686f0ba72b848b1bf",
+    "commit": "c5f95162f8e9544d2d3a386f7d632f681a0f55cf",
     "dirty_paths": [],
     "import_root": "<repo>",
     "peft": "0.19.1",
@@ -4626,22 +4626,22 @@
         "target": "model.push_to_hub (instance)"
       },
       {
-        "after_identity": "extended/regenerated inv_freq for max_seq_length",
-        "applicability": "every from_pretrained load; NOT applied to directly-instantiated models",
-        "before_identity": "constructor-initialized inv_freq",
+        "after_identity": "unchanged (no-op; see #174 for the actual load-path buffer defect)",
+        "applicability": "every from_pretrained load \u2014 but no unturtle rotary module defines extend_rope_embedding, so the call is a no-op on every current family",
+        "before_identity": "constructor-initialized RoPE state",
         "claims": [
           {
             "contains": "rope.extend_rope_embedding(max_seq_length)",
             "file": "unturtle/fast_diffusion_model.py"
           }
         ],
-        "classification": "UNDECIDABLE -> #174",
-        "idempotent": "unverified",
+        "classification": "linked defect -> #174 (attributed; this row itself is inert)",
+        "idempotent": "yes (no-op)",
         "linked_issue": 174,
-        "liveness_evidence": "persistence.native_fp probe: identical state_dict, buffer_diffs=[*.rotary_emb.inv_freq], output relnorm ~1e-2 \u2014 load-path vs direct-instantiation divergence",
+        "liveness_evidence": "#174 PR 0 attribution: the inv_freq divergence seen by the persistence.native_fp probe is NOT this mutation \u2014 transformers' from_pretrained re-materializes non-persistent buffers with torch.empty_like and Dream/MDLM-DiT _init_weights never re-initialize them (verdict ROPE LOAD-PATH CAUSAL, docs/artifacts/174-persistence-attribution-v1.json)",
         "mutation_id": "rope_extension",
         "owner": "_extend_rope_if_possible (via _patch_for_diffusion)",
-        "reversible": "no",
+        "reversible": "n/a",
         "row": {
           "evidence": {
             "matched_claims": [
@@ -4658,7 +4658,7 @@
         },
         "scope": "object-local",
         "success_signal": "debug log only",
-        "target": "rotary_emb.inv_freq and RoPE tables (non-persistent buffers)"
+        "target": "rotary_emb / rotary_embedding modules exposing extend_rope_embedding"
       },
       {
         "after_identity": "int attribute on every module",
@@ -4974,7 +4974,7 @@
     "unclaimed_hits": []
   },
   "schema_version": 1,
-  "semantic_digest": "03f6a017824d977feea2e84ee09cf87fd5b46e080768d347ecb8fbf570db134a",
+  "semantic_digest": "cf3b0ccfb1b97600e031d5e3d7dfa0d7b30ce412ba00592430ffcf00220e8806",
   "verdicts": {
     "diffusion_gemma_class_swap": {
       "area": "DiffusionGemma runtime class swap",
@@ -5185,7 +5185,7 @@
       "row": {
         "evidence": {
           "persistence.native_fp": {
-            "attribution": "rope_extension mutation row (load-path only)",
+            "attribution": "#174 PR 0: uninitialized non-persistent rotary buffers after from_pretrained (torch.empty_like + no-op _init_weights), not _extend_rope_if_possible",
             "buffer_diffs": [
               "model.layers.0.self_attn.rotary_emb.inv_freq",
               "model.layers.1.self_attn.rotary_emb.inv_freq",
