@@ -127,7 +127,14 @@ def _volatilize(record: dict) -> dict:
         return record
     out = {}
     for key, value in record.items():
-        if key in ("object_id",):
+        if key in (
+            "object_id",
+            "python_rng_digest",
+            "cpu_rng_digest",
+            "cuda_rng_digest",
+        ):
+            # identities and RNG states are per-process; Python's `random` is
+            # entropy-seeded, so its digest differs on every run
             out.setdefault("volatile", {})[key] = value
         elif key in ("output_vs_original", "first_persistent_mismatch") and isinstance(
             value, dict
