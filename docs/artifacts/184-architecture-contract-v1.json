@@ -385,7 +385,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "eecd79716253802e"
+        "torch_cpu_rng_digest": "7a536d0670ded9ca"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -539,7 +539,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "a5c15e186cb99a70"
+        "torch_cpu_rng_digest": "45d203e3b238717b"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -693,7 +693,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "4c2110c24cf17985"
+        "torch_cpu_rng_digest": "7604630a9b81b704"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -847,7 +847,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "bb0856f14dd19f03"
+        "torch_cpu_rng_digest": "868ffe7d33c6d38f"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1001,7 +1001,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "df595ca8c4d28f14"
+        "torch_cpu_rng_digest": "2e94c856ac2095d8"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1155,7 +1155,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "1527960e3e1fa0f8"
+        "torch_cpu_rng_digest": "1e628af5855a8f72"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1259,7 +1259,9 @@
       },
       "modernbert-diffusion": {
         "fast_paths": {
-          "declared": false
+          "declared": true,
+          "resolved": true,
+          "target": "unturtle.models.backbones.modernbert.fast_paths"
         },
         "model_types": [],
         "native": {
@@ -1271,8 +1273,8 @@
         "peft_patcher": {
           "declared": true,
           "resolved": true,
-          "target": "unturtle.fast_diffusion_model._patch_modernbert_peft",
-          "via": "_peft_patcher"
+          "target": "unturtle.models.backbones.modernbert.fast_paths.patch_peft",
+          "via": "fast_paths"
         },
         "wrapper": {
           "declared": false
@@ -2583,7 +2585,7 @@
     }
   },
   "producer": {
-    "commit": "1e9eed16dbe862a3b6d3a4574d3a9b4f79e06a49",
+    "commit": "0d0e94e2e29f3d53b0df95110fb619db9abac812",
     "dirty_paths": [],
     "import_root": "<repo>",
     "peft": "0.19.1",
@@ -4334,26 +4336,26 @@
         "claims": [
           {
             "contains": "attn.forward = types.MethodType(ModernBertAttention_fast_forward",
-            "file": "unturtle/fast_diffusion_model.py"
+            "file": "unturtle/models/backbones/modernbert/fast_paths.py"
           }
         ],
-        "classification": "EXTRACT -> #185",
+        "classification": "EXTRACTED -> modernbert.fast_paths (#185, family provider)",
         "idempotent": "yes",
         "linked_issue": null,
         "liveness_evidence": "ModernBERT tests",
         "mutation_id": "modernbert_attention_fast_forward",
-        "owner": "_patch_modernbert_peft",
+        "owner": "modernbert.fast_paths.patch_peft (#185 provider)",
         "reversible": "no API",
         "row": {
           "evidence": {
             "matched_claims": [
               {
                 "contains": "attn.forward = types.MethodType(ModernBertAttention_fast_forward",
-                "file": "unturtle/fast_diffusion_model.py"
+                "file": "unturtle/models/backbones/modernbert/fast_paths.py"
               }
             ]
           },
-          "owner": "_patch_modernbert_peft",
+          "owner": "modernbert.fast_paths.patch_peft (#185 provider)",
           "reason": null,
           "source": "static scan + curated ledger",
           "status": "observed"
@@ -4369,34 +4371,34 @@
         "claims": [
           {
             "contains": "attn.apply_wo = apply_lora_o",
-            "file": "unturtle/fast_diffusion_model.py"
+            "file": "unturtle/models/backbones/modernbert/fast_paths.py"
           },
           {
             "contains": "attn.o_proj = attn.Wo",
-            "file": "unturtle/fast_diffusion_model.py"
+            "file": "unturtle/models/backbones/modernbert/fast_paths.py"
           }
         ],
-        "classification": "EXTRACT -> #185",
+        "classification": "EXTRACTED -> modernbert.fast_paths (#185, family provider)",
         "idempotent": "yes",
         "linked_issue": null,
         "liveness_evidence": "ModernBERT tests",
         "mutation_id": "modernbert_wo_fast_hook",
-        "owner": "_patch_modernbert_peft",
+        "owner": "modernbert.fast_paths.patch_peft (#185 provider)",
         "reversible": "reassign",
         "row": {
           "evidence": {
             "matched_claims": [
               {
                 "contains": "attn.apply_wo = apply_lora_o",
-                "file": "unturtle/fast_diffusion_model.py"
+                "file": "unturtle/models/backbones/modernbert/fast_paths.py"
               },
               {
                 "contains": "attn.o_proj = attn.Wo",
-                "file": "unturtle/fast_diffusion_model.py"
+                "file": "unturtle/models/backbones/modernbert/fast_paths.py"
               }
             ]
           },
-          "owner": "_patch_modernbert_peft",
+          "owner": "modernbert.fast_paths.patch_peft (#185 provider)",
           "reason": null,
           "source": "static scan + curated ledger",
           "status": "observed"
@@ -5042,7 +5044,7 @@
     "unclaimed_hits": []
   },
   "schema_version": 1,
-  "semantic_digest": "266baf594cab82b9232e2acff3de41a99971307cfb9ddfa1d08f115a915d97a1",
+  "semantic_digest": "1ed5eeea7a297c2d0d76a9bc16816ad735d95f3d16d0e2518f0cfb171dc86cf4",
   "verdicts": {
     "diffusion_gemma_class_swap": {
       "area": "DiffusionGemma runtime class swap",
