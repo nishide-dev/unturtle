@@ -385,7 +385,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "e5183f88e9e47b11"
+        "torch_cpu_rng_digest": "853658549244b8a3"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -539,7 +539,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "08a13d1a5d40907f"
+        "torch_cpu_rng_digest": "9a86e50d555242ba"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -693,7 +693,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "9e32b4e678bc0d53"
+        "torch_cpu_rng_digest": "874f82f87607856e"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -847,7 +847,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "ba045e85d847e042"
+        "torch_cpu_rng_digest": "102053de22b01c67"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1001,7 +1001,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "0547f751b8f7e7fa"
+        "torch_cpu_rng_digest": "294755002ffcfd4d"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1155,7 +1155,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "1ee4c24a0f338771"
+        "torch_cpu_rng_digest": "851cabbb79b5f721"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -2487,17 +2487,55 @@
       "args": {
         "case": "rng_contract"
       },
+      "caller_rng_untouched_by_wrap": true,
+      "case": "rng_contract",
+      "classification": "deterministic_by_random_state",
+      "linked_issue": 188,
       "probe": "process-global",
-      "reason": "AcceleratorError: CUDA error: out of memory\nSearch for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging cons",
-      "status": "blocked"
+      "random_state_argument": 3407,
+      "run_with_preconsumption": {
+        "lora_A_digest": "a14c5f86d60b1824",
+        "rng_after": "29d52a8cb4d7ea75",
+        "rng_before": "29d52a8cb4d7ea75",
+        "rng_consumed": false
+      },
+      "run_without_preconsumption": {
+        "lora_A_digest": "a14c5f86d60b1824",
+        "rng_after": "a57e8655b6988cb4",
+        "rng_before": "a57e8655b6988cb4",
+        "rng_consumed": false
+      },
+      "same_random_state_same_adapters": true,
+      "status": "observed"
     },
     "sdpa": {
       "args": {
         "case": "sdpa"
       },
+      "available_backends": {
+        "cudnn": true,
+        "flash": true,
+        "math": true,
+        "mem_efficient": true
+      },
+      "case": "sdpa",
+      "deterministic": {
+        "cudnn_benchmark": false,
+        "cudnn_deterministic": false,
+        "deterministic_algorithms": false
+      },
+      "environment": {
+        "CUBLAS_WORKSPACE_CONFIG": null,
+        "TORCH_CUDNN_SDPA_ENABLED": null
+      },
+      "policy": "numeric parity cells that route through scaled_dot_product_attention must either pin the backend (torch.nn.attention.sdpa_kernel) or compare below attention at the unit level; the backend a process happens to select is not a contract value (#187: layer-0 attention output sum flipped 33.83/22.68 on identical inputs).",
       "probe": "process-global",
-      "reason": "AcceleratorError: CUDA error: out of memory\nSearch for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging cons",
-      "status": "blocked"
+      "status": "observed",
+      "tf32": {
+        "allow_bf16_reduced_precision_reduction": true,
+        "cudnn_allow_tf32": true,
+        "matmul_allow_tf32": false
+      }
     },
     "unsloth_environment_mutation": {
       "UNSLOTH_MIXED_PRECISION_after": "float32",
@@ -2509,7 +2547,7 @@
     }
   },
   "producer": {
-    "commit": "31f828a47f057ffe92aabb93ac27cb27898ab418",
+    "commit": "66fea6e73ca8957bf41c8dc027c24bba28a448cc",
     "dirty_paths": [],
     "import_root": "<repo>",
     "peft": "0.19.1",
@@ -2957,7 +2995,7 @@
         ],
         "cuda_visible_devices": "1",
         "cwd": "<repo>",
-        "exit_code": 2
+        "exit_code": 0
       },
       {
         "args": {
@@ -2975,7 +3013,7 @@
         ],
         "cuda_visible_devices": "1",
         "cwd": "<repo>",
-        "exit_code": 2
+        "exit_code": 0
       },
       {
         "args": {},
@@ -2991,7 +3029,7 @@
         ],
         "cuda_visible_devices": "1",
         "cwd": "<repo>",
-        "exit_code": 2
+        "exit_code": 0
       }
     ],
     "python": "3.12.7",
@@ -3720,9 +3758,108 @@
   },
   "registry_hub": {
     "args": {},
+    "explicit_builtin_bootstrap": {
+      "bootstrapped_flag": true,
+      "deterministic_across_two_bootstraps": true,
+      "ordered_axis_names": {
+        "backbone_integrations": [
+          "llada",
+          "mdlm-dit",
+          "dream",
+          "tiny-a2d-llama",
+          "tiny-a2d-qwen2",
+          "tiny-a2d-qwen3",
+          "modernbert-diffusion",
+          "diffusion-gemma"
+        ],
+        "conversions": [
+          "tiny_a2d",
+          "prediff_hybrid"
+        ],
+        "generation_algorithms": [
+          "block_ar",
+          "bd3lm",
+          "block_decode",
+          "mdlm",
+          "flowlm",
+          "ladiff",
+          "dfm"
+        ],
+        "methods": [
+          "mdlm",
+          "dfm",
+          "flowlm",
+          "tiny_a2d",
+          "prediff_hybrid"
+        ],
+        "post_training_recipes": [
+          "opd"
+        ],
+        "processes": [
+          "masked",
+          "discrete_flow",
+          "continuous_flow"
+        ],
+        "training_recipes": [
+          "mdlm",
+          "dfm",
+          "flowlm"
+        ]
+      },
+      "status": "observed",
+      "surroundings": {
+        "autoclass_changed": false,
+        "default_hub_changed": false,
+        "environ_changed_keys": [],
+        "python_rng_consumed": false,
+        "torch_rng_consumed": false
+      }
+    },
+    "fresh_empty_hub": {
+      "all_axes_empty": true,
+      "axis_names": {
+        "backbone_integrations": [],
+        "conversions": [],
+        "generation_algorithms": [],
+        "methods": [],
+        "post_training_recipes": [],
+        "processes": [],
+        "training_recipes": []
+      },
+      "bootstrapped_flag": false,
+      "status": "observed",
+      "surroundings": {
+        "autoclass_changed": false,
+        "default_hub_changed": false,
+        "environ_changed_keys": [],
+        "python_rng_consumed": false,
+        "torch_rng_consumed": false
+      }
+    },
+    "hub_isolation": {
+      "backing_storage_shared": false,
+      "duplicate_registration_raised": "DuplicateRegistrationError: process 'probe-sentinel-a' is already registered",
+      "registry_objects_shared": false,
+      "sentinel_leaked_to_default_hub": false,
+      "sentinel_leaked_to_other_hub": false,
+      "sentinel_visible_in_registering_hub": true,
+      "status": "observed",
+      "surroundings": {
+        "autoclass_changed": false,
+        "default_hub_changed": false,
+        "environ_changed_keys": [],
+        "python_rng_consumed": false,
+        "torch_rng_consumed": false
+      }
+    },
     "probe": "registry-hub",
-    "reason": "AcceleratorError: CUDA error: out of memory\nSearch for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging cons",
-    "status": "blocked"
+    "repeat_bootstrap": {
+      "axis_counts_unchanged": true,
+      "behavior": "duplicate_rejection",
+      "raised": "ValueError: hub is already bootstrapped; builtin bootstrap is not idempotent by design \u2014 create a fresh RegistryHub instead",
+      "status": "observed"
+    },
+    "status": "observed"
   },
   "runtime_mutations": {
     "rows": [
@@ -4869,7 +5006,7 @@
     "unclaimed_hits": []
   },
   "schema_version": 1,
-  "semantic_digest": "7688b1672f421d2cff7fdda3e6939527990fc4dc31a089af99bd14b8b6782f56",
+  "semantic_digest": "232dabe059dafd27b4a8e0f1beca2d2514e985146f840b6487951ae4a0c5881d",
   "verdicts": {
     "diffusion_gemma_class_swap": {
       "area": "DiffusionGemma runtime class swap",
@@ -4986,7 +5123,7 @@
       "row": {
         "evidence": {
           "process_global_state": "rng_contract row: same random_state, different pre-RNG consumption, SAME lora_A digests; caller RNG untouched",
-          "rng_contract_classification": null
+          "rng_contract_classification": "deterministic_by_random_state"
         },
         "owner": "#184",
         "reason": null,
@@ -5040,11 +5177,11 @@
       "row": {
         "evidence": {
           "registry_hub": {
-            "bootstrap_deterministic": null,
-            "fresh_empty_hub": null,
-            "hubs_isolated": false,
+            "bootstrap_deterministic": true,
+            "fresh_empty_hub": true,
+            "hubs_isolated": true,
             "note": "re-bootstrap of the same hub is DUPLICATE REJECTION (ValueError, counts unchanged), not idempotent \u2014 frozen as observed; #185/#186 and external plugins can rely on supplied hubs being empty, deterministic to bootstrap, and storage-isolated",
-            "repeat_bootstrap_behavior": null
+            "repeat_bootstrap_behavior": "duplicate_rejection"
           }
         },
         "owner": "#184",
