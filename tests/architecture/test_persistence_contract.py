@@ -153,7 +153,7 @@ def test_generation_reload_row(artifact):
     row = artifact["persistence"]["generation_reload"]
     assert row["status"] == "observed"
     assert row["tokens_equal"] is True
-    # the reloaded model carries DreamGenerationConfig, yet the default-config
-    # path crashes — the #189 evidence
+    # the reloaded model carries DreamGenerationConfig, and since the #189 fix
+    # the default-config path consults it — the reload default run succeeds
     assert row["generation_config_class_after_reload"] == "DreamGenerationConfig"
-    assert row["default_config_reload_raised"] is not None
+    assert row["default_config_reload_raised"] is None

@@ -164,6 +164,34 @@ class DreamGenerationConfig(GenerationConfig):
 
         self.validate(is_init=True)
 
+    @classmethod
+    def from_model_config(cls, model_config) -> "DreamGenerationConfig":
+        """Build the default DreamGenerationConfig from a model config.
+
+        transformers 5.x ``GenerationConfig.from_model_config`` hardcodes
+        ``default_generation_config = GenerationConfig()`` (the BASE class) and
+        then reads every attribute of the *subclass* instance off it — for any
+        subclass with extra fields (``eps``, ``steps``, …) that raises
+        ``AttributeError`` (#189). This override reproduces the construction
+        core (``from_dict`` with the subclass) and skips the base-default
+        comparison loop; every model-config attribute the loop could have
+        copied is already consumed by ``from_dict``/``__init__`` (Dream pops
+        ``mask/pad/bos/eos_token_id`` explicitly).
+        """
+        config_dict = (
+            model_config.to_dict()
+            if not isinstance(model_config, dict)
+            else dict(model_config)
+        )
+        config_dict.pop("_from_model_config", None)
+        # None values fall back to the generation-config defaults, as upstream.
+        config_dict = {k: v for k, v in config_dict.items() if v is not None}
+        generation_config = cls.from_dict(
+            config_dict, return_unused_kwargs=False, _from_model_config=True
+        )
+        generation_config._original_object_hash = hash(generation_config)
+        return generation_config
+
     def validate(self, is_init: bool = False, **kwargs):
         if self.parallel_decode and not self.use_cache:
             raise ValueError("`parallel_decode=True` requires `use_cache=True`.")
@@ -272,14 +300,38 @@ class DreamGenerationMixin(BlockDecodeMixin):
         Prepares the base generation config, then applies any generation configuration options from kwargs. This
         function handles retrocompatibility with respect to configuration files.
         """
-        # priority: `generation_config` argument > `model.generation_config` (the default generation config)
+        # Priority (#189, explicit contract):
+        #   1. the explicit ``generation_config`` argument;
+        #   2. the model-attached ``self.generation_config`` (checkpoint
+        #      defaults — a Dream checkpoint attaches DreamGenerationConfig via
+        #      the from_pretrained family hook; an in-memory model carries the
+        #      plain GenerationConfig from the transformers 5.x postamble);
+        #   3. ``DreamGenerationConfig.from_model_config(self.config)``.
+        # Whatever the source, the result is a DreamGenerationConfig: a plain
+        # GenerationConfig is adopted field-for-field with the Dream diffusion
+        # defaults (eps/steps/alg/…) filled in — previously such a config
+        # crashed the sampler with AttributeError: eps.
         using_model_generation_config = False
         if generation_config is None:
-            generation_config = cast(
-                DreamGenerationConfig,
-                DreamGenerationConfig.from_model_config(self.config),
-            )
+            attached = getattr(self, "generation_config", None)
+            if attached is not None:
+                generation_config = attached
+            else:
+                generation_config = cast(
+                    DreamGenerationConfig,
+                    DreamGenerationConfig.from_model_config(self.config),
+                )
             using_model_generation_config = True
+        if not isinstance(generation_config, DreamGenerationConfig):
+            # None entries fall back to the Dream defaults (a plain 5.x config
+            # serializes unset fields as None, e.g. num_return_sequences).
+            generation_config = DreamGenerationConfig(
+                **{
+                    k: v
+                    for k, v in generation_config.to_dict().items()
+                    if v is not None
+                }
+            )
 
         # `torch.compile` can't compile `copy.deepcopy`, arguments in `kwargs` that are part of `generation_config`
         # will mutate the object with `.update`. As such, passing these arguments through `kwargs` is disabled -- an
