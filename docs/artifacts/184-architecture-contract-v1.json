@@ -385,7 +385,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "ca507798894e3ae8"
+        "torch_cpu_rng_digest": "eecd79716253802e"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -539,7 +539,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "414dcb6e47ab3ee3"
+        "torch_cpu_rng_digest": "a5c15e186cb99a70"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -693,7 +693,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "41030802228130bd"
+        "torch_cpu_rng_digest": "4c2110c24cf17985"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -847,7 +847,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "0cdaf6c8c0ddd205"
+        "torch_cpu_rng_digest": "bb0856f14dd19f03"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1001,7 +1001,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "9dbd66fc53931950"
+        "torch_cpu_rng_digest": "df595ca8c4d28f14"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1155,7 +1155,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "347197cca3851c49"
+        "torch_cpu_rng_digest": "1527960e3e1fa0f8"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1166,6 +1166,9 @@
     "args": {},
     "integrations": {
       "diffusion-gemma": {
+        "fast_paths": {
+          "declared": false
+        },
         "model_types": [
           "diffusion_gemma"
         ],
@@ -1183,6 +1186,9 @@
         }
       },
       "dream": {
+        "fast_paths": {
+          "declared": false
+        },
         "model_types": [
           "Dream",
           "dream"
@@ -1199,13 +1205,17 @@
         "peft_patcher": {
           "declared": true,
           "resolved": true,
-          "target": "unturtle.fast_diffusion_model._patch_dream_peft"
+          "target": "unturtle.fast_diffusion_model._patch_dream_peft",
+          "via": "_peft_patcher"
         },
         "wrapper": {
           "declared": false
         }
       },
       "llada": {
+        "fast_paths": {
+          "declared": false
+        },
         "model_types": [
           "llada"
         ],
@@ -1220,13 +1230,17 @@
         "peft_patcher": {
           "declared": true,
           "resolved": true,
-          "target": "unturtle.fast_diffusion_model._patch_llada_peft"
+          "target": "unturtle.fast_diffusion_model._patch_llada_peft",
+          "via": "_peft_patcher"
         },
         "wrapper": {
           "declared": false
         }
       },
       "mdlm-dit": {
+        "fast_paths": {
+          "declared": false
+        },
         "model_types": [
           "mdlm-dit"
         ],
@@ -1244,6 +1258,9 @@
         }
       },
       "modernbert-diffusion": {
+        "fast_paths": {
+          "declared": false
+        },
         "model_types": [],
         "native": {
           "declared": false
@@ -1254,13 +1271,19 @@
         "peft_patcher": {
           "declared": true,
           "resolved": true,
-          "target": "unturtle.fast_diffusion_model._patch_modernbert_peft"
+          "target": "unturtle.fast_diffusion_model._patch_modernbert_peft",
+          "via": "_peft_patcher"
         },
         "wrapper": {
           "declared": false
         }
       },
       "tiny-a2d-llama": {
+        "fast_paths": {
+          "declared": true,
+          "resolved": true,
+          "target": "unturtle.models.conversion.a2d.tiny_a2d.fast_paths"
+        },
         "model_types": [
           "tiny-a2d-llama"
         ],
@@ -1274,13 +1297,21 @@
           "tiny-a2d-llama"
         ],
         "peft_patcher": {
-          "declared": false
+          "declared": true,
+          "resolved": true,
+          "target": "unturtle.models.conversion.a2d.tiny_a2d.fast_paths.patch_peft",
+          "via": "fast_paths"
         },
         "wrapper": {
           "declared": false
         }
       },
       "tiny-a2d-qwen2": {
+        "fast_paths": {
+          "declared": true,
+          "resolved": true,
+          "target": "unturtle.models.conversion.a2d.tiny_a2d.fast_paths"
+        },
         "model_types": [
           "tiny-a2d-qwen2"
         ],
@@ -1294,13 +1325,21 @@
           "tiny-a2d-qwen2"
         ],
         "peft_patcher": {
-          "declared": false
+          "declared": true,
+          "resolved": true,
+          "target": "unturtle.models.conversion.a2d.tiny_a2d.fast_paths.patch_peft",
+          "via": "fast_paths"
         },
         "wrapper": {
           "declared": false
         }
       },
       "tiny-a2d-qwen3": {
+        "fast_paths": {
+          "declared": true,
+          "resolved": true,
+          "target": "unturtle.models.conversion.a2d.tiny_a2d.fast_paths"
+        },
         "model_types": [
           "tiny-a2d-qwen3"
         ],
@@ -1314,7 +1353,10 @@
           "tiny-a2d-qwen3"
         ],
         "peft_patcher": {
-          "declared": false
+          "declared": true,
+          "resolved": true,
+          "target": "unturtle.models.conversion.a2d.tiny_a2d.fast_paths.patch_peft",
+          "via": "fast_paths"
         },
         "wrapper": {
           "declared": false
@@ -2541,7 +2583,7 @@
     }
   },
   "producer": {
-    "commit": "831e67f14d9850737e17e1e03ced6dace8c4b5d5",
+    "commit": "1e9eed16dbe862a3b6d3a4574d3a9b4f79e06a49",
     "dirty_paths": [],
     "import_root": "<repo>",
     "peft": "0.19.1",
@@ -5000,7 +5042,7 @@
     "unclaimed_hits": []
   },
   "schema_version": 1,
-  "semantic_digest": "81f1eea54130af4c4dbb5f214c49e652fbb84f71d1febcf9ff4194f97d96518c",
+  "semantic_digest": "266baf594cab82b9232e2acff3de41a99971307cfb9ddfa1d08f115a915d97a1",
   "verdicts": {
     "diffusion_gemma_class_swap": {
       "area": "DiffusionGemma runtime class swap",
