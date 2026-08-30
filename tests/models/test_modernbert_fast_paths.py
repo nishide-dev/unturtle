@@ -344,15 +344,21 @@ PARTIAL_CASES = {
 }
 
 
+@pytest.mark.gpu
 @pytest.mark.parametrize("case", sorted(PARTIAL_CASES))
 @pytest.mark.parametrize(
     "lora_dropout,bias", [(0.0, "none"), (0.1, "none"), (0.0, "all")]
 )
 def test_partial_eligibility_matches_oracle(monkeypatch, case, lora_dropout, bias):
     """Counts, warnings (text AND order) and installed identities must match the
-    verbatim oracle across the eligibility matrix — on CUDA when available,
-    otherwise on CPU where both install only stubs."""
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    verbatim oracle across the eligibility matrix.
+
+    CUDA-gated: on CPU both implementations return before the eligibility loop,
+    so every case degenerates to the same trivial pass — green without testing
+    the gate (the CPU contract is covered by the façade CPU test above)."""
+    if not torch.cuda.is_available():
+        pytest.skip("the eligibility matrix only discriminates on CUDA")
+    device = "cuda"
     from unturtle.models.backbones.modernbert import fast_paths
 
     def run(patcher, warn_target):
@@ -370,8 +376,6 @@ def test_partial_eligibility_matches_oracle(monkeypatch, case, lora_dropout, bia
     counts_old = oracle_patch_modernbert_peft(model, lora_dropout, bias)
     old = (counts_old, tuple(seen_old), _fast_identity(model))
     assert new == old, (case, lora_dropout, bias, new, old)
-    if device == "cpu":
-        assert new[0] == (0, 0, 0)
 
 
 def test_missing_structure_matches_oracle_failopen(monkeypatch):
@@ -494,3 +498,20 @@ def test_report_line_matches_oracle_verbatim():
         assert fast_paths.report(model, counts) == oracle_modernbert_report(
             model, counts
         ), counts
+
+
+def test_report_on_untraversable_model_is_failopen_zero_layers():
+    """The one deliberate divergence from the oracle: on an untraversable model
+    the oracle's report crashed (AttributeError via the deep path); the provider
+    reports 0 layers instead. Pin the exact text."""
+    from unturtle.models.backbones.modernbert import fast_paths
+
+    odd = types.SimpleNamespace(
+        base_model=types.SimpleNamespace(model=types.SimpleNamespace())
+    )
+    line = fast_paths.report(odd, (0, 0, 0))
+    assert line.startswith(
+        "FastDiffusionModel (ModernBERT) patched 0 layers with 0 Wo"
+    ), line
+    with pytest.raises(AttributeError):
+        oracle_modernbert_report(odd, (0, 0, 0))

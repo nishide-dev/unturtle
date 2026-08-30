@@ -23,8 +23,10 @@ shapes differ from what ``apply_lora_qkv`` / ``apply_lora_mlp_swiglu`` expect
 
 Family-specific behaviors preserved verbatim:
 
-- ``apply_wo`` stubs are installed on CPU *and* CUDA, before any device gate,
-  so ``ModernBertAttention_fast_forward`` can always dispatch through them;
+- when the structure resolves, ``apply_wo`` stubs are installed on CPU *and*
+  CUDA, before the device gate, so ``ModernBertAttention_fast_forward`` can
+  always dispatch through them (on an untraversable structure stubs are
+  skipped — exactly as on ``main``, where the lookup failed first);
 - an untraversable structure warns and installs nothing (the family's
   historical fail-open), rather than raising;
 - ``Wo`` failing the bias/DoRA gates is silently left standard — only the
