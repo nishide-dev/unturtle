@@ -361,7 +361,7 @@
           "unsloth_zoo",
           "unturtle"
         ],
-        "tracked_count": 2892
+        "tracked_count": 2893
       },
       "modules_before": {
         "top_level": [],
@@ -385,7 +385,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "d03c3d2d0776de44"
+        "torch_cpu_rng_digest": "f0c584ab00824ec5"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -515,7 +515,7 @@
           "unsloth_zoo",
           "unturtle"
         ],
-        "tracked_count": 2892
+        "tracked_count": 2893
       },
       "modules_before": {
         "top_level": [],
@@ -539,7 +539,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "1b6b78f5835b2edb"
+        "torch_cpu_rng_digest": "2fa88e164e7679c3"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -669,7 +669,7 @@
           "unsloth_zoo",
           "unturtle"
         ],
-        "tracked_count": 2892
+        "tracked_count": 2893
       },
       "modules_before": {
         "top_level": [],
@@ -693,7 +693,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "eba03c075340673a"
+        "torch_cpu_rng_digest": "835ccd6716ed8fd8"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -823,7 +823,7 @@
           "unsloth_zoo",
           "unturtle"
         ],
-        "tracked_count": 2892
+        "tracked_count": 2893
       },
       "modules_before": {
         "top_level": [],
@@ -847,7 +847,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "2f1213314a30e1a3"
+        "torch_cpu_rng_digest": "feaa92c82b018c6a"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -977,7 +977,7 @@
           "unsloth_zoo",
           "unturtle"
         ],
-        "tracked_count": 2893
+        "tracked_count": 2894
       },
       "modules_before": {
         "top_level": [],
@@ -1001,7 +1001,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "21c5d3eb29546b31"
+        "torch_cpu_rng_digest": "7d80a534226f5e83"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1131,7 +1131,7 @@
           "unsloth_zoo",
           "unturtle"
         ],
-        "tracked_count": 2892
+        "tracked_count": 2893
       },
       "modules_before": {
         "top_level": [],
@@ -1155,7 +1155,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "c79423bf3fb20663"
+        "torch_cpu_rng_digest": "87145466afb84b7a"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -2589,7 +2589,7 @@
     }
   },
   "producer": {
-    "commit": "e88d1a50673e8a82100572c58db5fb44b11efeb5",
+    "commit": "1081cd78e49a0dd33129fdcc544eeeb6b1a72ea2",
     "dirty_paths": [],
     "import_root": "<repo>",
     "peft": "0.19.1",
@@ -4749,7 +4749,7 @@
         "claims": [
           {
             "contains": "rope.extend_rope_embedding(max_seq_length)",
-            "file": "unturtle/fast_diffusion_model.py"
+            "file": "unturtle/models/loading.py"
           }
         ],
         "classification": "linked defect -> #174 (attributed and FIXED: Rotary/DreamRotaryEmbedding reset_parameters via _init_weights; this row itself is inert)",
@@ -4757,18 +4757,18 @@
         "linked_issue": 174,
         "liveness_evidence": "#174 PR 0 attribution: the inv_freq divergence seen by the persistence.native_fp probe is NOT this mutation \u2014 transformers' from_pretrained re-materializes non-persistent buffers with torch.empty_like and Dream/MDLM-DiT _init_weights never re-initialize them (verdict ROPE LOAD-PATH CAUSAL, docs/artifacts/174-persistence-attribution-v1.json)",
         "mutation_id": "rope_extension",
-        "owner": "_extend_rope_if_possible (via _patch_for_diffusion)",
+        "owner": "loading._extend_rope_if_possible (via loading._patch_for_diffusion; #185 PR 3)",
         "reversible": "n/a",
         "row": {
           "evidence": {
             "matched_claims": [
               {
                 "contains": "rope.extend_rope_embedding(max_seq_length)",
-                "file": "unturtle/fast_diffusion_model.py"
+                "file": "unturtle/models/loading.py"
               }
             ]
           },
-          "owner": "_extend_rope_if_possible (via _patch_for_diffusion)",
+          "owner": "loading._extend_rope_if_possible (via loading._patch_for_diffusion; #185 PR 3)",
           "reason": null,
           "source": "static scan + curated ledger",
           "status": "observed"
@@ -4819,15 +4819,15 @@
         "claims": [
           {
             "contains": "module.max_seq_length = max_seq_length",
-            "file": "unturtle/fast_diffusion_model.py"
+            "file": "unturtle/models/loading.py"
           },
           {
             "contains": "internal.max_seq_length = max_seq_length",
-            "file": "unturtle/fast_diffusion_model.py"
+            "file": "unturtle/models/loading.py"
           },
           {
             "contains": "model.max_seq_length = max_seq_length",
-            "file": "unturtle/fast_diffusion_model.py"
+            "file": "unturtle/models/loading.py"
           }
         ],
         "classification": "EXTRACT -> #185",
@@ -4835,26 +4835,26 @@
         "linked_issue": null,
         "liveness_evidence": "unsloth GC reads it",
         "mutation_id": "max_seq_length_propagation",
-        "owner": "_propagate_max_seq_length",
+        "owner": "loading._propagate_max_seq_length",
         "reversible": "delete attrs",
         "row": {
           "evidence": {
             "matched_claims": [
               {
                 "contains": "module.max_seq_length = max_seq_length",
-                "file": "unturtle/fast_diffusion_model.py"
+                "file": "unturtle/models/loading.py"
               },
               {
                 "contains": "internal.max_seq_length = max_seq_length",
-                "file": "unturtle/fast_diffusion_model.py"
+                "file": "unturtle/models/loading.py"
               },
               {
                 "contains": "model.max_seq_length = max_seq_length",
-                "file": "unturtle/fast_diffusion_model.py"
+                "file": "unturtle/models/loading.py"
               }
             ]
           },
-          "owner": "_propagate_max_seq_length",
+          "owner": "loading._propagate_max_seq_length",
           "reason": null,
           "source": "static scan + curated ledger",
           "status": "observed"
@@ -5126,7 +5126,7 @@
     "unclaimed_hits": []
   },
   "schema_version": 1,
-  "semantic_digest": "741c1246d19531e3fb148ee5b0f06d7d8a767e9b16acdf9e9626eae3a49413fb",
+  "semantic_digest": "4e8090a0524dbdfaa070f2ce2579ff3286f030901286413b8314f16231979157",
   "verdicts": {
     "diffusion_gemma_class_swap": {
       "area": "DiffusionGemma runtime class swap",

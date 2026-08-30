@@ -321,7 +321,10 @@ def test_same_forward_and_backward_bit_for_bit(pair):
         for k in g_new:
             assert torch.equal(g_new[k], g_old_1[k]), k
     else:
-        assert cross <= 4 * self_env, (cross, self_env)
+        # 8x: the self-envelope is itself a stochastic estimate from one
+        # repeat; 4x flaked (~1 in 5 full-suite runs) while a real divergence
+        # is orders of magnitude larger than the envelope.
+        assert cross <= 8 * self_env, (cross, self_env)
 
 
 def test_random_state_contract_save_and_reload_identical(pair, tmp_path):

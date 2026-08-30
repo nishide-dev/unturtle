@@ -58,6 +58,7 @@ import torch
 from peft.tuners.lora import Linear as LoraLinear
 from transformers import AutoConfig, AutoTokenizer
 
+import unturtle.save as _save
 from unturtle.models.backbones.dream.modeling_dream import (
     DreamAttention_fast_forward,
 )
@@ -108,7 +109,16 @@ from unturtle.models.integrations.peft_preparation import (
     get_gradient_checkpointing_mode as _get_gradient_checkpointing_mode,
 )
 from unturtle.models.integrations.peft_preparation import (
+    inference_mode as _inference_mode,
+)
+from unturtle.models.integrations.peft_preparation import (
     install_apply_stubs as _install_apply_stubs,
+)
+from unturtle.models.integrations.peft_preparation import (
+    set_inference_mode as _set_inference_mode,
+)
+from unturtle.models.integrations.peft_preparation import (
+    set_training_mode as _set_training_mode,
 )
 from unturtle.models.integrations.peft_preparation import (
     wrap_with_peft_seeded as _wrap_with_peft_seeded,
@@ -119,6 +129,33 @@ from unturtle.models.integrations.reports import (
     PatchReport,
     PreparedPeftModel,
     SupportResult,
+)
+from unturtle.models.loading import (
+    _LOAD_PATH_TRACE,
+    _automodel_loaders,
+    _extend_rope_if_possible,
+    _import_fastmodel,
+    _integration_name_for,
+    _load_model_auto,
+    _load_model_auto_traced,
+    _load_model_with_optional_4bit_fallback,
+    _load_native,
+    _load_tokenizer,
+    _load_via_automodel,
+    _load_via_fastmodel,
+    _native_model_classes,
+    _patch_for_diffusion,
+    _propagate_max_seq_length,
+    load_model,
+)
+from unturtle.save import (
+    dequantize_merged_model_ as _dequantize_merged_model_,
+)
+from unturtle.save import (
+    find_quantized_linear_modules as _find_quantized_linear_modules,
+)
+from unturtle.save import (
+    import_bitsandbytes as _import_bitsandbytes,
 )
 from unturtle.save import patch_saving_functions
 
@@ -134,52 +171,6 @@ _logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Internal patching helpers
 # ---------------------------------------------------------------------------
-
-
-def _load_model_with_optional_4bit_fallback(
-    loader: Any,
-    model_name: str,
-    load_kwargs: dict[str, Any],
-) -> Any:
-    try:
-        return loader.from_pretrained(model_name, **load_kwargs)
-    except torch.cuda.OutOfMemoryError:
-        # OOM is not a 4-bit-specific failure — a full-precision retry needs
-        # MORE memory and is doomed. Surface the real error to the user.
-        raise
-    except Exception as exc:  # noqa: BLE001
-        if "quantization_config" not in load_kwargs:
-            raise
-
-        fallback_kwargs = dict(load_kwargs)
-        fallback_kwargs.pop("quantization_config", None)
-        fallback_kwargs.pop("device_map", None)
-        _warn_once(
-            "FastDiffusionModel: 4-bit loading failed "
-            f"({type(exc).__name__}: {exc}) — retrying with full-precision loading."
-        )
-        return loader.from_pretrained(model_name, **fallback_kwargs)
-
-
-def _import_bitsandbytes() -> Any:
-    """Import hook for bitsandbytes (separate function for testability)."""
-    import bitsandbytes as bnb
-
-    return bnb
-
-
-def _find_quantized_linear_modules(model: Any) -> list[tuple[str, Any]]:
-    """Return ``(name, module)`` for modules holding bnb-quantized weights.
-
-    Detection is by the ``weight.quant_state`` attribute (present on
-    ``bitsandbytes`` ``Params4bit``), not by isinstance, so it works without
-    importing bitsandbytes and with test stubs.
-    """
-    return [
-        (name, module)
-        for name, module in model.named_modules()
-        if getattr(getattr(module, "weight", None), "quant_state", None) is not None
-    ]
 
 
 def _fast_path_support(model: Any) -> SupportResult:
@@ -264,104 +255,11 @@ def _fast_path_dtype_incompatibility(model: Any) -> str | None:
     return support.reason if support.status == "unsupported" else None
 
 
-def _dequantize_merged_model_(model: Any) -> Any:
-    """Dequantize bnb 4-bit Linear modules in *model* to 16-bit, in place.
-
-    ``merge_and_unload()`` on a 4-bit-loaded PEFT model returns a base model
-    whose Linear layers are still ``bnb.nn.Linear4bit`` — saving that as a
-    "merged 16-bit" artifact would silently ship nf4 weights plus a
-    ``quantization_config``. This mirrors what unsloth's own merged save does
-    per layer (``fast_dequantize(W, quant_state)`` in ``unsloth/save.py``),
-    using bitsandbytes' public ``functional.dequantize_4bit``.
-
-    Raises:
-        RuntimeError: when the model holds quantized weights but they cannot
-            be dequantized (bitsandbytes missing or dequantization failed) —
-            the caller must NOT save mislabeled 4-bit weights. Re-export from
-            a 16-bit load (e.g. ``load_in_4bit=False``) instead.
-    """
-    quantized = _find_quantized_linear_modules(model)
-    if not quantized:
-        return model
-
-    error_hint = (
-        "cannot save a truthful merged 16-bit artifact from 4-bit weights. "
-        "Re-load the checkpoint with load_in_4bit=False (CLI: "
-        "`unturtle export --no-load-in-4bit`) and export again."
-    )
-    try:
-        bnb = _import_bitsandbytes()
-    except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(
-            f"FastDiffusionModel: model has {len(quantized)} bnb-quantized "
-            f"module(s) but bitsandbytes is unavailable ({exc}); {error_hint}"
-        ) from exc
-
-    named_modules = dict(model.named_modules())
-    for name, module in quantized:
-        weight = module.weight
-        try:
-            dequant = bnb.functional.dequantize_4bit(weight.data, weight.quant_state)
-        except Exception as exc:  # noqa: BLE001
-            raise RuntimeError(
-                f"FastDiffusionModel: failed to dequantize module {name!r} "
-                f"({type(exc).__name__}: {exc}); {error_hint}"
-            ) from exc
-        target_dtype = getattr(weight.quant_state, "dtype", dequant.dtype)
-        new_linear = torch.nn.Linear(
-            module.in_features,
-            module.out_features,
-            bias=module.bias is not None,
-            device=dequant.device,
-            dtype=target_dtype,
-        )
-        new_linear.weight = torch.nn.Parameter(
-            dequant.to(target_dtype), requires_grad=False
-        )
-        if module.bias is not None:
-            new_linear.bias = torch.nn.Parameter(
-                module.bias.data.to(target_dtype), requires_grad=False
-            )
-        parent_name, _, child_name = name.rpartition(".")
-        parent = named_modules[parent_name] if parent_name else model
-        setattr(parent, child_name, new_linear)
-
-    # The artifact is now 16-bit — drop the stale quantization metadata so the
-    # saved config does not claim 4-bit loading.
-    config = getattr(model, "config", None)
-    if config is not None and hasattr(config, "quantization_config"):
-        try:
-            del config.quantization_config
-        except AttributeError:
-            config.quantization_config = None
-    for attr in ("is_loaded_in_4bit", "is_quantized"):
-        if getattr(model, attr, False):
-            setattr(model, attr, False)
-    hf_quantizer = getattr(model, "hf_quantizer", None)
-    if hf_quantizer is not None:
-        model.hf_quantizer = None
-
-    _logger.info(
-        "FastDiffusionModel: dequantized %d bnb 4-bit module(s) to 16-bit "
-        "for the merged save.",
-        len(quantized),
-    )
-    return model
-
-
-#: model_type → callable returning the wrapper class to swap in after a
-#: FastModel load (FastModel loads upstream classes; wrappers add only a
-#: ``generate`` shim, so ``__class__`` swap is safe).
-#:
-#: Seeded from the BackboneIntegration registry (#68) and left mutable: this
-#: is the documented seam for registering a swap at runtime, and the values
-#: stay zero-arg resolvers so building the map imports no backbone.
-#:
-#: This is a snapshot taken at import time, so an integration registered
-#: later reaches ``resolve_post_load_wrapper()`` but not this dict.  Nothing
-#: registers at runtime today; register before importing the loader, or add
-#: the key here directly, if that ever changes.
-_POST_LOAD_CLASS_SWAPS: dict[str, Any] = post_load_class_swaps()
+#: model_type -> zero-arg wrapper resolver for the post-load ``__class__`` swap
+#: (#186 territory — the swap stays in the façade). The SAME dict object the
+#: loader consults for wrapper-first ordering, so a test/plugin mutation of one
+#: is seen by both.
+from unturtle.models.loading import _POST_LOAD_CLASS_SWAPS  # noqa: E402
 
 
 def _apply_post_load_class_swap(model: Any, model_name: str | None = None) -> None:
@@ -449,355 +347,6 @@ def _apply_post_load_class_swap(model: Any, model_name: str | None = None) -> No
             except NotImplementedError:
                 restored = config_cls()
         model.generation_config = restored
-
-
-def _native_model_classes() -> dict[str, Any]:
-    """Build the ``model_type`` → unturtle native model class map.
-
-    These classes are the from-scratch / wrapper implementations Unturtle owns
-    (LLaDA, Dream, MDLM-DiT, Tiny-A2D Llama/Qwen2/Qwen3). Loading through them
-    bypasses any ``trust_remote_code`` Hub modeling code, so fixes in the
-    unturtle classes (e.g. ``_tied_weights_keys``) always take effect.
-
-    The per-family knowledge lives in the BackboneIntegration registry (#68);
-    this stays as the loader's entry point.  A family whose optional
-    dependencies are missing drops out individually rather than emptying the
-    map.
-    """
-    import unturtle.models  # noqa: F401 — registers A2D/LLaDA/Dream AutoConfig entries
-
-    return native_model_classes()
-
-
-def _load_native(
-    model_name: str, load_kwargs: dict, trust_remote_code: bool
-) -> Any | None:
-    """Load via an Unturtle native class when ``model_name``'s ``model_type`` is one.
-
-    Peeks at the config (no weights) and, if the ``model_type`` maps to a native
-    Unturtle class, loads through it directly — preserving the ``trust_remote_code``
-    bypass contract. Returns ``None`` when the model is *not* a native dLLM, so the
-    caller can delegate the load elsewhere. CUDA OOM propagates.
-    """
-    native_classes = _native_model_classes()
-
-    try:
-        peek_kwargs: dict[str, Any] = {}
-        if "token" in load_kwargs:
-            peek_kwargs["token"] = load_kwargs["token"]
-        config = AutoConfig.from_pretrained(
-            model_name, trust_remote_code=trust_remote_code, **peek_kwargs
-        )
-        model_type = getattr(config, "model_type", "")
-        if model_type in native_classes:
-            native_cls = native_classes[model_type]
-            _logger.debug(
-                "FastDiffusionModel: using native unturtle class %s for model_type=%r",
-                native_cls.__name__,
-                model_type,
-            )
-            return _load_model_with_optional_4bit_fallback(
-                native_cls, model_name, load_kwargs
-            )
-    except torch.cuda.OutOfMemoryError:
-        raise  # OOM should propagate, not fall through to slower loaders
-    except Exception as exc:  # noqa: BLE001
-        _logger.debug("FastDiffusionModel: native class lookup failed: %s", exc)
-
-    return None
-
-
-def _automodel_loaders() -> list[tuple[str, Any]]:
-    """The Auto* fallback chain, resolved at call time.
-
-    A separate seam on purpose: unsloth **replaces**
-    ``sys.modules["transformers"]`` with a different module object at import
-    time, so a test that patches attributes on whatever ``transformers`` name
-    it holds never reaches the classes this loader resolves — measured: the
-    patched attribute was visible by direct read while the loader's own
-    from-import still produced the real classes, and an ordering mutant
-    survived a test that looked airtight.  Tests patch THIS function on the
-    unturtle module instead, which no third-party import games can bypass.
-    """
-    from transformers import (
-        AutoModel,
-        AutoModelForCausalLM,
-        AutoModelForMaskedLM,
-    )
-
-    return [
-        ("AutoModel", AutoModel),
-        ("AutoModelForMaskedLM", AutoModelForMaskedLM),
-        ("AutoModelForCausalLM", AutoModelForCausalLM),
-    ]
-
-
-def _load_via_automodel(model_name: str, load_kwargs: dict) -> Any:
-    """Load a non-native (HF-registered) model_type via the AutoModel fallback chain.
-
-    This is the offline / unsloth-unavailable fallback path: loading/quantization is
-    handled by ``transformers``' ``Auto*`` loaders.  The diffusion patch is applied
-    afterwards by :func:`_patch_for_diffusion`, so the resulting model behaves as a
-    bidirectional dLLM regardless of which path produced it.  Raises if every loader
-    fails.
-
-    The primary non-native path is :func:`_load_via_fastmodel` (unsloth FastModel);
-    this function is only reached when that path is unavailable or raises.
-    """
-    loaders = _automodel_loaders()
-
-    # A model_type with a registered wrapper loads through the wrapper class
-    # itself first.  AutoModel resolves diffusion_gemma to the bare composite
-    # model -- the wrong head for the wrapper contract (#96), and one the
-    # swap guard now refuses to stamp.  Loading via the wrapper picks the
-    # right head AND runs the normal __init__ postamble, so generation_config
-    # is populated the ordinary way.  Any failure falls through to the Auto*
-    # chain unchanged.
-    try:
-        model_type = getattr(
-            AutoConfig.from_pretrained(model_name, **load_kwargs), "model_type", None
-        )
-    except Exception:  # noqa: BLE001 -- config fetch is best-effort here
-        model_type = None
-    resolver = _POST_LOAD_CLASS_SWAPS.get(model_type)
-    if resolver is not None:
-        wrapper_cls = resolver()
-        loaders.insert(0, (wrapper_cls.__name__, wrapper_cls))
-    last_exc: Exception | None = None
-    for name, loader_cls in loaders:
-        try:
-            return _load_model_with_optional_4bit_fallback(
-                loader_cls, model_name, load_kwargs
-            )
-        except Exception as exc:  # noqa: BLE001
-            _logger.debug("FastDiffusionModel: %s failed: %s", name, exc)
-            last_exc = exc
-
-    raise RuntimeError(
-        f"FastDiffusionModel: could not load {model_name!r} via any AutoModel variant. "
-        f"Pass model_class= explicitly.\nLast error: {last_exc}"
-    ) from last_exc
-
-
-def _import_fastmodel() -> Any:
-    """Import hook for unsloth FastModel (separate function for testability)."""
-    from unsloth import FastModel
-
-    return FastModel
-
-
-def _load_via_fastmodel(
-    model_name: str, load_kwargs: dict, *, load_in_4bit: bool
-) -> tuple[Any, Any] | None:
-    """Load a non-native model_type via ``unsloth.FastModel.from_pretrained``.
-
-    Returns ``(model, tokenizer)`` on success, or ``None`` when unsloth is
-    unavailable or the load fails — the caller then falls back to the Auto*
-    chain (offline / local-stub paths keep working).
-
-    FastModel owns quantization on this path; ``quantization_config`` is not
-    forwarded.  ``load_in_4bit`` is threaded through explicitly from the
-    caller so the user's original intent is preserved.
-    """
-    try:
-        fast_model_cls = _import_fastmodel()
-    except Exception as exc:  # noqa: BLE001
-        _logger.debug("FastDiffusionModel: unsloth FastModel unavailable: %s", exc)
-        return None
-    try:
-        # Forward all user kwargs FastModel.from_pretrained can accept
-        # (revision, cache_dir, subfolder, attn_implementation, …) instead of a
-        # tiny allowlist. Keys FastModel's signature cannot take are dropped
-        # with a warning so nothing disappears silently.
-        import inspect
-
-        try:
-            sig = inspect.signature(fast_model_cls.from_pretrained)
-            accepted = set(sig.parameters)
-            accepts_var_kw = any(
-                p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-            )
-        except (TypeError, ValueError):
-            accepted = set()
-            accepts_var_kw = True
-
-        fm_kwargs: dict[str, Any] = {}
-        dropped: list[str] = []
-        for key, value in load_kwargs.items():
-            if key == "torch_dtype":
-                # FastModel uses `dtype=` not `torch_dtype=`
-                fm_kwargs["dtype"] = value
-            elif key == "quantization_config":
-                # FastModel owns quantization on this path (intentional skip;
-                # the caller's intent travels via load_in_4bit below).
-                continue
-            elif accepts_var_kw or key in accepted:
-                fm_kwargs[key] = value
-            else:
-                dropped.append(key)
-        if dropped:
-            _warn_once(
-                "FastDiffusionModel: dropping kwargs not accepted by "
-                f"unsloth FastModel.from_pretrained: {sorted(dropped)}"
-            )
-        # FastModel owns quantization — pass load_in_4bit explicitly from the caller.
-        fm_kwargs["load_in_4bit"] = load_in_4bit
-        model, tokenizer = fast_model_cls.from_pretrained(model_name, **fm_kwargs)
-        return model, tokenizer
-    except torch.cuda.OutOfMemoryError:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        _logger.debug("FastDiffusionModel: FastModel load failed: %s", exc)
-        _warn_once(
-            "FastDiffusionModel: unsloth FastModel failed to load "
-            f"{model_name!r} ({exc}) — falling back to the transformers Auto* "
-            "chain (no unsloth quantization/patches on this load)."
-        )
-        return None
-
-
-def _load_model_auto(
-    model_name: str,
-    load_kwargs: dict,
-    trust_remote_code: bool,
-    *,
-    load_in_4bit: bool = False,
-) -> tuple[Any, Any | None]:
-    """Resolve and load a model: native dLLM class first, FastModel, then HF Auto*.
-
-    Returns ``(model, tokenizer_or_none)``.  The tokenizer is non-``None`` only
-    when ``unsloth.FastModel`` was used (it returns a tokenizer alongside the
-    model).  On the native or Auto* paths the tokenizer is ``None`` and the
-    caller must load it separately.
-
-    Native Unturtle backbones (llada / Dream / tiny-a2d-*) are loaded through their
-    own classes (``_load_native``), bypassing ``trust_remote_code`` Hub code.  Any
-    other ``model_type`` tries ``unsloth.FastModel.from_pretrained`` first (so
-    HF-registered dLLM backbones such as DiffusionGemma get unsloth's loading /
-    quantization / patch chain), then falls back to the ``transformers`` ``Auto*``
-    loaders when unsloth is unavailable or the load fails.  Kept as a single
-    module-level entry point for callers and tests that patch it by name.
-    """
-    model, tokenizer, path = _load_model_auto_traced(
-        model_name, load_kwargs, trust_remote_code, load_in_4bit=load_in_4bit
-    )
-    _LOAD_PATH_TRACE.set(path)
-    return model, tokenizer
-
-
-#: Load path taken by the most recent `_load_model_auto` call in this context.
-#: `from_pretrained_with_report` reads it right after calling the module-level
-#: seam (which tests monkeypatch by name); a replaced loader that does not
-#: report leaves the default, so the report says "unknown" rather than guessing.
-_LOAD_PATH_TRACE: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "unturtle_load_path", default="unknown"
-)
-
-
-def _load_model_auto_traced(
-    model_name: str,
-    load_kwargs: dict,
-    trust_remote_code: bool,
-    *,
-    load_in_4bit: bool = False,
-) -> tuple[Any, Any | None, str]:
-    """:func:`_load_model_auto` plus the load path taken (``native`` /
-    ``upstream`` / ``auto``). Same resolution order, same module-level seams."""
-    model = _load_native(model_name, load_kwargs, trust_remote_code)
-    if model is not None:
-        return model, None, "native"
-
-    result = _load_via_fastmodel(model_name, load_kwargs, load_in_4bit=load_in_4bit)
-    if result is not None:
-        model, tokenizer = result
-        return model, tokenizer, "upstream"
-
-    return _load_via_automodel(model_name, load_kwargs), None, "auto"
-
-
-def _integration_name_for(model: Any) -> str | None:
-    """Family name for a loaded (possibly PEFT-wrapped) model, read-only."""
-    model_type = getattr(getattr(model, "config", None), "model_type", None)
-    from unturtle.models.integrations.registry import iter_integrations
-
-    for integration in iter_integrations():
-        if (
-            model_type in integration.model_types
-            or model_type in integration.peft_model_types
-        ):
-            return integration.name
-    return None
-
-
-def _load_tokenizer(
-    model_name: str, trust_remote_code: bool, token: Optional[str]
-) -> Any:
-    """Load tokenizer; warn instead of silently returning None."""
-    try:
-        tok_kwargs: dict[str, Any] = {"trust_remote_code": trust_remote_code}
-        if token is not None:
-            tok_kwargs["token"] = token
-        return AutoTokenizer.from_pretrained(model_name, **tok_kwargs)
-    except Exception as exc:  # noqa: BLE001
-        import warnings
-
-        warnings.warn(
-            f"FastDiffusionModel: tokenizer not found for {model_name!r}: {exc}\n"
-            "Pass a tokenizer manually or verify the model path.",
-            stacklevel=3,
-        )
-        return None
-
-
-def _extend_rope_if_possible(model: Any, max_seq_length: int) -> None:
-    """Extend RoPE embeddings to cover ``max_seq_length`` if the model supports it.
-
-    Iterates through all modules looking for a ``rotary_emb`` or
-    ``rotary_embedding`` attribute that exposes ``extend_rope_embedding``.
-    This mirrors unsloth's ``extend_model_function``.
-    """
-    for module in model.modules():
-        for rope_attr in ("rotary_emb", "rotary_embedding"):
-            rope = getattr(module, rope_attr, None)
-            if rope is None:
-                continue
-            if hasattr(rope, "extend_rope_embedding"):
-                try:
-                    rope.extend_rope_embedding(max_seq_length)
-                    _logger.debug(
-                        "FastDiffusionModel: extended RoPE to %d via %s",
-                        max_seq_length,
-                        type(rope).__name__,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    _logger.debug("FastDiffusionModel: RoPE extension failed: %s", exc)
-
-
-def _propagate_max_seq_length(model: Any, max_seq_length: int) -> None:
-    """Set max_seq_length on every nested model attribute (mirrors unsloth)."""
-    internal = model
-    while hasattr(internal, "model"):
-        internal.max_seq_length = max_seq_length
-        internal = internal.model
-    internal.max_seq_length = max_seq_length
-    for module in model.modules():
-        module.max_seq_length = max_seq_length
-
-
-def _patch_for_diffusion(model: Any, max_seq_length: int) -> Any:
-    """Apply the Unturtle diffusion patch shared by every load path.
-
-    Both the native loader and the unsloth/HF delegation path funnel through here,
-    as does the PEFT-adapter branch. It installs the apply_qkv/apply_o stubs (so the
-    bidirectional fast-forward and LoRA fast paths can attach), records
-    ``max_seq_length`` across the nested model, and extends RoPE when supported.
-    Returns the (mutated) model for call-site clarity.
-    """
-    _install_apply_stubs(model)
-    model.max_seq_length = max_seq_length
-    _propagate_max_seq_length(model, max_seq_length)
-    _extend_rope_if_possible(model, max_seq_length)
-    return model
 
 
 # ---------------------------------------------------------------------------
@@ -1086,192 +635,16 @@ class FastDiffusionModel:
             ``(model, tokenizer)`` tuple.  ``tokenizer`` may be ``None`` with
             a warning if no tokenizer files are found.
         """
-        # --- PEFT adapter checkpoint detection (API Gap G3) ---
-        # If the path is a local directory that contains adapter_config.json but
-        # not full model weights, load the base model first then wrap with PEFT.
-        from pathlib import Path as _Path
-
-        _local = _Path(model_name) if not model_name.startswith("http") else None
-        _has_full_weights = False
-        if _local is not None and _local.is_dir():
-            try:
-                _has_full_weights = (
-                    any(
-                        (_local / filename).exists()
-                        for filename in (
-                            "model.safetensors",
-                            "pytorch_model.bin",
-                            "pytorch_model.safetensors",
-                            # Sharded checkpoints use an index file instead of a single weight file
-                            "model.safetensors.index.json",
-                            "pytorch_model.bin.index.json",
-                        )
-                    )
-                    or any(_local.glob("model-*-of-*.safetensors"))
-                    or any(
-                        _local.glob("pytorch_model-*-of-*.bin")
-                    )  # legacy sharded .bin
-                )
-            except OSError as _e:
-                _logger.warning(
-                    "FastDiffusionModel: could not scan %r for weight files (%s). "
-                    "Assuming full weights present to avoid incorrect adapter path.",
-                    str(_local),
-                    _e,
-                )
-                _has_full_weights = True
-        if (
-            _local is not None
-            and _local.is_dir()
-            and (_local / "adapter_config.json").exists()
-            and not _has_full_weights
-        ):
-            import json as _json
-
-            from peft import PeftModel as _PeftModel
-
-            try:
-                _adapter_cfg = _json.loads(
-                    (_local / "adapter_config.json").read_text(encoding="utf-8")
-                )
-            except _json.JSONDecodeError as _e:
-                raise ValueError(
-                    f"FastDiffusionModel: adapter_config.json at {_local} is not valid JSON: {_e}"
-                ) from _e
-            except OSError as _e:
-                raise RuntimeError(
-                    f"FastDiffusionModel: could not read adapter_config.json at {_local}: {_e}"
-                ) from _e
-            _base_model_id = _adapter_cfg.get("base_model_name_or_path", "")
-            if not _base_model_id:
-                raise ValueError(
-                    f"adapter_config.json at {_local} has no base_model_name_or_path."
-                )
-            _logger.info(
-                "FastDiffusionModel: detected PEFT adapter checkpoint at %r; "
-                "loading base model %r first.",
-                str(_local),
-                _base_model_id,
-            )
-            base_model, tokenizer = FastDiffusionModel.from_pretrained(
-                model_name=_base_model_id,
-                max_seq_length=max_seq_length,
-                dtype=dtype,
-                load_in_4bit=load_in_4bit,
-                model_class=model_class,
-                trust_remote_code=trust_remote_code,
-                token=token,
-                **kwargs,
-            )
-            try:
-                model = _PeftModel.from_pretrained(base_model, str(_local))
-            except Exception as _e:
-                raise RuntimeError(
-                    f"FastDiffusionModel: failed to load PEFT adapter from {_local!r} "
-                    f"onto base model {_base_model_id!r}: {_e}"
-                ) from _e
-            _patch_for_diffusion(model, max_seq_length)
-            _logger.info(
-                "FastDiffusionModel: PEFT adapter loaded from %r.", str(_local)
-            )
-            return LoadedModel(
-                model=model,
-                tokenizer=tokenizer,
-                integration=_integration_name_for(model),
-                load_path="adapter",
-                details={"base_model": _base_model_id},
-            )
-
-        # --- dtype auto-detection ---
-        if dtype is None:
-            if torch.cuda.is_available():
-                dtype = (
-                    torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-                )
-            else:
-                dtype = torch.float32
-
-        is_on_cpu = not torch.cuda.is_available()
-
-        load_kwargs: dict[str, Any] = dict(
-            torch_dtype=dtype,
+        return load_model(
+            model_name,
+            max_seq_length=max_seq_length,
+            dtype=dtype,
+            load_in_4bit=load_in_4bit,
+            model_class=model_class,
             trust_remote_code=trust_remote_code,
+            token=token,
+            post_load=_apply_post_load_class_swap,
             **kwargs,
-        )
-        if token is not None:
-            load_kwargs["token"] = token
-
-        # --- 4-bit quantisation (CUDA only) ---
-        if load_in_4bit and not is_on_cpu:
-            if importlib.util.find_spec("bitsandbytes") is None:
-                _warn_once(
-                    "bitsandbytes not installed — falling back to full-precision loading."
-                )
-            else:
-                try:
-                    from transformers import BitsAndBytesConfig
-
-                    bnb_config = BitsAndBytesConfig(
-                        load_in_4bit=True,
-                        bnb_4bit_quant_type="nf4",
-                        bnb_4bit_compute_dtype=dtype,
-                        bnb_4bit_use_double_quant=True,
-                    )
-                    load_kwargs["quantization_config"] = bnb_config
-                    # device_map="auto" is required for multi-GPU or when GPU 0 is partially occupied.
-                    if "device_map" not in load_kwargs:
-                        load_kwargs["device_map"] = "auto"
-                except ImportError:
-                    _warn_once(
-                        "bitsandbytes not installed — falling back to full-precision loading."
-                    )
-        elif load_in_4bit and is_on_cpu:
-            _warn_once(
-                "FastDiffusionModel: load_in_4bit=True requires CUDA — "
-                "falling back to full-precision loading on CPU."
-            )
-
-        # --- Resolve model class (explicit override → native dLLM → FastModel → Auto*) ---
-        fm_tokenizer: Any | None = None
-        if model_class is None:
-            _LOAD_PATH_TRACE.set("unknown")
-            model, fm_tokenizer = _load_model_auto(
-                model_name,
-                load_kwargs,
-                trust_remote_code,
-                load_in_4bit=load_in_4bit and not is_on_cpu,
-            )
-            load_path = _LOAD_PATH_TRACE.get()
-        else:
-            model = model_class.from_pretrained(model_name, **load_kwargs)
-            load_path = "explicit_class"
-
-        # --- Post-load class swap (e.g. DiffusionGemma wrapper) ---
-        class_before = type(model)
-        _apply_post_load_class_swap(model, model_name=model_name)
-        class_swapped = type(model) is not class_before
-
-        # --- Diffusion patch (shared across load paths) ---
-        _patch_for_diffusion(model, max_seq_length)
-
-        # --- Tokenizer (prefer FastModel's tokenizer; fall back to separate load) ---
-        tokenizer = (
-            fm_tokenizer
-            if fm_tokenizer is not None
-            else _load_tokenizer(model_name, trust_remote_code, token)
-        )
-
-        return LoadedModel(
-            model=model,
-            tokenizer=tokenizer,
-            integration=_integration_name_for(model),
-            load_path=load_path,
-            details={
-                "class_swapped": class_swapped,
-                "model_class": f"{type(model).__module__}.{type(model).__qualname__}",
-                "quantized": bool(_find_quantized_linear_modules(model)),
-                "tokenizer_from_fastmodel": fm_tokenizer is not None,
-            },
         )
 
     @staticmethod
@@ -1540,9 +913,7 @@ class FastDiffusionModel:
         Returns:
             The same model in eval mode.
         """
-        model.eval()
-        _apply_gradient_checkpointing_mode(model, False)
-        return model
+        return _set_inference_mode(model)
 
     @staticmethod
     def generate(
@@ -1587,9 +958,7 @@ class FastDiffusionModel:
         Returns:
             The same model in train mode.
         """
-        model.train()
-        _apply_gradient_checkpointing_mode(model, use_gradient_checkpointing)
-        return model
+        return _set_training_mode(model, use_gradient_checkpointing)
 
     @staticmethod
     def save_pretrained_merged(
@@ -1612,25 +981,13 @@ class FastDiffusionModel:
             safe_serialization: Use safetensors format (recommended).
             **kwargs:           Forwarded to ``save_pretrained``.
         """
-        import copy
-
-        _logger.info("FastDiffusionModel: merging LoRA adapters into base weights …")
-        merged = copy.deepcopy(model)
-        # merge_and_unload returns the unwrapped base model with adapters merged.
-        merged = merged.merge_and_unload()
-        # On a 4-bit-loaded model the merged Linear layers are still bnb
-        # Linear4bit — dequantize (or fail loudly) so the saved artifact is
-        # genuinely 16-bit, never mislabeled nf4 weights.
-        merged = _dequantize_merged_model_(merged)
-        merged.save_pretrained(
+        _save.save_pretrained_merged(
+            model,
             save_directory,
+            tokenizer=tokenizer,
             safe_serialization=safe_serialization,
             **kwargs,
         )
-        _logger.info("FastDiffusionModel: merged model saved to %r", save_directory)
-        if tokenizer is not None:
-            tokenizer.save_pretrained(save_directory)
-            _logger.info("FastDiffusionModel: tokenizer saved to %r", save_directory)
 
     @staticmethod
     def push_to_hub_merged(
@@ -1654,25 +1011,14 @@ class FastDiffusionModel:
             token:              HuggingFace auth token.
             **kwargs:           Forwarded to ``push_to_hub``.
         """
-        import copy
-
-        _logger.info("FastDiffusionModel: merging LoRA adapters for Hub push …")
-        merged = copy.deepcopy(model)
-        merged = merged.merge_and_unload()
-        # Same honesty guarantee as save_pretrained_merged: never push nf4
-        # weights under a merged-16bit label.
-        merged = _dequantize_merged_model_(merged)
-
-        push_kwargs: dict[str, Any] = dict(
-            safe_serialization=safe_serialization, **kwargs
+        _save.push_to_hub_merged(
+            model,
+            repo_id,
+            tokenizer=tokenizer,
+            safe_serialization=safe_serialization,
+            token=token,
+            **kwargs,
         )
-        if token is not None:
-            push_kwargs["token"] = token
-
-        merged.push_to_hub(repo_id, **push_kwargs)
-        _logger.info("FastDiffusionModel: merged model pushed to %r", repo_id)
-        if tokenizer is not None:
-            tokenizer.push_to_hub(repo_id, **push_kwargs)
 
     @staticmethod
     def save_pretrained_gguf(
@@ -1694,24 +1040,12 @@ class FastDiffusionModel:
             quantization_method:  One of ``q4_k_m``, ``q5_k_m``, ``q8_0``, ``f16``.
             **kwargs:             Forwarded to the underlying GGUF save call.
         """
-        from unturtle.save import patch_saving_functions
-
-        patch_saving_functions(model)
-        if not hasattr(model, "save_pretrained_gguf"):
-            raise RuntimeError(
-                "save_pretrained_gguf is not available. "
-                "Ensure the llama.cpp GGUF toolchain is installed."
-            )
-        model.save_pretrained_gguf(
+        _save.save_pretrained_gguf(
+            model,
             save_directory,
-            tokenizer,
+            tokenizer=tokenizer,
             quantization_method=quantization_method,
             **kwargs,
-        )
-        _logger.info(
-            "FastDiffusionModel: GGUF model saved to %r (quant=%s)",
-            save_directory,
-            quantization_method,
         )
 
     @staticmethod
@@ -1730,21 +1064,7 @@ class FastDiffusionModel:
         Raises:
             ValueError: If ``model`` is not a PEFT model.
         """
-        try:
-            from peft import PeftModel
-        except ImportError as exc:
-            raise RuntimeError("peft is required for save_lora_adapter") from exc
-
-        if not isinstance(model, PeftModel):
-            raise ValueError(
-                "save_lora_adapter requires a PEFT-wrapped model. "
-                "The provided model appears to be a merged (non-PEFT) model."
-            )
-        model.save_pretrained(save_directory)
-        _logger.info("FastDiffusionModel: LoRA adapter saved to %r", save_directory)
-        if tokenizer is not None:
-            tokenizer.save_pretrained(save_directory)
-            _logger.info("FastDiffusionModel: tokenizer saved to %r", save_directory)
+        _save.save_lora_adapter(model, save_directory, tokenizer=tokenizer)
 
     @staticmethod
     @contextlib.contextmanager
@@ -1761,20 +1081,8 @@ class FastDiffusionModel:
         Args:
             model: A dLLM model (plain or PEFT-wrapped).
         """
-        was_training = model.training
-        gc_mode = _get_gradient_checkpointing_mode(model)
-        FastDiffusionModel.for_inference(model)
-        try:
-            with torch.no_grad():
-                yield model
-        finally:
-            if was_training:
-                FastDiffusionModel.for_training(
-                    model, use_gradient_checkpointing=gc_mode
-                )
-            else:
-                model.eval()
-                _apply_gradient_checkpointing_mode(model, gc_mode)
+        with _inference_mode(model) as m:
+            yield m
 
 
 # ---------------------------------------------------------------------------

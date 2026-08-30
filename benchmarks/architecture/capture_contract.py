@@ -116,6 +116,7 @@ PROCESS_GLOBAL_CASES = ("rng_contract", "sdpa")
 # ---------------------------------------------------------------------------
 
 FDM = "unturtle/fast_diffusion_model.py"
+LOADING = "unturtle/models/loading.py"  # #185 PR 3 loader
 PREP = "unturtle/models/integrations/peft_preparation.py"  # #185 PR 2 PEFT preparation
 LLADA_PROVIDER = "unturtle/models/backbones/llada/fast_paths.py"  # #185 LLaDA provider
 DREAM_PROVIDER = "unturtle/models/backbones/dream/fast_paths.py"  # #185 Dream provider
@@ -569,7 +570,7 @@ MUTATION_LEDGER: list[dict] = [
     ),
     _mutation(
         "rope_extension",
-        owner="_extend_rope_if_possible (via _patch_for_diffusion)",
+        owner="loading._extend_rope_if_possible (via loading._patch_for_diffusion; #185 PR 3)",
         target="rotary_emb / rotary_embedding modules exposing extend_rope_embedding",
         applicability=(
             "every from_pretrained load — but no unturtle rotary module defines "
@@ -591,7 +592,7 @@ MUTATION_LEDGER: list[dict] = [
         ),
         classification="linked defect -> #174 (attributed and FIXED: Rotary/DreamRotaryEmbedding reset_parameters via _init_weights; this row itself is inert)",
         linked_issue=174,
-        claims=[(FDM, "rope.extend_rope_embedding(max_seq_length)")],
+        claims=[(LOADING, "rope.extend_rope_embedding(max_seq_length)")],
     ),
     _mutation(
         "liveness_probe_counters",
@@ -611,7 +612,7 @@ MUTATION_LEDGER: list[dict] = [
     ),
     _mutation(
         "max_seq_length_propagation",
-        owner="_propagate_max_seq_length",
+        owner="loading._propagate_max_seq_length",
         target="module.max_seq_length on every module",
         applicability="every load and PEFT wrap",
         before="absent",
@@ -623,9 +624,9 @@ MUTATION_LEDGER: list[dict] = [
         liveness_evidence="unsloth GC reads it",
         classification="EXTRACT -> #185",
         claims=[
-            (FDM, "module.max_seq_length = max_seq_length"),
-            (FDM, "internal.max_seq_length = max_seq_length"),
-            (FDM, "model.max_seq_length = max_seq_length"),
+            (LOADING, "module.max_seq_length = max_seq_length"),
+            (LOADING, "internal.max_seq_length = max_seq_length"),
+            (LOADING, "model.max_seq_length = max_seq_length"),
         ],
     ),
     _mutation(
