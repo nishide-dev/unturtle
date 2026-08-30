@@ -295,3 +295,82 @@ def test_gemma_canvas_target_is_the_verbatim_upstream_delegation():
         base.generate = original
     assert out == "upstream-out"
     assert monkey_calls == [("IDS", "CFG", {"k": 2})]
+
+
+def test_facade_generate_routes_unwrapped_canvas_through_the_runner():
+    """A DiffusionGemma instance that never got the wrapper (e.g. a direct
+    unsloth FastModel load) has no unified `algorithm` entry — the façade must
+    reach the explicit runner for it, never TypeError, never restamp."""
+    from unturtle.fast_diffusion_model import FastDiffusionModel
+    from unturtle.models import loading
+
+    class _Cfg:
+        model_type = "facade-canvas-test"
+
+    class _Wrapper:
+        pass
+
+    class _Upstream:
+        config = _Cfg()
+
+        def _denoising_step(self):  # block_ar capability probe
+            raise NotImplementedError
+
+        def generate(self, input_ids=None, generation_config=None, **kwargs):
+            # upstream signature: NO `algorithm` parameter
+            return ("upstream", input_ids, kwargs)
+
+    model = _Upstream()
+    loading._POST_LOAD_CLASS_SWAPS["facade-canvas-test"] = lambda: _Wrapper
+    try:
+        out = FastDiffusionModel.generate(model, "IDS", algorithm="block_ar", k=1)
+    finally:
+        del loading._POST_LOAD_CLASS_SWAPS["facade-canvas-test"]
+    assert out == ("upstream", "IDS", {"k": 1})
+    assert type(model) is _Upstream  # never restamped
+
+
+def test_wrapper_first_route_keeps_the_quantization_kwargs(monkeypatch):
+    """The wrapper-first branch passes load_kwargs (incl. the bnb
+    quantization_config that build_load_kwargs assembled) into the Auto chain,
+    and peeks the config exactly once."""
+    from unturtle.models import loading
+
+    class _Cfg:
+        model_type = "quantwrap"
+
+    peeks = []
+
+    class _FakeAutoConfig:
+        @staticmethod
+        def from_pretrained(name, **kwargs):
+            peeks.append(1)
+            return _Cfg()
+
+    seen = {}
+
+    class _Wrapper:
+        @classmethod
+        def from_pretrained(cls, name, **kwargs):
+            seen.update(kwargs)
+            return object.__new__(cls)
+
+    monkeypatch.setattr(loading, "AutoConfig", _FakeAutoConfig, raising=False)
+    monkeypatch.setattr(loading, "_load_native", lambda *a, **k: None)
+    monkeypatch.setattr(
+        loading,
+        "_load_via_fastmodel",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("FastModel consulted")),
+    )
+    loading._POST_LOAD_CLASS_SWAPS["quantwrap"] = lambda: _Wrapper
+    try:
+        model, tok, path = loading._load_model_auto_traced(
+            "org/quantwrap",
+            {"quantization_config": "BNB-CFG", "torch_dtype": "bf16"},
+            trust_remote_code=False,
+        )
+    finally:
+        del loading._POST_LOAD_CLASS_SWAPS["quantwrap"]
+    assert path == "auto" and type(model) is _Wrapper
+    assert seen["quantization_config"] == "BNB-CFG"  # 4-bit kwargs retained
+    assert len(peeks) == 1  # single config fetch on the wrapper route

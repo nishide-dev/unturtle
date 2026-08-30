@@ -169,7 +169,9 @@ def _automodel_loaders() -> list[tuple[str, Any]]:
     ]
 
 
-def _load_via_automodel(model_name: str, load_kwargs: dict) -> Any:
+def _load_via_automodel(
+    model_name: str, load_kwargs: dict, model_type: str | None = None
+) -> Any:
     """Load a non-native (HF-registered) model_type via the AutoModel fallback chain.
 
     This is the offline / unsloth-unavailable fallback path: loading/quantization is
@@ -190,12 +192,15 @@ def _load_via_automodel(model_name: str, load_kwargs: dict) -> Any:
     # right head AND runs the normal __init__ postamble, so generation_config
     # is populated the ordinary way.  Any failure falls through to the Auto*
     # chain unchanged.
-    try:
-        model_type = getattr(
-            AutoConfig.from_pretrained(model_name, **load_kwargs), "model_type", None
-        )
-    except Exception:  # noqa: BLE001 -- config fetch is best-effort here
-        model_type = None
+    if model_type is None:
+        try:
+            model_type = getattr(
+                AutoConfig.from_pretrained(model_name, **load_kwargs),
+                "model_type",
+                None,
+            )
+        except Exception:  # noqa: BLE001 -- config fetch is best-effort here
+            model_type = None
     resolver = _POST_LOAD_CLASS_SWAPS.get(model_type)
     if resolver is not None:
         wrapper_cls = resolver()
@@ -364,8 +369,13 @@ def _load_model_auto_traced(
     # for these types: it returns the upstream class with an instance-level
     # fast-generate shim and no generation_config, which the removed runtime
     # `__class__` swap used to repair after the fact. One owner now: the load.
-    if _wrapper_model_type(model_name, load_kwargs) is not None:
-        return _load_via_automodel(model_name, load_kwargs), None, "auto"
+    wrapper_type = _wrapper_model_type(model_name, load_kwargs)
+    if wrapper_type is not None:
+        return (
+            _load_via_automodel(model_name, load_kwargs, model_type=wrapper_type),
+            None,
+            "auto",
+        )
 
     result = _load_via_fastmodel(model_name, load_kwargs, load_in_4bit=load_in_4bit)
     if result is not None:

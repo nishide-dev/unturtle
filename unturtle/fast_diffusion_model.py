@@ -849,6 +849,30 @@ class FastDiffusionModel:
                 f"{type(model).__name__} has no `generate` method; "
                 "FastDiffusionModel.generate requires a dLLM model."
             )
+        # An UN-wrapped canvas-family instance (e.g. a direct unsloth
+        # FastModel load, which our loader no longer produces but a user
+        # still can): its upstream `generate` has no unified `algorithm`
+        # entry. Route it through the explicit runner (#186) — never restamp
+        # the class.
+        from unturtle.models.loading import _POST_LOAD_CLASS_SWAPS
+
+        model_type = getattr(getattr(model, "config", None), "model_type", None)
+        resolver = _POST_LOAD_CLASS_SWAPS.get(model_type) if model_type else None
+        if resolver is not None and not isinstance(model, resolver()):
+            from unturtle.models.generation.sampler import (
+                GenerationRequest,
+                dispatch_generation,
+            )
+
+            return dispatch_generation(
+                model,
+                GenerationRequest(
+                    inputs=inputs,
+                    generation_config=kwargs.pop("generation_config", None),
+                    kwargs=kwargs,
+                ),
+                algorithm=algorithm,
+            )
         return model.generate(inputs, algorithm=algorithm, **kwargs)
 
     @staticmethod
