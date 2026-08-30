@@ -114,8 +114,11 @@ def _loader_attr(name: str) -> Any:
     return getattr(loader, name)
 
 
-def _a2d_patcher() -> Any:
-    return _loader_attr("_patch_a2d_peft")
+def _a2d_fast_paths() -> Any:
+    """The Tiny-A2D provider module (#185) — imported only when a lookup needs it."""
+    from unturtle.models.conversion.a2d.tiny_a2d import fast_paths
+
+    return fast_paths
 
 
 def _dream_patcher() -> Any:
@@ -132,15 +135,6 @@ def _modernbert_patcher() -> Any:
 
 def _n_layers(model: Any) -> int:
     return len(model.base_model.model.model.layers)
-
-
-def _a2d_report(model: Any, counts: tuple[int, int, int]) -> str:
-    n_qkv, n_o, n_mlp = counts
-    return (
-        f"FastDiffusionModel patched {_n_layers(model)} layers with "
-        f"{n_qkv} QKV layers, {n_o} O layers and {n_mlp} MLP layers "
-        f"(bidirectional, causal=False)."
-    )
 
 
 def _dream_report(model: Any, counts: tuple[int, int, int]) -> str:
@@ -213,8 +207,7 @@ def _builtin_integrations() -> list[BackboneIntegration]:
             # A PEFT-wrapped converted model reports its base architecture, so the
             # plain names must dispatch here too.
             peft_model_types=("tiny-a2d-llama", "llama"),
-            _peft_patcher=_a2d_patcher,
-            peft_report=_a2d_report,
+            _fast_paths_resolver=_a2d_fast_paths,
             _sparse_output_resolver=standard_sparse_output,
             capabilities=frozenset(
                 {"masked_generation", "block_decode", SPARSE_OUTPUT_CAPABILITY}
@@ -225,8 +218,7 @@ def _builtin_integrations() -> list[BackboneIntegration]:
             model_types=("tiny-a2d-qwen2",),
             _native_resolver=_tiny_a2d_qwen2,
             peft_model_types=("tiny-a2d-qwen2", "qwen2"),
-            _peft_patcher=_a2d_patcher,
-            peft_report=_a2d_report,
+            _fast_paths_resolver=_a2d_fast_paths,
             _sparse_output_resolver=standard_sparse_output,
             capabilities=frozenset(
                 {"masked_generation", "block_decode", SPARSE_OUTPUT_CAPABILITY}
@@ -237,8 +229,7 @@ def _builtin_integrations() -> list[BackboneIntegration]:
             model_types=("tiny-a2d-qwen3",),
             _native_resolver=_tiny_a2d_qwen3,
             peft_model_types=("tiny-a2d-qwen3", "qwen3"),
-            _peft_patcher=_a2d_patcher,
-            peft_report=_a2d_report,
+            _fast_paths_resolver=_a2d_fast_paths,
             _sparse_output_resolver=standard_sparse_output,
             capabilities=frozenset(
                 {"masked_generation", "block_decode", SPARSE_OUTPUT_CAPABILITY}
