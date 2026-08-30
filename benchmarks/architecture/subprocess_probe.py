@@ -436,12 +436,44 @@ def probe_integrations(args: dict) -> dict:
                 "target": f"{module}.{name}" if module else str(name),
             }
 
+        def _resolved_patcher(integ):
+            declared = (
+                getattr(integ, "_peft_patcher", None) is not None
+                or getattr(integ, "_fast_paths_resolver", None) is not None
+            )
+            if not declared:
+                return {"declared": False}
+            try:
+                patcher = integ.peft_patcher
+            except Exception as exc:  # noqa: BLE001
+                return {
+                    "declared": True,
+                    "resolved": False,
+                    "reason": f"{type(exc).__name__}: {str(exc)[:120]}",
+                }
+            if patcher is None:
+                return {"declared": True, "resolved": False, "reason": "ImportError"}
+            name = getattr(patcher, "__qualname__", getattr(patcher, "__name__", None))
+            module = getattr(patcher, "__module__", None)
+            return {
+                "declared": True,
+                "resolved": True,
+                "target": f"{module}.{name}" if module else str(name),
+                "via": "fast_paths"
+                if getattr(integ, "_fast_paths_resolver", None) is not None
+                else "_peft_patcher",
+            }
+
         rows[integration.name] = {
             "model_types": sorted(integration.model_types),
             "peft_model_types": sorted(getattr(integration, "peft_model_types", ())),
             "native": resolve("_native_resolver"),
             "wrapper": resolve("_wrapper_resolver"),
-            "peft_patcher": resolve("_peft_patcher"),
+            # The resolved patcher (property), not the raw field: a family that
+            # ships a fast-path provider (#185) declares its patcher through
+            # `_fast_paths_resolver`, and the raw `_peft_patcher` is None.
+            "peft_patcher": _resolved_patcher(integration),
+            "fast_paths": resolve("_fast_paths_resolver"),
         }
     return {"status": "observed", "integrations": rows}
 

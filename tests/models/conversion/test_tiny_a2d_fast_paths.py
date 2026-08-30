@@ -428,3 +428,82 @@ def test_central_no_longer_owns_the_family():
     assert not any(m.startswith("unturtle.fast_diffusion_model") for m in imported), (
         imported
     )
+
+
+# --- CPU-runnable partial-eligibility differential -----------------------------
+
+
+class _Proj(torch.nn.Linear):
+    """A LoRA-looking projection whose eligibility we can dial per case."""
+
+    def __init__(self, lora=True, bias=False, dora=False):
+        super().__init__(4, 4, bias=bias)
+        if lora:
+            self.lora_A = torch.nn.ModuleDict(
+                {"default": torch.nn.Linear(4, 2, bias=False)}
+            )
+        if dora:
+            self.lora_magnitude_vector = torch.nn.ParameterDict(
+                {"default": torch.nn.Parameter(torch.ones(4))}
+            )
+
+
+def _synthetic_peft_like(spec: dict[str, dict], device: str) -> torch.nn.Module:
+    """PeftModel-shaped module tree with one decoder layer built from ``spec``."""
+    attn = torch.nn.Module()
+    mlp = torch.nn.Module()
+    for name in ("q_proj", "k_proj", "v_proj", "o_proj"):
+        setattr(attn, name, _Proj(**spec.get(name, {})))
+    for name in ("gate_proj", "up_proj", "down_proj"):
+        setattr(mlp, name, _Proj(**spec.get(name, {})))
+    layer = torch.nn.Module()
+    layer.self_attn, layer.mlp = attn, mlp
+    inner = torch.nn.Module()
+    inner.layers = torch.nn.ModuleList([layer])
+    lm = torch.nn.Module()
+    lm.model = inner
+    base = torch.nn.Module()
+    base.model = lm
+    root = torch.nn.Module()
+    root.base_model = base
+    return root.to(device)
+
+
+PARTIAL_CASES = {
+    "all_eligible": {},
+    "qkv_missing_lora": {"k_proj": {"lora": False}},
+    "o_with_bias": {"o_proj": {"bias": True}},
+    "mlp_with_dora": {"up_proj": {"dora": True}},
+    "nothing_has_lora": {n: {"lora": False} for n in ALL_PROJ},
+}
+
+
+@pytest.mark.parametrize("case", sorted(PARTIAL_CASES))
+@pytest.mark.parametrize(
+    "lora_dropout,bias", [(0.0, "none"), (0.1, "none"), (0.0, "all")]
+)
+def test_partial_eligibility_matches_oracle(monkeypatch, case, lora_dropout, bias):
+    """Counts, warnings (text AND order) and installed identities must match the
+    verbatim oracle across the eligibility matrix — on CUDA when available,
+    otherwise on CPU where both must install nothing."""
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    from unturtle.models.conversion.a2d.tiny_a2d import fast_paths
+
+    def run(patcher, warn_target):
+        seen: list[str] = []
+        monkeypatch.setattr(warn_target, "warn_once", seen.append)
+        model = _synthetic_peft_like(PARTIAL_CASES[case], device)
+        counts = patcher(model, lora_dropout, bias)
+        monkeypatch.undo()
+        return counts, tuple(seen), _fast_identity(model)
+
+    new = run(fast_paths.patch_peft, fast_paths)
+    # the oracle reads `_warn_once` from this test module's globals
+    seen_old: list[str] = []
+    monkeypatch.setitem(globals(), "_warn_once", seen_old.append)
+    model = _synthetic_peft_like(PARTIAL_CASES[case], device)
+    counts_old = oracle_patch_a2d_peft(model, lora_dropout, bias)
+    old = (counts_old, tuple(seen_old), _fast_identity(model))
+    assert new == old, (case, lora_dropout, bias, new, old)
+    if device == "cpu":
+        assert new[0] == (0, 0, 0) and not any(any(f) for f in new[2].values())
