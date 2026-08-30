@@ -55,7 +55,6 @@ import types
 from typing import Any, Literal, Optional
 
 import torch
-from peft import LoraConfig, TaskType, get_peft_model
 from peft.tuners.lora import Linear as LoraLinear
 from transformers import AutoConfig, AutoTokenizer
 
@@ -121,7 +120,7 @@ from unturtle.models.integrations.reports import (
     PreparedPeftModel,
     SupportResult,
 )
-from unturtle.save import patch_saving_functions, prepare_model_for_kbit_training
+from unturtle.save import patch_saving_functions
 
 _logger = logging.getLogger(__name__)
 
