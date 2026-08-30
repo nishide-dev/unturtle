@@ -59,22 +59,6 @@ from peft import LoraConfig, TaskType, get_peft_model
 from peft.tuners.lora import Linear as LoraLinear
 from transformers import AutoConfig, AutoTokenizer
 
-try:
-    from unturtle.kernels.fast_lora import (
-        apply_lora_mlp_swiglu,
-        apply_lora_o,
-        apply_lora_qkv,
-        apply_lora_qkv_with_bias,
-    )
-except (ImportError, OSError, AttributeError) as exc:
-    apply_lora_mlp_swiglu = None
-    apply_lora_o = None
-    apply_lora_qkv = None
-    apply_lora_qkv_with_bias = None
-    _FAST_LORA_IMPORT_ERROR = exc
-else:
-    _FAST_LORA_IMPORT_ERROR = None
-
 from unturtle.models.backbones.dream.modeling_dream import (
     DreamAttention_fast_forward,
 )
@@ -96,6 +80,23 @@ from unturtle.models.integrations import (
     post_load_class_swaps,
     supported_peft_model_types,
 )
+from unturtle.models.integrations.fast_path_support import (
+    FAST_LORA_IMPORT_ERROR as _FAST_LORA_IMPORT_ERROR,
+)
+from unturtle.models.integrations.fast_path_support import (
+    apply_lora_mlp_swiglu,
+    apply_lora_o,
+    apply_lora_qkv,
+    apply_lora_qkv_with_bias,
+)
+from unturtle.models.integrations.fast_path_support import no_bias as _no_bias
+from unturtle.models.integrations.fast_path_support import (
+    no_lora_magnitude as _no_lora_mag,
+)
+from unturtle.models.integrations.fast_path_support import (
+    require_fast_lora as _require_fast_lora,
+)
+from unturtle.models.integrations.fast_path_support import warn_once as _warn_once
 from unturtle.models.integrations.reports import (
     LivenessReport,
     LoadedModel,
@@ -107,25 +108,6 @@ from unturtle.save import patch_saving_functions, prepare_model_for_kbit_trainin
 _logger = logging.getLogger(__name__)
 
 
-def _require_fast_lora() -> None:
-    if _FAST_LORA_IMPORT_ERROR is not None:
-        raise ImportError(
-            "FastDiffusionModel requires unturtle.kernels.fast_lora and its optional "
-            "bitsandbytes-backed dependencies to be importable."
-        ) from _FAST_LORA_IMPORT_ERROR
-
-
-def _warn_once(msg: str) -> None:
-    """Log a warning that won't repeat (uses transformers if available)."""
-    try:
-        from transformers.utils import logging as hf_logging
-
-        hf_logger = hf_logging.get_logger(__name__)
-        hf_logger.warning_once(msg)
-    except Exception:  # noqa: BLE001
-        _logger.warning(msg)
-
-
 # The per-family PEFT model_type vocabulary now lives in the
 # BackboneIntegration registry (#68) as each integration's
 # ``peft_model_types``.  Keeping frozensets here as well would be a second
@@ -135,97 +117,6 @@ def _warn_once(msg: str) -> None:
 # ---------------------------------------------------------------------------
 # Internal patching helpers
 # ---------------------------------------------------------------------------
-
-
-def _patch_a2d_peft(
-    model: Any, lora_dropout: float, bias: Literal["none", "all", "lora_only"]
-) -> tuple[int, int, int]:
-    """Patch A2D model (standard LLaMA/Qwen2/3 layer layout) with Triton LoRA kernels
-    and inject bidirectional fast attention forward.
-
-    Returns (n_qkv, n_o, n_mlp) — number of patched layer types.
-    """
-    n_qkv = n_o = n_mlp = 0
-
-    # Standard path: PeftModel → base_model → model → model.layers
-    layers = model.base_model.model.model.layers
-
-    # Triton kernels and flash attention require the model to be on CUDA.
-    first_param = next(iter(model.parameters()), None)
-    on_cuda = first_param is not None and first_param.device.type == "cuda"
-
-    if on_cuda and lora_dropout == 0 and bias == "none":
-        _require_fast_lora()
-
-    for layer in layers:
-        # --- fast attention (bidirectional) — GPU only ---
-        if on_cuda:
-            layer.self_attn.forward = types.MethodType(
-                TinyA2DAttention_fast_forward, layer.self_attn
-            )
-
-        if not on_cuda or lora_dropout != 0 or bias != "none":
-            # Triton custom autograd does not support dropout or bias in LoRA
-            continue
-
-        # --- MLP patching ---
-        mlp = layer.mlp
-        gate_proj = mlp.gate_proj
-        up_proj = mlp.up_proj
-        down_proj = mlp.down_proj
-        if (
-            hasattr(gate_proj, "lora_A")
-            and hasattr(up_proj, "lora_A")
-            and hasattr(down_proj, "lora_A")
-            and _no_bias(gate_proj)
-            and _no_bias(up_proj)
-            and _no_bias(down_proj)
-            and _no_lora_mag(gate_proj)
-            and _no_lora_mag(up_proj)
-            and _no_lora_mag(down_proj)
-        ):
-            mlp.forward = types.MethodType(apply_lora_mlp_swiglu, mlp)
-            n_mlp += 1
-        else:
-            _warn_once(
-                "FastDiffusionModel: cannot patch MLP layer with Triton LoRA kernel "
-                "(LoRA adapters not enabled or bias present)."
-            )
-
-        # --- QKV patching ---
-        q_proj = layer.self_attn.q_proj
-        k_proj = layer.self_attn.k_proj
-        v_proj = layer.self_attn.v_proj
-        if (
-            hasattr(q_proj, "lora_A")
-            and hasattr(k_proj, "lora_A")
-            and hasattr(v_proj, "lora_A")
-            and _no_bias(q_proj)
-            and _no_bias(k_proj)
-            and _no_bias(v_proj)
-            and _no_lora_mag(q_proj)
-            and _no_lora_mag(k_proj)
-            and _no_lora_mag(v_proj)
-        ):
-            layer.self_attn.apply_qkv = apply_lora_qkv
-            n_qkv += 1
-        else:
-            _warn_once(
-                "FastDiffusionModel: cannot patch QKV with Triton kernel "
-                "(LoRA adapters not enabled or bias present — e.g. Dream q/k/v_proj)."
-            )
-
-        # --- O projection patching ---
-        o_proj = layer.self_attn.o_proj
-        if hasattr(o_proj, "lora_A") and _no_bias(o_proj) and _no_lora_mag(o_proj):
-            layer.self_attn.apply_o = apply_lora_o
-            n_o += 1
-        else:
-            _warn_once(
-                "FastDiffusionModel: cannot patch O projection with Triton kernel."
-            )
-
-    return n_qkv, n_o, n_mlp
 
 
 def _patch_dream_peft(
@@ -567,14 +458,6 @@ def _patch_modernbert_peft(
             )
 
     return 0, n_o, 0
-
-
-def _no_bias(proj: Any) -> bool:
-    return getattr(proj, "base_layer", proj).bias is None
-
-
-def _no_lora_mag(proj: Any) -> bool:
-    return len(getattr(proj, "lora_magnitude_vector", []) or []) == 0
 
 
 def _load_model_with_optional_4bit_fallback(
@@ -1887,6 +1770,7 @@ class FastDiffusionModel:
 
         # Resolved through the registry rather than a module-level reference so
         # that tests monkeypatching `_patch_*_peft` by name still take effect.
+        provider = integration.fast_paths
         patcher = integration.peft_patcher
         if patcher is None:
             # Unreachable today (all patchers live in this module), but a
@@ -1898,10 +1782,25 @@ class FastDiffusionModel:
             )
 
         support = _fast_path_support(model)
+        if provider is not None and support.status != "unsupported":
+            # The family knows its own structure; a model it cannot traverse
+            # is a typed, whole-set withhold (never a partial patch).
+            structure = provider.check_structure(model)
+            if structure.status == "unsupported":
+                support = structure
         incompatibility = support.reason if support.status == "unsupported" else None
         warnings_seen: list[str] = []
         fallback: str | None = None
-        if incompatibility is not None:
+        if incompatibility == "structure_mismatch":
+            fallback = incompatibility
+            message = (
+                "FastDiffusionModel: skipping ALL fast-path patching "
+                f"(reason={incompatibility}): {support.details}. "
+                "The standard PEFT path is retained."
+            )
+            warnings_seen.append(message)
+            _warn_once(message)
+        elif incompatibility is not None:
             # All-or-nothing: a model whose hidden states cannot feed the fused
             # kernels must not end up with SOME fast hooks installed (#177) —
             # the pre-fix failure mode was exactly a fully-hooked model whose
@@ -1919,8 +1818,11 @@ class FastDiffusionModel:
             _warn_once(message)
         else:
             counts = patcher(model, lora_dropout, bias)
-            if integration.peft_report is not None:
-                message = integration.peft_report(model, counts)
+            reporter = (
+                provider.report if provider is not None else integration.peft_report
+            )
+            if reporter is not None:
+                message = reporter(model, counts)
                 warnings_seen.append(message)
                 _warn_once(message)
 
@@ -1939,7 +1841,10 @@ class FastDiffusionModel:
                 target_modules |= (
                     set(targets) if not isinstance(targets, str) else set()
                 )
-            requested = _requested_kinds(target_modules, on_cuda)
+            kinds = (
+                provider.requested_kinds if provider is not None else _requested_kinds
+            )
+            requested = kinds(target_modules, on_cuda)
         return PatchReport(
             family=integration.name,
             model_type=str(model_type),

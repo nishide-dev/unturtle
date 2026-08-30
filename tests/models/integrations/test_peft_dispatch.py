@@ -126,7 +126,11 @@ class TestReportedCounts:
         monkeypatch.setattr(fdm, "_warn_once", lambda msg: messages.append(msg))
         # Patchers touch real module internals; stub them out — this test is
         # about dispatch and reporting, not about kernel injection.
-        monkeypatch.setattr(fdm, "_patch_a2d_peft", lambda m, d, b: (1, 2, 3))
+        # Tiny-A2D lives in its own provider module (#185); the façade holds no
+        # `_patch_a2d_peft` any more, so the seam is the provider's attribute.
+        from unturtle.models.conversion.a2d.tiny_a2d import fast_paths as a2d_fast_paths
+
+        monkeypatch.setattr(a2d_fast_paths, "patch_peft", lambda m, d, b: (1, 2, 3))
         monkeypatch.setattr(fdm, "_patch_dream_peft", lambda m, d, b: (4, 5, 6))
         monkeypatch.setattr(fdm, "_patch_modernbert_peft", lambda m, d, b: (7, 8, 9))
 
@@ -202,7 +206,9 @@ class TestMaxSeqLengthPropagation:
 
         seen = []
         monkeypatch.setattr(fdm, "_warn_once", lambda msg: None)
-        monkeypatch.setattr(fdm, "_patch_a2d_peft", lambda m, d, b: (0, 0, 0))
+        from unturtle.models.conversion.a2d.tiny_a2d import fast_paths as a2d_fast_paths
+
+        monkeypatch.setattr(a2d_fast_paths, "patch_peft", lambda m, d, b: (0, 0, 0))
         monkeypatch.setattr(
             fdm,
             "_propagate_max_seq_length",

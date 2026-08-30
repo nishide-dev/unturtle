@@ -116,6 +116,9 @@ PROCESS_GLOBAL_CASES = ("rng_contract", "sdpa")
 # ---------------------------------------------------------------------------
 
 FDM = "unturtle/fast_diffusion_model.py"
+A2D_PROVIDER = (
+    "unturtle/models/conversion/a2d/tiny_a2d/fast_paths.py"  # #185 Tiny-A2D provider
+)
 
 
 def _mutation(
@@ -161,7 +164,7 @@ _WARN_ONLY = (
 MUTATION_LEDGER: list[dict] = [
     _mutation(
         "a2d_attention_fast_forward",
-        owner="_patch_a2d_peft",
+        owner="tiny_a2d.fast_paths.patch_peft (#185 provider)",
         target="layer.self_attn.forward (instance)",
         applicability="CUDA",
         before="class-level TinyA2D attention forward",
@@ -171,12 +174,12 @@ MUTATION_LEDGER: list[dict] = [
         scope="object-local",
         success_signal=_WARN_ONLY,
         liveness_evidence="tests/test_4bit_peft_fast_lora.py (Dream analogue); A2D E2E tests",
-        classification="EXTRACT -> #185",
-        claims=[(FDM, "layer.self_attn.forward = types.MethodType(")],
+        classification="EXTRACTED -> tiny_a2d.fast_paths (#185, family provider)",
+        claims=[(A2D_PROVIDER, 'targets["self_attn"].forward = types.MethodType(')],
     ),
     _mutation(
         "a2d_mlp_fast_hook",
-        owner="_patch_a2d_peft",
+        owner="tiny_a2d.fast_paths.patch_peft (#185 provider)",
         target="layer.mlp.forward (instance)",
         applicability="CUDA + lora_dropout==0 + bias==none + LoRA + no DoRA + dtype gate (#177)",
         before="class-level MLP forward",
@@ -186,12 +189,14 @@ MUTATION_LEDGER: list[dict] = [
         scope="object-local",
         success_signal=_WARN_ONLY,
         liveness_evidence="fourbit-contract probe: mlp_forward_is_fast + backward",
-        classification="EXTRACT -> #185",
-        claims=[(FDM, "mlp.forward = types.MethodType(apply_lora_mlp_swiglu, mlp)")],
+        classification="EXTRACTED -> tiny_a2d.fast_paths (#185, family provider)",
+        claims=[
+            (A2D_PROVIDER, "mlp.forward = types.MethodType(apply_lora_mlp_swiglu, mlp)")
+        ],
     ),
     _mutation(
         "a2d_qkv_fast_hook",
-        owner="_patch_a2d_peft",
+        owner="tiny_a2d.fast_paths.patch_peft (#185 provider)",
         target="layer.self_attn.apply_qkv",
         applicability="CUDA + lora_dropout==0 + bias==none + LoRA + no DoRA + dtype gate (#177)",
         before="_original_apply_qkv stub",
@@ -201,12 +206,12 @@ MUTATION_LEDGER: list[dict] = [
         scope="object-local",
         success_signal=_WARN_ONLY,
         liveness_evidence="A2D fast-path tests",
-        classification="EXTRACT -> #185",
-        claims=[(FDM, "layer.self_attn.apply_qkv = apply_lora_qkv")],
+        classification="EXTRACTED -> tiny_a2d.fast_paths (#185, family provider)",
+        claims=[(A2D_PROVIDER, 'targets["self_attn"].apply_qkv = apply_lora_qkv')],
     ),
     _mutation(
         "a2d_o_fast_hook",
-        owner="_patch_a2d_peft",
+        owner="tiny_a2d.fast_paths.patch_peft (#185 provider)",
         target="layer.self_attn.apply_o",
         applicability="CUDA + eligibility gates",
         before="_original_apply_o stub",
@@ -216,8 +221,8 @@ MUTATION_LEDGER: list[dict] = [
         scope="object-local",
         success_signal=_WARN_ONLY,
         liveness_evidence="A2D fast-path tests",
-        classification="EXTRACT -> #185",
-        claims=[(FDM, "layer.self_attn.apply_o = apply_lora_o")],
+        classification="EXTRACTED -> tiny_a2d.fast_paths (#185, family provider)",
+        claims=[(A2D_PROVIDER, 'targets["self_attn"].apply_o = apply_lora_o')],
     ),
     _mutation(
         "dream_attention_fast_forward",

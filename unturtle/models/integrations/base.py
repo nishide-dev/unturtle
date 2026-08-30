@@ -65,6 +65,15 @@ class BackboneIntegration:
                            as plain ``llama``/``qwen2``/``qwen3``), and a
                            family can be patchable without being natively
                            loadable (ModernBERT).  Empty means not patchable.
+        _fast_paths_resolver:
+                           Returns the family's fast-path *provider* module
+                           (#185): ``patch_peft``, ``report``,
+                           ``check_structure``, ``requested_kinds``.  Owns
+                           the family's deep structure traversal so the
+                           façade holds no per-family attribute paths.  When
+                           set, ``peft_patcher`` resolves to
+                           ``provider.patch_peft`` and ``_peft_patcher`` /
+                           ``peft_report`` are unused.
         _peft_patcher:     Returns ``(model, lora_dropout, bias) -> counts``.
                            A resolver, like the class hooks, so importing the
                            registry pulls in no kernel modules.
@@ -91,6 +100,7 @@ class BackboneIntegration:
     _native_resolver: Callable[[], Any] | None = None
     _wrapper_resolver: Callable[[], Any] | None = None
     peft_model_types: tuple[str, ...] = ()
+    _fast_paths_resolver: Callable[[], Any] | None = None
     _peft_patcher: Callable[[], Any] | None = None
     peft_report: Callable[[Any, tuple[int, int, int]], str] | None = None
     _sparse_output_resolver: Callable[[Any], Any] | None = None
@@ -123,8 +133,21 @@ class BackboneIntegration:
             return None
 
     @property
+    def fast_paths(self) -> Any | None:
+        """Resolve the family's fast-path provider, or ``None`` if none / unavailable."""
+        if self._fast_paths_resolver is None:
+            return None
+        try:
+            return self._fast_paths_resolver()
+        except ImportError:
+            return None
+
+    @property
     def peft_patcher(self) -> Any | None:
         """Resolve the PEFT patch function, or ``None`` if unavailable."""
+        provider = self.fast_paths
+        if provider is not None:
+            return provider.patch_peft
         if self._peft_patcher is None:
             return None
         try:
