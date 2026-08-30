@@ -34,9 +34,8 @@ def test_tiny_a2d_declares_its_patcher_through_the_provider(integrations, family
     assert row["peft_patcher"]["resolved"] is True, row
     assert row["peft_patcher"]["target"] == f"{A2D_PROVIDER}.patch_peft", row
     assert row["peft_patcher"]["via"] == "fast_paths", row
-    assert row["fast_paths"]["resolved"] is True and row["fast_paths"][
-        "target"
-    ].endswith("._a2d_fast_paths"), row
+    assert row["fast_paths"]["resolved"] is True, row
+    assert row["fast_paths"]["target"] == A2D_PROVIDER, row
 
 
 @pytest.mark.parametrize("family", ("dream", "llada", "modernbert-diffusion"))
