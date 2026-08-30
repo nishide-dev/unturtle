@@ -129,8 +129,11 @@ def _llada_patcher() -> Any:
     return _loader_attr("_patch_llada_peft")
 
 
-def _modernbert_patcher() -> Any:
-    return _loader_attr("_patch_modernbert_peft")
+def _modernbert_fast_paths() -> Any:
+    """The ModernBERT provider module (#185) — imported only when a lookup needs it."""
+    from unturtle.models.backbones.modernbert import fast_paths
+
+    return fast_paths
 
 
 def _n_layers(model: Any) -> int:
@@ -159,16 +162,6 @@ def _llada_report(model: Any, counts: tuple[int, int, int]) -> str:
     return (
         f"FastDiffusionModel (LLaDA) patched {n_blocks} blocks with "
         f"{n_qkv} QKV blocks and {n_o} O (attn_out) blocks."
-    )
-
-
-def _modernbert_report(model: Any, counts: tuple[int, int, int]) -> str:
-    _n_qkv, n_o, _n_mlp = counts
-    return (
-        f"FastDiffusionModel (ModernBERT) patched {_n_layers(model)} layers with "
-        f"{n_o} Wo (output proj) layers. "
-        "Wqkv/MLP Triton kernels not yet supported for ModernBERT — "
-        "see issue #59 Phase 2."
     )
 
 
@@ -240,8 +233,7 @@ def _builtin_integrations() -> list[BackboneIntegration]:
             # No native class: loads through FastModel, but is PEFT-patchable.
             model_types=(),
             peft_model_types=("modernbert-diffusion",),
-            _peft_patcher=_modernbert_patcher,
-            peft_report=_modernbert_report,
+            _fast_paths_resolver=_modernbert_fast_paths,
             capabilities=frozenset({"masked_generation"}),
         ),
         BackboneIntegration(

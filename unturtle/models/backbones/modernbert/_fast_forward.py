@@ -40,7 +40,7 @@ def ModernBertAttention_fast_forward(
     and ``out_drop`` — then replaces only the final ``self.Wo(attn_output)``
     call with ``self.apply_wo(self, attn_output)`` so that the Triton-fused
     ``apply_lora_o`` kernel is used when patched in by
-    ``_patch_modernbert_peft``.
+    ``modernbert.fast_paths.patch_peft`` (#185 provider).
 
     Upstream ``ModernBertAttention`` already sets ``self.is_causal = False``, so
     bidirectionality is preserved without any attention path changes.
@@ -86,7 +86,7 @@ def ModernBertAttention_fast_forward(
 
     attn_output = attn_output.reshape(*input_shape, -1).contiguous()
     # Dispatch through apply_wo instead of self.Wo directly —
-    # enables Triton apply_lora_o when patched by _patch_modernbert_peft.
+    # enables Triton apply_lora_o when patched by modernbert.fast_paths.patch_peft.
     attn_output = self.out_drop(self.apply_wo(self, attn_output))
     return attn_output, attn_weights
 
@@ -99,7 +99,7 @@ def _original_apply_wo(self, X: torch.Tensor) -> torch.Tensor:
 def _install_modernbert_stubs(model) -> None:
     """Set apply_wo stub on all ModernBertAttention layers that lack it.
 
-    Required before _patch_modernbert_peft or before using
+    Required before modernbert.fast_paths.patch_peft or before using
     ModernBertAttention_fast_forward without PEFT.
     """
     for module in model.modules():

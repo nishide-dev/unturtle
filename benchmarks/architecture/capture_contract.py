@@ -116,6 +116,9 @@ PROCESS_GLOBAL_CASES = ("rng_contract", "sdpa")
 # ---------------------------------------------------------------------------
 
 FDM = "unturtle/fast_diffusion_model.py"
+MODERNBERT_PROVIDER = (
+    "unturtle/models/backbones/modernbert/fast_paths.py"  # #185 ModernBERT provider
+)
 A2D_PROVIDER = (
     "unturtle/models/conversion/a2d/tiny_a2d/fast_paths.py"  # #185 Tiny-A2D provider
 )
@@ -356,7 +359,7 @@ MUTATION_LEDGER: list[dict] = [
     ),
     _mutation(
         "modernbert_attention_fast_forward",
-        owner="_patch_modernbert_peft",
+        owner="modernbert.fast_paths.patch_peft (#185 provider)",
         target="layer.attn.forward (instance)",
         applicability="CUDA",
         before="ModernBertAttention.forward (class)",
@@ -366,14 +369,17 @@ MUTATION_LEDGER: list[dict] = [
         scope="object-local",
         success_signal=_WARN_ONLY,
         liveness_evidence="ModernBERT tests",
-        classification="EXTRACT -> #185",
+        classification="EXTRACTED -> modernbert.fast_paths (#185, family provider)",
         claims=[
-            (FDM, "attn.forward = types.MethodType(ModernBertAttention_fast_forward")
+            (
+                MODERNBERT_PROVIDER,
+                "attn.forward = types.MethodType(ModernBertAttention_fast_forward",
+            )
         ],
     ),
     _mutation(
         "modernbert_wo_fast_hook",
-        owner="_patch_modernbert_peft",
+        owner="modernbert.fast_paths.patch_peft (#185 provider)",
         target="attn.apply_wo + o_proj aliasing",
         applicability="CUDA + eligibility gates",
         before="_original_apply_wo stub",
@@ -383,8 +389,11 @@ MUTATION_LEDGER: list[dict] = [
         scope="object-local",
         success_signal=_WARN_ONLY,
         liveness_evidence="ModernBERT tests",
-        classification="EXTRACT -> #185",
-        claims=[(FDM, "attn.apply_wo = apply_lora_o"), (FDM, "attn.o_proj = attn.Wo")],
+        classification="EXTRACTED -> modernbert.fast_paths (#185, family provider)",
+        claims=[
+            (MODERNBERT_PROVIDER, "attn.apply_wo = apply_lora_o"),
+            (MODERNBERT_PROVIDER, "attn.o_proj = attn.Wo"),
+        ],
     ),
     _mutation(
         "post_load_class_swap",
