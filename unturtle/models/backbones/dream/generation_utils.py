@@ -668,9 +668,15 @@ class DreamGenerationMixin(BlockDecodeMixin):
         input_ids: torch.LongTensor,
         attention_mask: Optional[torch.LongTensor],
         generation_config: DreamGenerationConfig,
-        generation_tokens_hook_func,
-        generation_logits_hook_func,
+        generation_tokens_hook_func=None,
+        generation_logits_hook_func=None,
     ) -> Union[DreamModelOutput, torch.LongTensor]:
+        # Hooks default to identity so the explicit runner contract (#186)
+        # can invoke this loop without Dream-specific arguments.
+        if generation_tokens_hook_func is None:
+            generation_tokens_hook_func = lambda step, x, logits: x  # noqa: E731
+        if generation_logits_hook_func is None:
+            generation_logits_hook_func = lambda step, x, logits: logits  # noqa: E731
         # init values
 
         output_history = generation_config.output_history

@@ -411,51 +411,6 @@ MUTATION_LEDGER: list[dict] = [
         ],
     ),
     _mutation(
-        "post_load_class_swap",
-        owner="_apply_post_load_class_swap",
-        target="model.__class__",
-        applicability="model_type in _POST_LOAD_CLASS_SWAPS AND isinstance(model, wrapper bases)",
-        before="upstream transformers class (e.g. DiffusionGemmaForBlockDiffusion)",
-        after="UnturtleDiffusionGemmaForBlockDiffusion",
-        idempotent="yes (isinstance guard)",
-        reversible="reassign original class (no API)",
-        scope="object-local",
-        success_signal="silent on success; warning when the swap is refused",
-        liveness_evidence="DiffusionGemma real-checkpoint tests (slow/gpu)",
-        classification="REPLACE -> #186",
-        claims=[(FDM, "model.__class__ = wrapper_cls")],
-    ),
-    _mutation(
-        "instance_generate_deletion",
-        owner="_apply_post_load_class_swap",
-        target="model.__dict__['generate']",
-        applicability="after class swap (unsloth FastModel installs an instance-level generate)",
-        before="unsloth_base_fast_generate (instance attribute)",
-        after="absent -> class-level generate shim wins",
-        idempotent="yes (pop with default)",
-        reversible="no (original saved as _old_generate by unsloth)",
-        scope="object-local",
-        success_signal="silent",
-        liveness_evidence="DiffusionGemma generation tests",
-        classification="REPLACE -> #186",
-        claims=[(FDM, 'model.__dict__.pop("generate", None)')],
-    ),
-    _mutation(
-        "generation_config_restoration",
-        owner="_apply_post_load_class_swap",
-        target="model.generation_config",
-        applicability="post-swap, when unset and model can_generate",
-        before="absent (unsloth load path skips the __init__ postamble)",
-        after="checkpoint generation config, or from_model_config fallback",
-        idempotent="yes (never overwrites a populated one)",
-        reversible="reassign",
-        scope="object-local",
-        success_signal="silent",
-        liveness_evidence="#96 regression tests",
-        classification="REPLACE -> #186",
-        claims=[(FDM, "model.generation_config = restored")],
-    ),
-    _mutation(
         "apply_stubs_install",
         owner="peft_preparation.install_apply_stubs (#185 PR 2)",
         target="module.apply_qkv / module.apply_o on every q_proj+o_proj module",
@@ -1016,7 +971,7 @@ def build_verdicts(sections: dict) -> dict:
         ),
         "signature_guessing_generation": verdict(
             "Signature-guessing generation invocation",
-            "REPLACE -> #186",
+            "REPLACED -> #186 (explicit declared loop contract; no signature inspection)",
             {
                 "generation_probe": (
                     "sampler resolves call signatures via inspection — a "
@@ -1026,9 +981,9 @@ def build_verdicts(sections: dict) -> dict:
         ),
         "diffusion_gemma_class_swap": verdict(
             "DiffusionGemma runtime class swap",
-            "REPLACE -> #186",
+            "REPLACED -> #186 (runtime __class__ swap removed; wrapper-first load owns the class)",
             {
-                "mutation_ledger": "post_load_class_swap + instance_generate_deletion rows"
+                "mutation_ledger": "rows removed with the swap (#186); wrapper-first load path in unturtle/models/loading.py"
             },
         ),
         "root_export_growth": verdict(

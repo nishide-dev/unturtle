@@ -255,100 +255,6 @@ def _fast_path_dtype_incompatibility(model: Any) -> str | None:
     return support.reason if support.status == "unsupported" else None
 
 
-#: model_type -> zero-arg wrapper resolver for the post-load ``__class__`` swap
-#: (#186 territory — the swap stays in the façade). The SAME dict object the
-#: loader consults for wrapper-first ordering, so a test/plugin mutation of one
-#: is seen by both.
-from unturtle.models.loading import _POST_LOAD_CLASS_SWAPS  # noqa: E402
-
-
-def _apply_post_load_class_swap(model: Any, model_name: str | None = None) -> None:
-    """Swap model's class to the registered wrapper, if any.
-
-    When ``unsloth.FastModel`` loads a model it returns the upstream
-    ``transformers`` class.  Backbone modules can register a resolver in
-    :data:`_POST_LOAD_CLASS_SWAPS` so that the thin Unturtle wrapper class is
-    installed via ``__class__`` assignment after loading.
-
-    After the class swap (or when the model is already the wrapper class),
-    any instance-level ``generate`` attribute is removed.  unsloth FastModel
-    installs ``unsloth_base_fast_generate`` as an instance attribute (saving
-    the original as ``self._old_generate``), which would shadow the wrapper
-    class's unified ``generate`` shim AND forces ``cache_implementation=
-    "static"``, crashing DiffusionGemma's flex-attention canvas block loop.
-    Dropping the instance attribute lets the class-level shim win.
-    """
-    model_type = getattr(getattr(model, "config", None), "model_type", None)
-    resolver = _POST_LOAD_CLASS_SWAPS.get(model_type)
-    if resolver is None:
-        return
-    wrapper_cls = resolver()
-    if not isinstance(model, wrapper_cls):
-        # Only stamp the wrapper onto the architecture it subclasses.  The
-        # Auto* fallback can resolve a model_type to a *different* head (for
-        # diffusion_gemma, the bare composite model with encoder/decoder
-        # children); setting `__class__` there makes a chimera whose methods
-        # reference submodules the instance never had -- the first generate
-        # died with `AttributeError: ... no attribute 'model'` (#96).  An
-        # un-swapped model keeps its own contract untouched, including any
-        # instance-level generate.
-        if not isinstance(model, wrapper_cls.__bases__):
-            _logger.warning(
-                "FastDiffusionModel: not swapping %s onto %s -- the loaded "
-                "architecture is not an instance of the wrapper's upstream "
-                "base%s. The model keeps its original class; the unified "
-                "generate shim is unavailable on this load.",
-                type(model).__name__,
-                wrapper_cls.__name__,
-                f" ({wrapper_cls.__bases__[0].__name__})",
-            )
-            return
-        model.__class__ = wrapper_cls
-    # unsloth FastModel installs an instance-level fast-generate wrapper
-    # (saving the original as `_old_generate`). It would shadow the wrapper
-    # class's unified `generate` shim AND forces cache_implementation="static",
-    # which breaks DiffusionGemma's canvas flex-attention block mask. Drop the
-    # instance attribute so the class-level shim (verbatim upstream delegation)
-    # wins. This runs whether the class was just swapped or was already the
-    # wrapper (covers re-entrant / double-swap scenarios).
-    model.__dict__.pop("generate", None)
-
-    # unsloth's load path also skips the `PreTrainedModel.__init__` postamble
-    # that populates `generation_config`, so the swapped model's first real
-    # generate raised `AttributeError: ... no attribute 'generation_config'`
-    # (#96).  Measured on the real DiffusionGemma checkpoint: a plain
-    # transformers load carries a `DiffusionGemmaGenerationConfig`; the
-    # FastModel load has nothing in `__dict__`.  Restore it here -- the swap
-    # site owns the wrapper's generate contract.  Prefer the checkpoint's own
-    # generation config (it carries tuned sampler fields the model-config
-    # derivation would discard); fall back to upstream init's own logic.
-    # Never overwrite one that a load path did populate.
-    # Tolerant lookups rather than assuming the full PreTrainedModel surface:
-    # the restoration only makes sense for models that expose upstream's
-    # generation contract, and a wrapper family without it simply keeps
-    # whatever it had.
-    can_generate = getattr(model, "can_generate", None)
-    config_cls = getattr(model, "generation_config_class", None)
-    if (
-        "generation_config" not in model.__dict__
-        and config_cls is not None
-        and callable(can_generate)
-        and can_generate()
-    ):
-        restored = None
-        if model_name is not None:
-            try:
-                restored = config_cls.from_pretrained(model_name)
-            except (OSError, ValueError):
-                restored = None
-        if restored is None:
-            try:
-                restored = config_cls.from_model_config(model.config)
-            except NotImplementedError:
-                restored = config_cls()
-        model.generation_config = restored
-
-
 # ---------------------------------------------------------------------------
 # Observed fast-path installation and liveness (#185 PR 0 — descriptive only)
 # ---------------------------------------------------------------------------
@@ -643,7 +549,6 @@ class FastDiffusionModel:
             model_class=model_class,
             trust_remote_code=trust_remote_code,
             token=token,
-            post_load=_apply_post_load_class_swap,
             **kwargs,
         )
 

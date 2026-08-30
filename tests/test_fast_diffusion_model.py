@@ -1652,119 +1652,72 @@ class TestFastModelDelegation:
 
 
 # ---------------------------------------------------------------------------
-# Post-load class-swap registry — _POST_LOAD_CLASS_SWAPS / _apply_post_load_class_swap
+# Runtime class mutation is GONE (#186): wrapper-first load owns the class
 # ---------------------------------------------------------------------------
 
 
-class TestPostLoadClassSwap:
-    def test_registered_resolver_swaps_class(self):
+class TestNoRuntimeClassMutation:
+    def test_the_swap_function_no_longer_exists(self):
         from unturtle import fast_diffusion_model as fdm
 
-        class _Base:
-            class config:
-                model_type = "swaptest"
+        assert not hasattr(fdm, "_apply_post_load_class_swap")
+        assert not hasattr(fdm, "_POST_LOAD_CLASS_SWAPS")
+        assert not hasattr(_loading, "_apply_post_load_class_swap")
 
-        class _Wrapper(_Base):
-            pass
+    def test_no_module_assigns_dunder_class(self):
+        """No `something.__class__ = ...` statement exists in the loader or the
+        façade — asserted on the AST, not on source text."""
+        import ast
+        import inspect
 
-        fdm._POST_LOAD_CLASS_SWAPS["swaptest"] = lambda: _Wrapper
-        try:
-            m = _Base()
-            fdm._apply_post_load_class_swap(m)
-            assert type(m) is _Wrapper
-        finally:
-            del fdm._POST_LOAD_CLASS_SWAPS["swaptest"]
-
-    def test_unregistered_model_type_untouched(self):
         from unturtle import fast_diffusion_model as fdm
 
-        class _Other:
-            class config:
-                model_type = "nobody-registered-this"
+        for module in (fdm, _loading):
+            tree = ast.parse(inspect.getsource(module))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        assert not (
+                            isinstance(target, ast.Attribute)
+                            and target.attr == "__class__"
+                        ), ast.dump(node)
 
-        m = _Other()
-        fdm._apply_post_load_class_swap(m)
-        assert type(m) is _Other
+    def test_wrapper_family_types_skip_fastmodel(self, monkeypatch):
+        """A model_type with a registered wrapper loads through the Auto chain
+        (wrapper first) — FastModel is never consulted, and the loaded object's
+        class is exactly what the loader returned (identity, no mutation)."""
 
-    def test_unregistered_model_keeps_instance_generate(self):
-        """Unregistered model types must NOT have their instance-level generate removed."""
-        from unturtle import fast_diffusion_model as fdm
+        class _Cfg:
+            model_type = "wrapfirst"
 
-        class _Other:
-            class config:
-                model_type = "nobody-registered-this"
+        class _FakeAutoConfig:
+            @staticmethod
+            def from_pretrained(name, **kwargs):
+                return _Cfg()
 
-        sentinel = object()
+        class _Wrapper:
+            @classmethod
+            def from_pretrained(cls, name, **kwargs):
+                return object.__new__(cls)
 
-        m = _Other()
-        m.generate = sentinel  # type: ignore[attr-defined]
-        fdm._apply_post_load_class_swap(m)
-        # Unregistered — instance attribute must be preserved
-        assert m.__dict__.get("generate") is sentinel
-
-
-class TestSwapRefusesIncompatibleArchitectures:
-    """Stamping the wrapper class onto a foreign architecture makes a chimera.
-
-    Observed on the real checkpoint (#96): when the unsloth path is
-    unavailable, the Auto* fallback resolves `diffusion_gemma` to the bare
-    composite model (children `encoder`/`decoder`), and the swap then set
-    `__class__` to the ForBlockDiffusion wrapper anyway — an object whose
-    class expects `self.model`/`self.lm_head` that the instance never had.
-    The first `.generate` died with `AttributeError: ... no attribute
-    'model'`.  A swap is only meaningful onto the architecture the wrapper
-    subclasses.
-    """
-
-    def test_a_foreign_architecture_is_not_swapped(self):
-        from unturtle import fast_diffusion_model as fdm
-
-        class _UpstreamHead:
-            pass
-
-        class _Wrapper(_UpstreamHead):
-            pass
-
-        class _WrongArchitecture:
-            class config:
-                model_type = "archswap"
-
-        fdm._POST_LOAD_CLASS_SWAPS["archswap"] = lambda: _Wrapper
-        try:
-            model = _WrongArchitecture()
-            sentinel = object()
-            model.generate = sentinel
-            fdm._apply_post_load_class_swap(model)
-        finally:
-            del fdm._POST_LOAD_CLASS_SWAPS["archswap"]
-
-        assert type(model) is _WrongArchitecture, (
-            "the wrapper was stamped onto an architecture it does not "
-            "subclass; the result is a chimera whose methods reference "
-            "submodules the instance never had"
+        monkeypatch.setattr(_loading, "AutoConfig", _FakeAutoConfig, raising=False)
+        monkeypatch.setattr(_loading, "_load_native", lambda *a, **k: None)
+        fastmodel_calls = []
+        monkeypatch.setattr(
+            _loading,
+            "_load_via_fastmodel",
+            lambda *a, **k: fastmodel_calls.append(1) or None,
         )
-        assert model.__dict__.get("generate") is sentinel, (
-            "the unswapped model's own generate was removed"
-        )
-
-    def test_the_matching_architecture_still_swaps(self):
-        from unturtle import fast_diffusion_model as fdm
-
-        class _UpstreamHead:
-            class config:
-                model_type = "archswap2"
-
-        class _Wrapper(_UpstreamHead):
-            pass
-
-        fdm._POST_LOAD_CLASS_SWAPS["archswap2"] = lambda: _Wrapper
+        _loading._POST_LOAD_CLASS_SWAPS["wrapfirst"] = lambda: _Wrapper
         try:
-            model = _UpstreamHead()
-            fdm._apply_post_load_class_swap(model)
+            model, tok, path = _loading._load_model_auto_traced(
+                "org/wrapfirst", {}, trust_remote_code=False
+            )
         finally:
-            del fdm._POST_LOAD_CLASS_SWAPS["archswap2"]
-
-        assert type(model) is _Wrapper
+            del _loading._POST_LOAD_CLASS_SWAPS["wrapfirst"]
+        assert fastmodel_calls == []  # FastModel skipped for wrapper families
+        assert path == "auto"
+        assert type(model) is _Wrapper  # the LOAD produced the wrapper class
 
 
 class TestAutoFallbackPrefersTheRegisteredHead:
@@ -1833,11 +1786,11 @@ class TestAutoFallbackPrefersTheRegisteredHead:
             "_load_model_with_optional_4bit_fallback",
             lambda loader, name, kw: loader.from_pretrained(name, **kw),
         )
-        fdm._POST_LOAD_CLASS_SWAPS["headswap"] = lambda: _Wrapper
+        _loading._POST_LOAD_CLASS_SWAPS["headswap"] = lambda: _Wrapper
         try:
-            model = fdm._load_via_automodel("org/ckpt", {})
+            model = _loading._load_via_automodel("org/ckpt", {})
         finally:
-            del fdm._POST_LOAD_CLASS_SWAPS["headswap"]
+            del _loading._POST_LOAD_CLASS_SWAPS["headswap"]
 
         assert calls[0] == ("wrapper", "org/ckpt"), (
             f"loader order was {[c[0] for c in calls]}; the registered "
@@ -1876,126 +1829,10 @@ class TestAutoFallbackPrefersTheRegisteredHead:
             _loading, "_automodel_loaders", lambda: [("AutoModel", _FakeAutoModel)]
         )
 
-        model = fdm._load_via_automodel("org/other", {})
+        model = _loading._load_via_automodel("org/other", {})
 
         assert loaded == ["org/other"]
         assert model is not None
-
-
-class TestSwapRestoresGenerationConfig:
-    """unsloth's FastModel load path skips the `PreTrainedModel.__init__`
-    postamble that populates `generation_config`, so a swapped DiffusionGemma
-    raised `AttributeError: ... no attribute 'generation_config'` on its
-    first real generate (#96).  Measured on the real checkpoint: the plain
-    transformers load carries a `DiffusionGemmaGenerationConfig`; the
-    FastModel load has nothing in `__dict__`.  The swap site owns the wrapper
-    contract, so it restores the attribute — from the checkpoint's own
-    generation config when a name is available (preserving tuned sampler
-    fields), falling back to the class's model-config derivation, exactly
-    mirroring upstream init.
-    """
-
-    @staticmethod
-    def _family(*, can_generate=True, from_pretrained_raises=False):
-        class _GenConfig:
-            def __init__(self, origin="bare"):
-                self.origin = origin
-
-            @classmethod
-            def from_pretrained(cls, name):
-                if from_pretrained_raises:
-                    raise OSError("no generation_config.json")
-                return cls(origin=f"checkpoint:{name}")
-
-            @classmethod
-            def from_model_config(cls, config):
-                return cls(origin="model_config")
-
-        class _Base:
-            generation_config_class = _GenConfig
-
-            class config:
-                model_type = "gcswap"
-
-            @classmethod
-            def can_generate(cls):
-                return can_generate
-
-        class _Wrapper(_Base):
-            pass
-
-        return _Base, _Wrapper, _GenConfig
-
-    def _swapped(self, base_cls, wrapper_cls, model_name=None):
-        from unturtle import fast_diffusion_model as fdm
-
-        fdm._POST_LOAD_CLASS_SWAPS["gcswap"] = lambda: wrapper_cls
-        try:
-            model = base_cls()
-            fdm._apply_post_load_class_swap(model, model_name=model_name)
-        finally:
-            del fdm._POST_LOAD_CLASS_SWAPS["gcswap"]
-        return model
-
-    def test_a_missing_config_is_restored_from_the_checkpoint(self):
-        base, wrapper, _ = self._family()
-
-        model = self._swapped(base, wrapper, model_name="org/ckpt")
-
-        assert "generation_config" in model.__dict__, (
-            "the swap left the instance without a generation_config; the "
-            "first generate would raise AttributeError (#96)"
-        )
-        assert model.generation_config.origin == "checkpoint:org/ckpt", (
-            "the checkpoint's own generation config (tuned sampler fields) "
-            "was not preferred"
-        )
-
-    def test_the_fallback_derives_from_the_model_config(self):
-        """No checkpoint file (or no name): mirror upstream init."""
-        base, wrapper, _ = self._family(from_pretrained_raises=True)
-
-        model = self._swapped(base, wrapper, model_name="org/ckpt")
-
-        assert model.generation_config.origin == "model_config"
-
-    def test_no_model_name_still_restores(self):
-        base, wrapper, _ = self._family()
-
-        model = self._swapped(base, wrapper, model_name=None)
-
-        assert model.generation_config.origin == "model_config"
-
-    def test_an_existing_config_is_not_overwritten(self):
-        """A load path that DID populate it (plain transformers) must win —
-        the restored default would discard checkpoint-tuned fields."""
-        base, wrapper, gen_config = self._family()
-        sentinel = gen_config(origin="already-there")
-
-        from unturtle import fast_diffusion_model as fdm
-
-        fdm._POST_LOAD_CLASS_SWAPS["gcswap"] = lambda: wrapper
-        try:
-            model = base()
-            model.generation_config = sentinel
-            fdm._apply_post_load_class_swap(model, model_name="org/ckpt")
-        finally:
-            del fdm._POST_LOAD_CLASS_SWAPS["gcswap"]
-
-        assert model.generation_config is sentinel
-
-    def test_a_non_generating_model_is_left_alone(self):
-        """Mirrors upstream: only `can_generate()` models carry the attr."""
-        base, wrapper, _ = self._family(can_generate=False)
-
-        model = self._swapped(base, wrapper, model_name="org/ckpt")
-
-        assert "generation_config" not in model.__dict__
-
-
-# ---------------------------------------------------------------------------
-# FastModel kwarg forwarding — _load_via_fastmodel
-# ---------------------------------------------------------------------------
 
 
 class TestFastModelKwargForwarding:

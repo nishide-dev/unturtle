@@ -257,19 +257,19 @@ class TestBackwardCompatibleShims:
 
     def test_post_load_swaps_is_a_mutable_dict_of_resolvers(self):
         """`tests/models/test_diffusion_gemma.py` asserts resolver() is the class."""
-        from unturtle import fast_diffusion_model as fdm
+        from unturtle.models import loading
         from unturtle.models.backbones.diffusion_gemma import (
             UnturtleDiffusionGemmaForBlockDiffusion,
         )
 
-        resolver = fdm._POST_LOAD_CLASS_SWAPS.get("diffusion_gemma")
+        resolver = loading._POST_LOAD_CLASS_SWAPS.get("diffusion_gemma")
         assert resolver is not None
         assert callable(resolver)
         assert resolver() is UnturtleDiffusionGemmaForBlockDiffusion
 
     def test_post_load_swaps_accepts_runtime_registration(self):
         """A test in the existing suite injects a synthetic model_type."""
-        from unturtle import fast_diffusion_model as fdm
+        from unturtle.models import loading
 
         class _Wrapper:
             pass
@@ -280,13 +280,16 @@ class TestBackwardCompatibleShims:
         class _Model:
             config = _Cfg()
 
-        fdm._POST_LOAD_CLASS_SWAPS["registry-shim-test"] = lambda: _Wrapper
+        loading._POST_LOAD_CLASS_SWAPS["registry-shim-test"] = lambda: _Wrapper
         try:
+            # The runtime swap is gone (#186): a registration is consulted by
+            # the LOADER (wrapper-first routing) and never mutates an instance.
             model = _Model()
-            fdm._apply_post_load_class_swap(model)
-            assert type(model) is _Wrapper
+            resolver = loading._POST_LOAD_CLASS_SWAPS["registry-shim-test"]
+            assert resolver() is _Wrapper
+            assert type(model) is _Model  # no instance is ever restamped
         finally:
-            del fdm._POST_LOAD_CLASS_SWAPS["registry-shim-test"]
+            del loading._POST_LOAD_CLASS_SWAPS["registry-shim-test"]
 
 
 class TestExtensibility:
