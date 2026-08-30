@@ -33,6 +33,7 @@ freeze and the user's Stage-1 list:
 - determinism given seeds; EMA lerp semantics.
 """
 
+import contextlib
 import pathlib
 import sys
 
@@ -47,6 +48,82 @@ pytest.importorskip(
 ORACLE_SRC = (
     pathlib.Path(__file__).resolve().parent.parent / "dev" / "repos" / "elf" / "src"
 )
+
+#: The oracle clone is machine-local and gitignored (see CLAUDE.md dev/repos):
+#: absent on fresh checkouts, worktrees and CI. Its absence is an environment
+#: fact, never a failure (#192).
+_ORACLE_AVAILABLE = (ORACLE_SRC / "train_step.py").is_file()
+
+#: Top-level names the oracle clone owns while imported. Generic enough
+#: ("utils"!) to collide with anything another test or wheel cached earlier.
+_ORACLE_TOPLEVEL = ("train_step", "utils", "modules", "configs")
+
+
+def _purge_oracle_toplevel() -> dict:
+    """Remove (and return) any cached top-level modules that would shadow the
+    oracle's — a pre-imported plain `utils` module makes
+    `from utils.train_utils import ...` fail with "'utils' is not a package",
+    or worse, silently resolves a DIFFERENT project's utils (#192)."""
+    saved = {}
+    for name in list(sys.modules):
+        if name.split(".")[0] in _ORACLE_TOPLEVEL and not name.startswith("unturtle"):
+            saved[name] = sys.modules.pop(name)
+    return saved
+
+
+@contextlib.contextmanager
+def oracle_imports():
+    """Import the ELF oracle in isolation, with explicit provenance.
+
+    - skips (never fails) when the machine-local clone is absent;
+    - purges colliding cached top-level modules before importing and restores
+      them afterwards, so neither direction of pollution can occur;
+    - asserts the resolved `utils` really lives under ORACLE_SRC — a decoy
+      module of the same name anywhere on sys.path must never be picked up.
+    """
+    if not _ORACLE_AVAILABLE:
+        pytest.skip(
+            "ELF oracle clone not present — clone it into dev/repos/elf "
+            "(machine-local, gitignored; see CLAUDE.md)"
+        )
+    saved = _purge_oracle_toplevel()
+    sys.path.insert(0, str(ORACLE_SRC))
+    try:
+        # Anchor the oracle's namespace packages EXPLICITLY: the clone's
+        # `utils`/`modules`/`configs` have no __init__.py, and a regular
+        # package of the same name anywhere on sys.path beats a namespace
+        # portion regardless of path order — the scan can silently resolve a
+        # different project's module. Pinning __path__ removes the scan.
+        import types as _types
+
+        for name in _ORACLE_TOPLEVEL:
+            pkg_dir = ORACLE_SRC / name
+            if pkg_dir.is_dir() and not (pkg_dir / "__init__.py").exists():
+                anchor = _types.ModuleType(name)
+                anchor.__path__ = [str(pkg_dir)]
+                sys.modules[name] = anchor
+
+        # The oracle entry module: a PLAIN module obeys sys.path order, and
+        # ORACLE_SRC sits at position 0 — unlike the namespace packages above,
+        # no same-name file elsewhere can outrank it, so the ordinary import
+        # is already explicit here (a spec-load added nothing: mutation-tested
+        # as semantically null and removed).
+        import train_step as oracle_train_step
+        import utils as oracle_utils
+
+        resolved = pathlib.Path(
+            next(iter(getattr(oracle_utils, "__path__", [])), "")
+            or getattr(oracle_utils, "__file__", "")
+        ).resolve()
+        assert str(resolved).startswith(str(ORACLE_SRC.resolve())), (
+            f"wrong 'utils' resolved: {resolved} (expected under {ORACLE_SRC})"
+        )
+        yield oracle_train_step
+    finally:
+        sys.path.remove(str(ORACLE_SRC))
+        _purge_oracle_toplevel()
+        sys.modules.update(saved)
+
 
 TINY = dict(
     text_encoder_dim=16,
@@ -140,9 +217,7 @@ class TestOracleDifferential:
         """Same tiny model/weights, same frozen RNG → identical loss and
         identical parameter gradients (the oracle runs backward but no
         optimizer step at grad_accum=2)."""
-        sys.path.insert(0, str(ORACLE_SRC))
-        try:
-            import train_step as oracle_train_step
+        with oracle_imports() as oracle_train_step:
             from unturtle_elf.training import elf_training_loss
             from utils.train_utils import TrainState
 
@@ -190,16 +265,6 @@ class TestOracleDifferential:
                     assert param_p.grad is None, name_p
                 else:
                     assert torch.equal(param_o.grad, param_p.grad), name_o
-        finally:
-            sys.path.remove(str(ORACLE_SRC))
-            for name in list(sys.modules):
-                if name.split(".")[0] in (
-                    "train_step",
-                    "utils",
-                    "modules",
-                    "configs",
-                ) and not name.startswith("unturtle"):
-                    sys.modules.pop(name, None)
 
 
 class _CheatingDenoiser(torch.nn.Module):
@@ -405,8 +470,7 @@ class TestSeams:
         """The #153 default-trap, training side: the draw must be seeded-
         equal to the oracle's sample_timesteps with p_mean=-1.5 and differ
         from the -0.8 default."""
-        sys.path.insert(0, str(ORACLE_SRC))
-        try:
+        with oracle_imports():
             from unturtle_elf.training import elf_training_loss
             from utils.sampling_utils import sample_timesteps
 
@@ -441,13 +505,6 @@ class TestSeams:
                 dtype=torch.float32,
             )
             assert not torch.equal(aux["t"], default_draw)
-        finally:
-            sys.path.remove(str(ORACLE_SRC))
-            for name in list(sys.modules):
-                if name.split(".")[0] in ("utils", "modules", "configs") and not (
-                    name.startswith("unturtle")
-                ):
-                    sys.modules.pop(name, None)
 
     def test_deterministic_given_seeds(self):
         from unturtle_elf.training import elf_training_loss
@@ -488,3 +545,54 @@ class TestEma:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
+
+
+class TestOracleImportIsolation:
+    """#192 — the two failure modes, frozen as minimal repro fixtures."""
+
+    def test_missing_clone_skips_instead_of_failing(self, monkeypatch):
+        monkeypatch.setattr(
+            sys.modules[__name__], "_ORACLE_AVAILABLE", False, raising=True
+        )
+        with pytest.raises(pytest.skip.Exception), oracle_imports():
+            pass  # pragma: no cover — never reached
+
+    def test_a_poisoned_utils_module_is_neither_used_nor_lost(self):
+        """A pre-cached plain `utils` module (any earlier test or wheel could
+        plant one) made the oracle import fail with "'utils' is not a
+        package". The fixture must resolve the CLONE's utils, and restore the
+        cached module afterwards."""
+        if not _ORACLE_AVAILABLE:
+            pytest.skip("needs the oracle clone")
+        import types
+
+        fake = types.ModuleType("utils")
+        sys.modules["utils"] = fake
+        try:
+            with oracle_imports():
+                from utils.train_utils import TrainState
+
+                assert TrainState is not None
+                resolved = pathlib.Path(sys.modules["utils"].__path__[0]).resolve()
+                assert str(resolved).startswith(str(ORACLE_SRC.resolve()))
+            assert sys.modules["utils"] is fake  # caller state restored
+        finally:
+            sys.modules.pop("utils", None)
+
+    def test_a_decoy_utils_on_sys_path_is_never_picked_up(self, tmp_path):
+        """A same-name module earlier on sys.path must not shadow the oracle:
+        the fixture inserts ORACLE_SRC at position 0 AND asserts provenance —
+        an append-instead-of-insert mutant (or a dropped assertion) dies here."""
+        if not _ORACLE_AVAILABLE:
+            pytest.skip("needs the oracle clone")
+        decoy = tmp_path / "decoy"
+        (decoy / "utils").mkdir(parents=True)
+        (decoy / "utils" / "__init__.py").write_text("DECOY = True\n")
+        (decoy / "train_step.py").write_text("DECOY = True\n")
+        sys.path.insert(0, str(decoy))
+        try:
+            with oracle_imports() as oracle_train_step:
+                assert not hasattr(oracle_train_step, "DECOY")
+                assert not hasattr(sys.modules["utils"], "DECOY")
+        finally:
+            sys.path.remove(str(decoy))
