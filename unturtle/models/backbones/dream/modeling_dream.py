@@ -164,7 +164,13 @@ class DreamRotaryEmbedding(nn.Module):
 
         self.config = config
         self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
+        self._install_inv_freq(device)
 
+    def _install_inv_freq(self, device) -> None:
+        """The ONE canonical initializer for ``inv_freq`` — used by the
+        constructor AND by ``reset_parameters`` (which ``from_pretrained``
+        reaches through ``DreamPreTrainedModel._init_weights``), so direct
+        construction and reload can never disagree (#174)."""
         inv_freq, self.attention_scaling = self.rope_init_fn(
             self.config, device, **self.rope_kwargs
         )
@@ -172,11 +178,10 @@ class DreamRotaryEmbedding(nn.Module):
         self.original_inv_freq = self.inv_freq
 
     def reset_parameters(self):
-        inv_freq, self.attention_scaling = self.rope_init_fn(
-            self.config, self.inv_freq.device, **self.rope_kwargs
-        )
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
-        self.original_inv_freq = self.inv_freq
+        # ``from_pretrained`` re-materializes the non-persistent ``inv_freq`` with
+        # ``torch.empty_like`` (uninitialized memory); rebuild it deterministically
+        # from the config on the buffer's current device (#174).
+        self._install_inv_freq(self.inv_freq.device)
 
     def _dynamic_frequency_update(self, position_ids, device):
         """
@@ -760,6 +765,13 @@ class DreamPreTrainedModel(PreTrainedModel):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
+        elif isinstance(module, DreamRotaryEmbedding):
+            # Non-persistent ``inv_freq`` arrives from ``from_pretrained`` as
+            # uninitialized memory (torch.empty_like); the base-class re-init
+            # branch is never reached because this override does not delegate,
+            # so rebuild it through the module's own canonical initializer (#174).
+            # Linear/Embedding initialization above is deliberately unchanged.
+            module.reset_parameters()
 
     @classmethod
     def from_pretrained(

@@ -119,21 +119,16 @@ def test_native_fp_state_dict_roundtrips(artifact, native_fp_recomputation):
     assert native_fp_recomputation["state_dict_equal"] is True
 
 
-def test_native_fp_rope_buffer_rewrite_is_real(artifact, native_fp_recomputation):
-    """The #174-linked finding: identical persistent weights, rewritten RoPE
-    inv_freq buffers on the load path, non-identical outputs."""
+def test_native_fp_roundtrip_is_exact_after_174_fix(artifact, native_fp_recomputation):
+    """Pre-#174 this cell showed identical weights but rewritten (uninitialized)
+    RoPE inv_freq buffers and non-identical outputs; the #174 fix rebuilds the
+    buffer through the constructor's initializer on reload, so the round trip
+    is now exact — and the live recomputation must agree."""
     recorded = artifact["persistence"]["native_fp"]
-    assert native_fp_recomputation["buffer_diffs"] == recorded["buffer_diffs"]
-    assert any("inv_freq" in name for name in recorded["buffer_diffs"])
-    assert (
-        native_fp_recomputation["outputs_bit_identical"]
-        == recorded["output"]["bit_identical"]
-        is False
-    )
-    # magnitude class only — the exact float is volatile across processes
-    assert (native_fp_recomputation["rel_norm"] <= 0.05) == recorded["output"][
-        "within_rel_norm_0p05"
-    ]
+    assert recorded["buffer_diffs"] == []
+    assert recorded["output"]["bit_identical"] is True
+    assert native_fp_recomputation["buffer_diffs"] == []
+    assert native_fp_recomputation["outputs_bit_identical"] is True
 
 
 def test_adapter_roundtrips_recorded(artifact):

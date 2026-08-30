@@ -197,6 +197,48 @@ def collect_node_set(*, gpu: str) -> dict:
     }
 
 
+def fix_invariants(conditions: dict[str, dict]) -> dict:
+    """The #174 fix contract, evaluated per observed condition: every arm's
+    rotary buffers equal the analytic formula and are finite, the four arms'
+    outputs are bit-identical, and the poison actually intercepted the load."""
+    per_condition = {}
+    for key, cond in conditions.items():
+        if cond.get("status") != "observed":
+            continue
+        arms = cond["arms"]
+        buffers_ok = all(
+            entry.get("equals_formula") is True and entry.get("finite") is True
+            for arm in arms.values()
+            for entry in arm["buffers"].values()
+        )
+        outputs_identical = all(
+            arm["output_vs_original"]["equal"] is True for arm in arms.values()
+        )
+        per_condition[key] = {
+            "all_rotary_buffers_equal_formula_and_finite": buffers_ok,
+            "all_arms_bit_identical": outputs_identical,
+            "reload_restored_equals_reload": all(
+                arms["reload_restored"]["buffers"][n]["digest"] == e["digest"]
+                for n, e in arms["reload"]["buffers"].items()
+                if "digest" in e
+                and "digest" in arms["reload_restored"]["buffers"].get(n, {})
+            ),
+            "poison_applied": cond.get("poison_empty_like_calls", 0) > 0
+            if cond.get("poison") == "empty_like_nan"
+            else None,
+        }
+    return {
+        "per_condition": per_condition,
+        "holds_under_math": all(
+            v["all_rotary_buffers_equal_formula_and_finite"]
+            and v["all_arms_bit_identical"]
+            for k, v in per_condition.items()
+            if "/MATH/" in k
+        )
+        and any("/MATH/" in k for k in per_condition),
+    }
+
+
 def classify_case(conditions: dict[str, dict]) -> dict:
     """Per-case verdict from the SEMANTIC (deterministic-poison) conditions."""
     verdicts = {
@@ -294,6 +336,7 @@ def capture(*, gpu: str, allow_dirty: bool = False) -> dict:
         cases[case] = {
             "conditions": semantic,
             "classification": classify_case(semantic),
+            "fix_invariants": fix_invariants(semantic),
             "volatile": {"allocator_luck_conditions": volatile},
         }
 
@@ -328,18 +371,22 @@ def capture(*, gpu: str, allow_dirty: bool = False) -> dict:
                 "memory) and relies on _init_weights to give it a value"
             ),
             "mdlm_dit": (
-                "MDLMDiTPreTrainedModel._init_weights is a deliberate no-op and "
+                "PR 0 finding: MDLMDiTPreTrainedModel._init_weights was a no-op and "
                 "Rotary is not a *RotaryEmbedding with original_inv_freq, so the "
-                "upstream re-init branch never runs: model.rotary.inv_freq stays "
-                "uninitialized after from_pretrained"
+                "upstream re-init branch never ran and model.rotary.inv_freq stayed "
+                "uninitialized after from_pretrained. FIX: Rotary.reset_parameters "
+                "(the constructor's own initializer, build_inv_freq) is now called "
+                "from _init_weights for Rotary modules only"
             ),
             "dream": (
-                "DreamPreTrainedModel._init_weights handles nn.Linear/nn.Embedding "
-                "only and does not delegate to the base class, so "
-                "DreamRotaryEmbedding.inv_freq is likewise uninitialized after "
-                "from_pretrained (this reclassifies the #184 native_fp finding: "
-                "not _extend_rope_if_possible, which is a no-op — no "
-                "extend_rope_embedding exists in unturtle)"
+                "PR 0 finding: DreamPreTrainedModel._init_weights handled "
+                "nn.Linear/nn.Embedding only and did not delegate to the base class, "
+                "so DreamRotaryEmbedding.inv_freq was likewise uninitialized after "
+                "from_pretrained (reclassifying the #184 native_fp finding: not "
+                "_extend_rope_if_possible, which is a no-op). FIX: constructor and "
+                "reset_parameters share _install_inv_freq, and _init_weights calls "
+                "reset_parameters for DreamRotaryEmbedding; Linear/Embedding init "
+                "unchanged"
             ),
             "why_intermittent": (
                 "adaLN-Zero gates make finite garbage invisible at init; only "

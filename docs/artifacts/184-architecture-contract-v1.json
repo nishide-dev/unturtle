@@ -385,7 +385,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "a8080c0e53b5b2e0"
+        "torch_cpu_rng_digest": "04304e55aeaeac6f"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -539,7 +539,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "5f85f6a3f9625b28"
+        "torch_cpu_rng_digest": "e637f63221a6907e"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -693,7 +693,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "f01bb17e4ffb2589"
+        "torch_cpu_rng_digest": "e3fc42c8bce77d5a"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -847,7 +847,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "09f575ec5baec33a"
+        "torch_cpu_rng_digest": "eb47597b22a85073"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1001,7 +1001,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "be5e056d792e38c4"
+        "torch_cpu_rng_digest": "0ff6bcb17198f678"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1155,7 +1155,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "75e8b98748631beb"
+        "torch_cpu_rng_digest": "ab49643ba2dcf309"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -2439,11 +2439,7 @@
         "direct_instantiation": "sdpa",
         "from_pretrained": "sdpa"
       },
-      "buffer_diffs": [
-        "model.layers.0.self_attn.rotary_emb.inv_freq",
-        "model.layers.1.self_attn.rotary_emb.inv_freq",
-        "model.rotary_emb.inv_freq"
-      ],
+      "buffer_diffs": [],
       "buffer_names_equal": true,
       "case": "native_fp",
       "dtype_diffs": [],
@@ -2454,10 +2450,10 @@
       },
       "missing_keys": [],
       "output": {
-        "bit_identical": false,
+        "bit_identical": true,
         "volatile": {
-          "max_abs_delta": 0.005123451352119446,
-          "relative_norm": 0.007502253167331219
+          "max_abs_delta": 0.0,
+          "relative_norm": 0.0
         },
         "within_rel_norm_0p05": true
       },
@@ -2550,7 +2546,7 @@
     }
   },
   "producer": {
-    "commit": "c5f95162f8e9544d2d3a386f7d632f681a0f55cf",
+    "commit": "008c0d7505a997a1833d6ce266392f6d1ce7f965",
     "dirty_paths": [],
     "import_root": "<repo>",
     "peft": "0.19.1",
@@ -4635,7 +4631,7 @@
             "file": "unturtle/fast_diffusion_model.py"
           }
         ],
-        "classification": "linked defect -> #174 (attributed; this row itself is inert)",
+        "classification": "linked defect -> #174 (attributed and FIXED: Rotary/DreamRotaryEmbedding reset_parameters via _init_weights; this row itself is inert)",
         "idempotent": "yes (no-op)",
         "linked_issue": 174,
         "liveness_evidence": "#174 PR 0 attribution: the inv_freq divergence seen by the persistence.native_fp probe is NOT this mutation \u2014 transformers' from_pretrained re-materializes non-persistent buffers with torch.empty_like and Dream/MDLM-DiT _init_weights never re-initialize them (verdict ROPE LOAD-PATH CAUSAL, docs/artifacts/174-persistence-attribution-v1.json)",
@@ -4974,7 +4970,7 @@
     "unclaimed_hits": []
   },
   "schema_version": 1,
-  "semantic_digest": "cf3b0ccfb1b97600e031d5e3d7dfa0d7b30ce412ba00592430ffcf00220e8806",
+  "semantic_digest": "816bd67aea327107426bcafaaecdb096f41c8060b28d910f7df1d2e8962ca1a7",
   "verdicts": {
     "diffusion_gemma_class_swap": {
       "area": "DiffusionGemma runtime class swap",
@@ -5186,12 +5182,8 @@
         "evidence": {
           "persistence.native_fp": {
             "attribution": "#174 PR 0: uninitialized non-persistent rotary buffers after from_pretrained (torch.empty_like + no-op _init_weights), not _extend_rope_if_possible",
-            "buffer_diffs": [
-              "model.layers.0.self_attn.rotary_emb.inv_freq",
-              "model.layers.1.self_attn.rotary_emb.inv_freq",
-              "model.rotary_emb.inv_freq"
-            ],
-            "output_bit_identical": false,
+            "buffer_diffs": [],
+            "output_bit_identical": true,
             "state_dict": "identical"
           }
         },
@@ -5200,7 +5192,7 @@
         "source": "characterization sections",
         "status": "observed"
       },
-      "verdict": "UNDECIDABLE -> #174"
+      "verdict": "RESOLVED -> #174 (uninitialized non-persistent rotary buffers; fixed)"
     },
     "signature_guessing_generation": {
       "area": "Signature-guessing generation invocation",

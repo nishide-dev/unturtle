@@ -184,21 +184,30 @@ def test_artifact_digest_recomputes(artifact):
     assert hashlib.sha256(canonical.encode()).hexdigest() == artifact["semantic_digest"]
 
 
-def test_artifact_classifies_all_cases(artifact):
+def test_artifact_records_the_fixed_state(artifact):
+    """Post-fix: no condition diverges; every arm's rotary buffers equal the
+    analytic formula and are finite; the four arms are bit-identical under
+    pinned MATH (FLASH is auxiliary and never sufficient on its own)."""
     for case in ("mdlm_dit_plain", "mdlm_dit_latent_conditioned", "dream_native"):
-        row = artifact["cases"][case]["classification"]
-        assert row["attribution"] == "ROPE LOAD-PATH CAUSAL", (case, row)
-        # MATH exposes, FLASH masks, on CPU
-        assert "cpu/MATH/empty_like_nan" in row["causal_under"], (case, row)
+        row = artifact["cases"][case]
         assert (
-            row["per_condition"]["cpu/MATH/empty_like_nan"] == "ROPE LOAD-PATH CAUSAL"
-        )
-    # the plain DiT cell is exactly the "zero gates hide finite garbage,
-    # flash hides NaN" story: FLASH must mask it
-    plain = artifact["cases"]["mdlm_dit_plain"]["classification"]
-    assert plain["per_condition"]["cpu/FLASH/empty_like_nan"] == (
-        "NO DIVERGENCE UNDER THIS CONDITION"
-    )
+            row["classification"]["attribution"] == "NO DIVERGENCE UNDER THIS CONDITION"
+        ), (case, row["classification"])
+        invariants = row["fix_invariants"]
+        assert invariants["holds_under_math"] is True, (case, invariants)
+        for key, inv in invariants["per_condition"].items():
+            assert inv["all_rotary_buffers_equal_formula_and_finite"] is True, (
+                case,
+                key,
+            )
+            assert inv["all_arms_bit_identical"] is True, (case, key)
+            assert inv["reload_restored_equals_reload"] is True, (case, key)
+            if "empty_like_nan" in key:
+                assert inv["poison_applied"] is True, (
+                    case,
+                    key,
+                    "poison wrapper not applied",
+                )
 
 
 def test_artifact_unpinned_backend_is_inadmissible(artifact):
@@ -267,25 +276,31 @@ def _probe(case: str, sdpa: str, poison: str) -> dict:
 @pytest.mark.parametrize(
     "case", ["mdlm_dit_plain", "mdlm_dit_latent_conditioned", "dream_native"]
 )
-def test_live_math_backend_reproduces_and_restoration_removes(case):
+def test_live_math_backend_reload_is_exact_even_when_uninitialized_memory_is_nan(case):
+    """The #174 fix contract, live: with every uninitialized allocation
+    poisoned to NaN during from_pretrained and SDPA pinned to MATH (which
+    propagates NaN), reload rotary buffers equal the formula, are finite, and
+    all four arms are bit-identical."""
     result = _probe(case, "MATH", "empty_like_nan")
-    reload = result["arms"]["reload"]
-    restored = result["arms"]["reload_restored"]
-    assert reload["first_persistent_mismatch"] is None
-    assert all(e["equals_reference"] is False for e in reload["buffers"].values())
-    assert all(e["finite"] is False for e in reload["buffers"].values())
-    assert reload["output_vs_original"]["equal"] is False
-    assert all(e["equals_reference"] is True for e in restored["buffers"].values())
-    assert restored["output_vs_original"]["equal"] is True
-    assert result["verdict"]["verdict"] == "ROPE LOAD-PATH CAUSAL"
+    assert result["poison_empty_like_calls"] > 0, (
+        "poison wrapper did not intercept the load"
+    )
+    for arm_name, arm in result["arms"].items():
+        for name, entry in arm["buffers"].items():
+            assert entry["finite"] is True, (case, arm_name, name)
+            assert entry["equals_formula"] is True, (case, arm_name, name)
+            assert entry["equals_reference"] is True, (case, arm_name, name)
+        assert arm["output_vs_original"]["equal"] is True, (case, arm_name)
+    assert result["arms"]["reload"]["first_persistent_mismatch"] is None
+    assert result["verdict"]["verdict"] == "NO DIVERGENCE UNDER THIS CONDITION"
 
 
 @pytest.mark.gpu
-def test_live_flash_backend_masks_the_same_defect():
+def test_live_flash_is_auxiliary_only():
+    """FLASH also passes post-fix, but a FLASH-only pass is never accepted:
+    it masked the NaN pre-fix. This test only records FLASH agreement."""
     result = _probe("mdlm_dit_plain", "FLASH", "empty_like_nan")
-    reload = result["arms"]["reload"]
     assert all(
-        e["finite"] is False for e in reload["buffers"].values()
-    )  # still garbage
-    assert reload["output_vs_original"]["equal"] is True  # …but invisible
-    assert result["verdict"]["verdict"] == "NO DIVERGENCE UNDER THIS CONDITION"
+        e["finite"] is True for e in result["arms"]["reload"]["buffers"].values()
+    )
+    assert result["arms"]["reload"]["output_vs_original"]["equal"] is True
