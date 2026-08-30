@@ -72,13 +72,34 @@ class UnturtleDiffusionGemmaForBlockDiffusion(DiffusionGemmaForBlockDiffusion):
             Controls max_denoising_steps, sampler_config, t_min/t_max,
             stability_threshold, and confidence_threshold.
         """
-        from unturtle.models.generation.sampler import resolve_algorithm
+        from unturtle.models.generation.sampler import (
+            GenerationRequest,
+            dispatch_generation,
+        )
 
         if inputs is None and "input_ids" in kwargs:
             # HF canonical call style: model.generate(input_ids=...).
             inputs = kwargs.pop("input_ids")
 
-        resolve_algorithm(algorithm, self, bd3lm_requested=False)
+        # Unified entry: resolution AND execution go through the registry
+        # runner (#186) — the shim never calls the upstream loop itself, so
+        # a registered/replaced runner is always the one that executes.
+        return dispatch_generation(
+            self,
+            GenerationRequest(
+                inputs=inputs,
+                generation_config=generation_config,
+                kwargs=dict(kwargs),
+            ),
+            algorithm=algorithm,
+        )
+
+    def _generate_canvas(self, inputs=None, *, generation_config=None, **kwargs):
+        """The upstream canvas loop, invoked verbatim — the #186 runner target.
+
+        No algorithm resolution here (dispatch already did it); this is the
+        single place the wrapper touches upstream ``generate``.
+        """
         return super().generate(
             input_ids=inputs,
             generation_config=generation_config,

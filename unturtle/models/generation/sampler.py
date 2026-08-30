@@ -223,44 +223,29 @@ def _bd3lm_unsupported(model: Any) -> str:
 
 
 def _call_sampling_loop(method: Any, request: GenerationRequest) -> Any:
-    """Invoke a sampling loop, matching whatever signature it declares.
+    """Invoke a sampling loop through the DECLARED loop contract (#186).
 
-    The loops do not share one shape: ``_sample`` and ``_sample_with_cache``
-    take ``attention_mask`` as a *required positional*, ``_sample_block_diffusion``
-    takes it as a keyword with a default, and Dream's ``_sample`` additionally
-    requires two hook callables.  Binding by inspection keeps the runners
-    generic instead of encoding one backbone's argument order.
+    Every registered masked sampling loop conforms to one explicit shape::
 
-    Anything the loop does not declare stays in ``kwargs`` and is forwarded, so
-    a loop with extra options still receives them.
+        loop(input_ids, attention_mask=..., generation_config=..., **options)
+
+    (`_sample`, `_sample_with_cache` and `_sample_block_diffusion` across all
+    families take exactly these as positional-or-keyword parameters; Dream's
+    extra hook parameters default to ``None`` and are normalized inside its
+    loop.)  The previous implementation *guessed* the call shape with
+    ``inspect.signature`` and positionally filled unknown required parameters
+    with ``None`` — a signature-hiding wrapper (plain ``*args, **kwargs``
+    decorator) silently changed the binding (#184 evidence, #186).  Explicit
+    keywords are immune to wrapping and fail loudly on a non-conforming loop.
     """
-    import inspect
-
-    parameters = inspect.signature(method).parameters
     kwargs = dict(request.kwargs)
-    args: list[Any] = []
-
-    for name, parameter in parameters.items():
-        if parameter.kind in (
-            inspect.Parameter.VAR_POSITIONAL,
-            inspect.Parameter.VAR_KEYWORD,
-        ):
-            continue
-        if name in ("input_ids", "inputs"):
-            args.append(request.inputs)
-        elif name == "generation_config":
-            args.append(request.generation_config)
-        elif name in kwargs:
-            args.append(kwargs.pop(name))
-        elif parameter.default is not inspect.Parameter.empty:
-            args.append(parameter.default)
-        else:
-            # Required and unsupplied: pass None rather than TypeError-ing on
-            # a positional the caller simply did not set (e.g. attention_mask,
-            # or Dream's hook functions, which its loop defaults internally).
-            args.append(None)
-
-    return method(*args, **kwargs)
+    attention_mask = kwargs.pop("attention_mask", None)
+    return method(
+        request.inputs,
+        attention_mask=attention_mask,
+        generation_config=request.generation_config,
+        **kwargs,
+    )
 
 
 def _run_mdlm(model: Any, request: GenerationRequest) -> Any:
@@ -342,17 +327,27 @@ def _run_ladiff(model: Any, request: GenerationRequest) -> Any:
 
 
 def _run_block_ar(model: Any, request: GenerationRequest) -> Any:
-    """Delegate to the model's own (upstream) generate.
+    """Run the canvas family's upstream generation loop, explicitly (#186).
 
-    The canvas family's loop belongs to upstream `transformers`; Unturtle only
-    selects it.  Calling `generate` here is safe because the DiffusionGemma
-    shim resolves the algorithm and then calls `super().generate` — it does not
-    re-enter dispatch.  ``algorithm`` is passed explicitly so the shim does not
-    redo the resolution this dispatch just performed.
+    The loop belongs to upstream ``transformers``; Unturtle only selects it.
+    The wrapper class exposes it as ``_generate_canvas`` (a direct upstream
+    ``generate`` delegation with NO algorithm resolution), so dispatch cannot
+    re-enter itself; a model still carrying the plain upstream class runs its
+    class-level ``generate`` directly — class-level on purpose, so an
+    instance-level shim (e.g. unsloth's fast-generate wrapper) cannot hijack
+    the canvas loop.
     """
-    return model.generate(
-        request.inputs,
-        algorithm="block_ar",
+    canvas = getattr(type(model), "_generate_canvas", None)
+    if canvas is not None:
+        return canvas(
+            model,
+            request.inputs,
+            generation_config=request.generation_config,
+            **request.kwargs,
+        )
+    return type(model).generate(
+        model,
+        input_ids=request.inputs,
         generation_config=request.generation_config,
         **request.kwargs,
     )

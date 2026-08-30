@@ -56,7 +56,6 @@ def test_facade_returns_the_loader_boundary_object(tmp_path, monkeypatch):
     def spy(*args, **kwargs):
         loaded = real(*args, **kwargs)
         captured["loaded"] = loaded
-        captured["post_load"] = kwargs.get("post_load")
         return loaded
 
     monkeypatch.setattr(fdm, "load_model", spy)
@@ -64,7 +63,6 @@ def test_facade_returns_the_loader_boundary_object(tmp_path, monkeypatch):
         str(ckpt), load_in_4bit=False, max_seq_length=64, model_class=model_cls
     )
     assert loaded is captured["loaded"]
-    assert captured["post_load"] is fdm._apply_post_load_class_swap
     assert loaded.load_path == "explicit_class"
     assert loaded.integration == "dream"
     assert type(loaded.model) is model_cls
@@ -253,15 +251,15 @@ def test_save_helpers_delegate_to_unturtle_save(monkeypatch):
 
 
 def test_loader_owns_no_class_swap_and_never_imports_the_facade():
-    """#186 stays put: the swap lives in the façade; the loader only receives
-    the injected hook and its imports never name the façade."""
+    """#186 done: no runtime class swap exists anywhere; the wrapper-ordering
+    map lives ONLY in the loader; the loader never imports the façade."""
     import ast
     import inspect
 
-    assert hasattr(fdm, "_apply_post_load_class_swap")
+    assert not hasattr(fdm, "_apply_post_load_class_swap")
     assert not hasattr(loading, "_apply_post_load_class_swap")
-    # one shared map object: mutations are seen by both consumers
-    assert fdm._POST_LOAD_CLASS_SWAPS is loading._POST_LOAD_CLASS_SWAPS
+    assert not hasattr(fdm, "_POST_LOAD_CLASS_SWAPS")
+    assert isinstance(loading._POST_LOAD_CLASS_SWAPS, dict)
     tree = ast.parse(inspect.getsource(loading))
     imported = {
         node.module

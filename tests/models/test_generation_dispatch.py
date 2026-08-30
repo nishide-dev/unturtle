@@ -60,7 +60,9 @@ class _Recorder:
 
 
 class _DreamLike:
-    """Dream's `_sample` takes two extra required hook callables."""
+    """Dream's `_sample` carries extra hook parameters — with DEFAULTS (#186):
+    the declared loop contract is loop(input_ids, attention_mask=...,
+    generation_config=..., **options); family extras must default."""
 
     def __init__(self):
         self.calls = []
@@ -70,8 +72,8 @@ class _DreamLike:
         input_ids,
         attention_mask,
         generation_config,
-        generation_tokens_hook_func,
-        generation_logits_hook_func,
+        generation_tokens_hook_func=None,
+        generation_logits_hook_func=None,
     ):
         self.calls.append("mdlm")
         return "dream-result"
@@ -264,8 +266,8 @@ class TestRequestCarriesTheCall:
         assert model.calls == ["mdlm"]
         assert model.seen["attention_mask"] is None
 
-    def test_a_loop_with_extra_required_args_is_still_callable(self):
-        """Dream's `_sample` needs two hook callables the caller never passes."""
+    def test_a_loop_with_defaulted_extra_args_is_still_callable(self):
+        """Dream-shaped extras default internally under the declared contract."""
         from unturtle.models.generation.sampler import dispatch_generation
 
         model = _DreamLike()
@@ -273,6 +275,30 @@ class TestRequestCarriesTheCall:
 
         assert model.calls == ["mdlm"]
         assert result == "dream-result"
+
+    def test_a_signature_hiding_wrapper_cannot_change_the_binding(self):
+        """The #184-frozen guessing defect: a plain *args/**kwargs decorator hid
+        the loop's signature and inspection-based binding silently changed the
+        dispatch. The explicit contract (#186) is immune — the wrapped loop
+        receives exactly (inputs, attention_mask=..., generation_config=...)."""
+        from unturtle.models.generation.sampler import dispatch_generation
+
+        model = _MdlmOnly()
+        inner = model._sample
+        seen = {}
+
+        def hiding_wrapper(*args, **kwargs):  # no functools.wraps on purpose
+            seen["args"] = args
+            seen["kwargs"] = dict(kwargs)
+            return inner(*args, **kwargs)
+
+        model._sample = hiding_wrapper
+        request = _request()
+        result = dispatch_generation(model, request, algorithm="mdlm")
+        assert result == "mdlm-result"
+        assert seen["args"] == (request.inputs,)
+        assert seen["kwargs"]["generation_config"] is request.generation_config
+        assert "attention_mask" in seen["kwargs"]
 
 
 class TestNonMaskedFamilyNeedsNoMaskedHooks:

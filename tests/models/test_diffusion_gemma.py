@@ -246,46 +246,54 @@ def test_generate_keyword_input_ids():
     assert seq.shape[-1] >= prompt.shape[-1]
 
 
-def test_class_swap_registered_for_diffusion_gemma():
-    from unturtle import fast_diffusion_model as fdm
+def test_wrapper_resolver_registered_for_diffusion_gemma():
+    from unturtle.models import loading
     from unturtle.models.backbones.diffusion_gemma import (
         UnturtleDiffusionGemmaForBlockDiffusion,
     )
 
-    resolver = fdm._POST_LOAD_CLASS_SWAPS.get("diffusion_gemma")
+    resolver = loading._POST_LOAD_CLASS_SWAPS.get("diffusion_gemma")
     assert resolver is not None
     assert resolver() is UnturtleDiffusionGemmaForBlockDiffusion
 
 
-def test_post_load_swap_installs_shim():
+def test_runtime_class_swap_is_gone():
+    """#186: the load owns the class — no swap API exists any more, and an
+    upstream-class instance keeps its class forever."""
     from unturtle import fast_diffusion_model as fdm
-    from unturtle.models.backbones.diffusion_gemma import (
-        UnturtleDiffusionGemmaForBlockDiffusion,
+    from unturtle.models import loading
+
+    assert not hasattr(fdm, "_apply_post_load_class_swap")
+    assert not hasattr(fdm, "_POST_LOAD_CLASS_SWAPS")
+    assert not hasattr(loading, "_apply_post_load_class_swap")
+
+
+def test_block_ar_runner_ignores_instance_generate_on_upstream_class():
+    """unsloth-style instance-level generate patches can no longer hijack the
+    canvas loop: the #186 runner invokes the CLASS-level upstream generate on
+    an un-wrapped model, without any class mutation."""
+    from unturtle.models.generation.sampler import (
+        GenerationRequest,
+        dispatch_generation,
     )
 
     model = _tiny_upstream_model()
-    assert type(model) is not UnturtleDiffusionGemmaForBlockDiffusion
-    fdm._apply_post_load_class_swap(model)
-    assert type(model) is UnturtleDiffusionGemmaForBlockDiffusion
-
-
-def test_post_load_swap_removes_instance_generate_patch():
-    """unsloth installs an instance-level generate; the swap must drop it so the shim wins."""
-    from unturtle import fast_diffusion_model as fdm
-    from unturtle.models.backbones.diffusion_gemma import (
-        UnturtleDiffusionGemmaForBlockDiffusion,
-    )
-
-    model = _tiny_upstream_model()
+    upstream_cls = type(model)
     sentinel_called = []
 
     def _fake_unsloth_generate(*a, **k):
         sentinel_called.append(True)
+        return "hijacked"
 
-    model.generate = _fake_unsloth_generate  # instance-level patch, like unsloth
-    fdm._apply_post_load_class_swap(model)
-    assert "generate" not in model.__dict__
-    assert type(model) is UnturtleDiffusionGemmaForBlockDiffusion
-    # bound method now resolves to the shim, not the sentinel
-    assert model.generate.__func__ is UnturtleDiffusionGemmaForBlockDiffusion.generate
+    model.__dict__["generate"] = _fake_unsloth_generate  # instance-level patch
+    out = dispatch_generation(
+        model,
+        GenerationRequest(
+            inputs=torch.tensor([[1, 2, 3, 4]]),
+            generation_config=_tiny_gen_cfg(),
+        ),
+        algorithm="block_ar",
+    )
     assert not sentinel_called
+    assert type(model) is upstream_cls  # never restamped
+    assert out is not None and not isinstance(out, str)

@@ -367,7 +367,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "e48a7e402ef03755"
+        "torch_cpu_rng_digest": "a18419b76019c26b"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -521,7 +521,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "e8c873ba421db7b6"
+        "torch_cpu_rng_digest": "10dd21de2b07a2e8"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -675,7 +675,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "109066893d2cc6b4"
+        "torch_cpu_rng_digest": "93ffae0c1c356335"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -829,7 +829,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "a2553ef19b8945d5"
+        "torch_cpu_rng_digest": "5125b7a98c85fc27"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -983,7 +983,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "304de735375a0dcc"
+        "torch_cpu_rng_digest": "7cb489af9c17c58f"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1137,7 +1137,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "d0e7a0f60d2f710f"
+        "torch_cpu_rng_digest": "9e64e3238f970eee"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -2571,7 +2571,7 @@
     }
   },
   "producer": {
-    "commit": "05e523c368c415d061f22e08b0d60772ebbdb4d6",
+    "commit": "6c538f01c50e4c7cf247d4335657a1643890b375",
     "dirty_paths": [],
     "import_root": "<repo>",
     "peft": "0.19.1",
@@ -4402,111 +4402,6 @@
         "target": "attn.apply_wo + o_proj aliasing"
       },
       {
-        "after_identity": "UnturtleDiffusionGemmaForBlockDiffusion",
-        "applicability": "model_type in _POST_LOAD_CLASS_SWAPS AND isinstance(model, wrapper bases)",
-        "before_identity": "upstream transformers class (e.g. DiffusionGemmaForBlockDiffusion)",
-        "claims": [
-          {
-            "contains": "model.__class__ = wrapper_cls",
-            "file": "unturtle/fast_diffusion_model.py"
-          }
-        ],
-        "classification": "REPLACE -> #186",
-        "idempotent": "yes (isinstance guard)",
-        "linked_issue": null,
-        "liveness_evidence": "DiffusionGemma real-checkpoint tests (slow/gpu)",
-        "mutation_id": "post_load_class_swap",
-        "owner": "_apply_post_load_class_swap",
-        "reversible": "reassign original class (no API)",
-        "row": {
-          "evidence": {
-            "matched_claims": [
-              {
-                "contains": "model.__class__ = wrapper_cls",
-                "file": "unturtle/fast_diffusion_model.py"
-              }
-            ]
-          },
-          "owner": "_apply_post_load_class_swap",
-          "reason": null,
-          "source": "static scan + curated ledger",
-          "status": "observed"
-        },
-        "scope": "object-local",
-        "success_signal": "silent on success; warning when the swap is refused",
-        "target": "model.__class__"
-      },
-      {
-        "after_identity": "absent -> class-level generate shim wins",
-        "applicability": "after class swap (unsloth FastModel installs an instance-level generate)",
-        "before_identity": "unsloth_base_fast_generate (instance attribute)",
-        "claims": [
-          {
-            "contains": "model.__dict__.pop(\"generate\", None)",
-            "file": "unturtle/fast_diffusion_model.py"
-          }
-        ],
-        "classification": "REPLACE -> #186",
-        "idempotent": "yes (pop with default)",
-        "linked_issue": null,
-        "liveness_evidence": "DiffusionGemma generation tests",
-        "mutation_id": "instance_generate_deletion",
-        "owner": "_apply_post_load_class_swap",
-        "reversible": "no (original saved as _old_generate by unsloth)",
-        "row": {
-          "evidence": {
-            "matched_claims": [
-              {
-                "contains": "model.__dict__.pop(\"generate\", None)",
-                "file": "unturtle/fast_diffusion_model.py"
-              }
-            ]
-          },
-          "owner": "_apply_post_load_class_swap",
-          "reason": null,
-          "source": "static scan + curated ledger",
-          "status": "observed"
-        },
-        "scope": "object-local",
-        "success_signal": "silent",
-        "target": "model.__dict__['generate']"
-      },
-      {
-        "after_identity": "checkpoint generation config, or from_model_config fallback",
-        "applicability": "post-swap, when unset and model can_generate",
-        "before_identity": "absent (unsloth load path skips the __init__ postamble)",
-        "claims": [
-          {
-            "contains": "model.generation_config = restored",
-            "file": "unturtle/fast_diffusion_model.py"
-          }
-        ],
-        "classification": "REPLACE -> #186",
-        "idempotent": "yes (never overwrites a populated one)",
-        "linked_issue": null,
-        "liveness_evidence": "#96 regression tests",
-        "mutation_id": "generation_config_restoration",
-        "owner": "_apply_post_load_class_swap",
-        "reversible": "reassign",
-        "row": {
-          "evidence": {
-            "matched_claims": [
-              {
-                "contains": "model.generation_config = restored",
-                "file": "unturtle/fast_diffusion_model.py"
-              }
-            ]
-          },
-          "owner": "_apply_post_load_class_swap",
-          "reason": null,
-          "source": "static scan + curated ledger",
-          "status": "observed"
-        },
-        "scope": "object-local",
-        "success_signal": "silent",
-        "target": "model.generation_config"
-      },
-      {
         "after_identity": "_original_apply_qkv / _original_apply_o",
         "applicability": "always (from_pretrained and get_peft_model)",
         "before_identity": "absent",
@@ -5104,24 +4999,24 @@
         "target": "unturtle.registry._default_hub"
       }
     ],
-    "scanned_hits": 44,
+    "scanned_hits": 41,
     "unclaimed_hits": []
   },
   "schema_version": 1,
-  "semantic_digest": "83e78a0a79106a7759e926600b1748d7b1f2e8c89934843625c30c675a333915",
+  "semantic_digest": "b944bbb85c3efe109b3f3d6d03e02b84495880cc457dc55d3cfc93d2f9cf2625",
   "verdicts": {
     "diffusion_gemma_class_swap": {
       "area": "DiffusionGemma runtime class swap",
       "row": {
         "evidence": {
-          "mutation_ledger": "post_load_class_swap + instance_generate_deletion rows"
+          "mutation_ledger": "rows removed with the swap (#186); wrapper-first load path in unturtle/models/loading.py"
         },
         "owner": "#184",
         "reason": null,
         "source": "characterization sections",
         "status": "observed"
       },
-      "verdict": "REPLACE -> #186"
+      "verdict": "REPLACED -> #186 (runtime __class__ swap removed; wrapper-first load owns the class)"
     },
     "dream_default_generation_config": {
       "area": "Dream unified generate with default config",
@@ -5344,7 +5239,7 @@
         "source": "characterization sections",
         "status": "observed"
       },
-      "verdict": "REPLACE -> #186"
+      "verdict": "REPLACED -> #186 (explicit declared loop contract; no signature inspection)"
     },
     "transformers_native_model_inheritance": {
       "area": "Transformers-native model inheritance",

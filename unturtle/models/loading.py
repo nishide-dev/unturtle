@@ -31,9 +31,10 @@ Owned here, extracted from the façade behavior-for-behavior:
 Function names keep their historical underscore spelling because they are
 long-standing test seams (tests monkeypatch them by name on this module).
 
-The post-load ``__class__`` swap (DiffusionGemma wrapper) is #186 territory:
-it stays in the façade and reaches the loader as the injected ``post_load``
-hook, so this module never imports the façade.
+Wrapper-family model types (DiffusionGemma) load THROUGH their registered
+wrapper class — wrapper-first on the Auto chain, FastModel skipped for those
+types. The former runtime ``__class__`` swap is gone (#186): the load is the
+one owner of the model's class.
 """
 
 from __future__ import annotations
@@ -168,7 +169,9 @@ def _automodel_loaders() -> list[tuple[str, Any]]:
     ]
 
 
-def _load_via_automodel(model_name: str, load_kwargs: dict) -> Any:
+def _load_via_automodel(
+    model_name: str, load_kwargs: dict, model_type: str | None = None
+) -> Any:
     """Load a non-native (HF-registered) model_type via the AutoModel fallback chain.
 
     This is the offline / unsloth-unavailable fallback path: loading/quantization is
@@ -189,12 +192,15 @@ def _load_via_automodel(model_name: str, load_kwargs: dict) -> Any:
     # right head AND runs the normal __init__ postamble, so generation_config
     # is populated the ordinary way.  Any failure falls through to the Auto*
     # chain unchanged.
-    try:
-        model_type = getattr(
-            AutoConfig.from_pretrained(model_name, **load_kwargs), "model_type", None
-        )
-    except Exception:  # noqa: BLE001 -- config fetch is best-effort here
-        model_type = None
+    if model_type is None:
+        try:
+            model_type = getattr(
+                AutoConfig.from_pretrained(model_name, **load_kwargs),
+                "model_type",
+                None,
+            )
+        except Exception:  # noqa: BLE001 -- config fetch is best-effort here
+            model_type = None
     resolver = _POST_LOAD_CLASS_SWAPS.get(model_type)
     if resolver is not None:
         wrapper_cls = resolver()
@@ -292,6 +298,21 @@ def _load_via_fastmodel(
         return None
 
 
+def _wrapper_model_type(model_name: str, load_kwargs: dict) -> str | None:
+    """The model_type when it has a registered post-load wrapper, else None.
+
+    Best-effort config peek, mirroring `_load_via_automodel`'s own: a failed
+    peek routes through the normal chain rather than raising here.
+    """
+    try:
+        model_type = getattr(
+            AutoConfig.from_pretrained(model_name, **load_kwargs), "model_type", None
+        )
+    except Exception:  # noqa: BLE001 -- config fetch is best-effort here
+        return None
+    return model_type if model_type in _POST_LOAD_CLASS_SWAPS else None
+
+
 def _load_model_auto(
     model_name: str,
     load_kwargs: dict,
@@ -342,6 +363,19 @@ def _load_model_auto_traced(
     model = _load_native(model_name, load_kwargs, trust_remote_code)
     if model is not None:
         return model, None, "native"
+
+    # Wrapper-family model types (#186): the registered wrapper class IS the
+    # load path — `_load_via_automodel` tries it first. FastModel is skipped
+    # for these types: it returns the upstream class with an instance-level
+    # fast-generate shim and no generation_config, which the removed runtime
+    # `__class__` swap used to repair after the fact. One owner now: the load.
+    wrapper_type = _wrapper_model_type(model_name, load_kwargs)
+    if wrapper_type is not None:
+        return (
+            _load_via_automodel(model_name, load_kwargs, model_type=wrapper_type),
+            None,
+            "auto",
+        )
 
     result = _load_via_fastmodel(model_name, load_kwargs, load_in_4bit=load_in_4bit)
     if result is not None:
@@ -570,16 +604,14 @@ def load_model(
     model_class: Any = None,
     trust_remote_code: bool = True,
     token: Optional[str] = None,
-    *,
-    post_load: Callable[[Any, str], None] | None = None,
     **kwargs: Any,
 ) -> LoadedModel:
     """The loader boundary: resolve, load and diffusion-patch a dLLM, returning
     a typed :class:`LoadedModel` with real load-path provenance.
 
-    ``post_load(model, model_name)`` is the façade-owned post-load hook (the
-    DiffusionGemma ``__class__`` swap, #186) — injected so this module never
-    imports the façade.
+    Wrapper-family model types load THROUGH their registered wrapper class
+    (wrapper-first Auto chain); no runtime ``__class__`` mutation exists any
+    more (#186 replaced the post-load swap).
     """
     # --- PEFT adapter checkpoint detection (API Gap G3) ---
     _base_model_id = detect_adapter_base(model_name)
@@ -600,7 +632,6 @@ def load_model(
             model_class=model_class,
             trust_remote_code=trust_remote_code,
             token=token,
-            post_load=post_load,
             **kwargs,
         )
         base_model, tokenizer = base.model, base.tokenizer
@@ -640,12 +671,6 @@ def load_model(
         model = model_class.from_pretrained(model_name, **load_kwargs)
         load_path = "explicit_class"
 
-    # --- Post-load hook (façade-owned class swap, #186) ---
-    class_before = type(model)
-    if post_load is not None:
-        post_load(model, model_name)
-    class_swapped = type(model) is not class_before
-
     # --- Diffusion patch (shared across load paths) ---
     _patch_for_diffusion(model, max_seq_length)
 
@@ -662,7 +687,9 @@ def load_model(
         integration=_integration_name_for(model),
         load_path=load_path,
         details={
-            "class_swapped": class_swapped,
+            # No runtime class mutation exists since #186; the key stays for
+            # detail-shape compatibility and is False by construction.
+            "class_swapped": False,
             "model_class": f"{type(model).__module__}.{type(model).__qualname__}",
             "quantized": bool(find_quantized_linear_modules(model)),
             "tokenizer_from_fastmodel": fm_tokenizer is not None,
