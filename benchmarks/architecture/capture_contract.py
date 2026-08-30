@@ -534,7 +534,7 @@ MUTATION_LEDGER: list[dict] = [
         after="a counting wrapper (functools.wraps; MethodType for bound forwards) — restored in a finally block",
         idempotent="yes (installs then restores every call)",
         reversible="yes — restored before returning; identity re-verified by tests",
-        scope="object-local, temporary",
+        scope="object-local",
         success_signal="LivenessReport counters (per module:kind), never a warning",
         liveness_evidence="tests/test_patch_report_contract.py (liveness only after forward; originals restored)",
         classification="KEEP (descriptive; #185 PR 0 contract: installed != live)",
