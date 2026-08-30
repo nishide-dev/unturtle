@@ -385,7 +385,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "c9dee2df9586ab71"
+        "torch_cpu_rng_digest": "888dd5ee1b876785"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -539,7 +539,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "109639a65ecece32"
+        "torch_cpu_rng_digest": "11f9aecea2428883"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -693,7 +693,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "87d13a2db31ac764"
+        "torch_cpu_rng_digest": "ca9d2ee5b7f9aa2c"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -847,7 +847,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "8bc149f64501fd95"
+        "torch_cpu_rng_digest": "888c08e2eb95a95a"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1001,7 +1001,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "28904cb69595456b"
+        "torch_cpu_rng_digest": "f57b4973eaa78396"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1155,7 +1155,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "267b4dc63a2a9883"
+        "torch_cpu_rng_digest": "78391615906585e4"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -2589,7 +2589,7 @@
     }
   },
   "producer": {
-    "commit": "3b4ae32e3312dbe97077d71e0749c077e12fc23b",
+    "commit": "647d03368f68a82218a4ce21d2b0a14676c7b00f",
     "dirty_paths": [],
     "import_root": "<repo>",
     "peft": "0.19.1",
@@ -5122,11 +5122,11 @@
         "target": "unturtle.registry._default_hub"
       }
     ],
-    "scanned_hits": 43,
+    "scanned_hits": 44,
     "unclaimed_hits": []
   },
   "schema_version": 1,
-  "semantic_digest": "5d144e0e72293dbe257dec94fc470c55fced313f02693090b435e41f9770812b",
+  "semantic_digest": "484a4e1bb02265c1a19543630bdbab4b3c8836a121e7874f1559eea5ce92dabd",
   "verdicts": {
     "diffusion_gemma_class_swap": {
       "area": "DiffusionGemma runtime class swap",
