@@ -361,7 +361,7 @@
           "unsloth_zoo",
           "unturtle"
         ],
-        "tracked_count": 2891
+        "tracked_count": 2892
       },
       "modules_before": {
         "top_level": [],
@@ -385,7 +385,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "888dd5ee1b876785"
+        "torch_cpu_rng_digest": "d03c3d2d0776de44"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -515,7 +515,7 @@
           "unsloth_zoo",
           "unturtle"
         ],
-        "tracked_count": 2891
+        "tracked_count": 2892
       },
       "modules_before": {
         "top_level": [],
@@ -539,7 +539,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "11f9aecea2428883"
+        "torch_cpu_rng_digest": "1b6b78f5835b2edb"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -669,7 +669,7 @@
           "unsloth_zoo",
           "unturtle"
         ],
-        "tracked_count": 2891
+        "tracked_count": 2892
       },
       "modules_before": {
         "top_level": [],
@@ -693,7 +693,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "ca9d2ee5b7f9aa2c"
+        "torch_cpu_rng_digest": "eba03c075340673a"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -823,7 +823,7 @@
           "unsloth_zoo",
           "unturtle"
         ],
-        "tracked_count": 2891
+        "tracked_count": 2892
       },
       "modules_before": {
         "top_level": [],
@@ -847,7 +847,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "888c08e2eb95a95a"
+        "torch_cpu_rng_digest": "2f1213314a30e1a3"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -977,7 +977,7 @@
           "unsloth_zoo",
           "unturtle"
         ],
-        "tracked_count": 2892
+        "tracked_count": 2893
       },
       "modules_before": {
         "top_level": [],
@@ -1001,7 +1001,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "f57b4973eaa78396"
+        "torch_cpu_rng_digest": "21c5d3eb29546b31"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1131,7 +1131,7 @@
           "unsloth_zoo",
           "unturtle"
         ],
-        "tracked_count": 2891
+        "tracked_count": 2892
       },
       "modules_before": {
         "top_level": [],
@@ -1155,7 +1155,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "78391615906585e4"
+        "torch_cpu_rng_digest": "c79423bf3fb20663"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -2589,7 +2589,7 @@
     }
   },
   "producer": {
-    "commit": "647d03368f68a82218a4ce21d2b0a14676c7b00f",
+    "commit": "e88d1a50673e8a82100572c58db5fb44b11efeb5",
     "dirty_paths": [],
     "import_root": "<repo>",
     "peft": "0.19.1",
@@ -4531,11 +4531,11 @@
         "claims": [
           {
             "contains": "module.apply_qkv = _original_apply_qkv",
-            "file": "unturtle/fast_diffusion_model.py"
+            "file": "unturtle/models/integrations/peft_preparation.py"
           },
           {
             "contains": "module.apply_o = _original_apply_o",
-            "file": "unturtle/fast_diffusion_model.py"
+            "file": "unturtle/models/integrations/peft_preparation.py"
           }
         ],
         "classification": "EXTRACT -> #185",
@@ -4543,22 +4543,22 @@
         "linked_issue": null,
         "liveness_evidence": "all fast-forward tests dispatch through the stubs",
         "mutation_id": "apply_stubs_install",
-        "owner": "_install_apply_stubs",
+        "owner": "peft_preparation.install_apply_stubs (#185 PR 2)",
         "reversible": "delete attrs (no API)",
         "row": {
           "evidence": {
             "matched_claims": [
               {
                 "contains": "module.apply_qkv = _original_apply_qkv",
-                "file": "unturtle/fast_diffusion_model.py"
+                "file": "unturtle/models/integrations/peft_preparation.py"
               },
               {
                 "contains": "module.apply_o = _original_apply_o",
-                "file": "unturtle/fast_diffusion_model.py"
+                "file": "unturtle/models/integrations/peft_preparation.py"
               }
             ]
           },
-          "owner": "_install_apply_stubs",
+          "owner": "peft_preparation.install_apply_stubs (#185 PR 2)",
           "reason": null,
           "source": "static scan + curated ledger",
           "status": "observed"
@@ -4956,7 +4956,7 @@
         "claims": [
           {
             "contains": "module.gradient_checkpointing = bool(mode)",
-            "file": "unturtle/fast_diffusion_model.py"
+            "file": "unturtle/models/integrations/peft_preparation.py"
           }
         ],
         "classification": "KEEP",
@@ -4964,18 +4964,18 @@
         "linked_issue": null,
         "liveness_evidence": "inference_context round-trip tests",
         "mutation_id": "gc_mode_application",
-        "owner": "_apply_gradient_checkpointing_mode",
+        "owner": "peft_preparation.apply_gradient_checkpointing_mode (#185 PR 2)",
         "reversible": "yes (mode round-trips)",
         "row": {
           "evidence": {
             "matched_claims": [
               {
                 "contains": "module.gradient_checkpointing = bool(mode)",
-                "file": "unturtle/fast_diffusion_model.py"
+                "file": "unturtle/models/integrations/peft_preparation.py"
               }
             ]
           },
-          "owner": "_apply_gradient_checkpointing_mode",
+          "owner": "peft_preparation.apply_gradient_checkpointing_mode (#185 PR 2)",
           "reason": null,
           "source": "static scan + curated ledger",
           "status": "observed"
@@ -4991,7 +4991,7 @@
         "claims": [
           {
             "contains": "model = prepare_model_for_kbit_training(",
-            "file": "unturtle/fast_diffusion_model.py"
+            "file": "unturtle/models/integrations/peft_preparation.py"
           }
         ],
         "classification": "EXTRACT -> #185",
@@ -5006,7 +5006,7 @@
             "matched_claims": [
               {
                 "contains": "model = prepare_model_for_kbit_training(",
-                "file": "unturtle/fast_diffusion_model.py"
+                "file": "unturtle/models/integrations/peft_preparation.py"
               }
             ]
           },
@@ -5126,7 +5126,7 @@
     "unclaimed_hits": []
   },
   "schema_version": 1,
-  "semantic_digest": "484a4e1bb02265c1a19543630bdbab4b3c8836a121e7874f1559eea5ce92dabd",
+  "semantic_digest": "741c1246d19531e3fb148ee5b0f06d7d8a767e9b16acdf9e9626eae3a49413fb",
   "verdicts": {
     "diffusion_gemma_class_swap": {
       "area": "DiffusionGemma runtime class swap",

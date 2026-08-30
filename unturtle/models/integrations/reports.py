@@ -139,6 +139,33 @@ class PatchReport:
         }
 
 
+@dataclass(frozen=True)
+class PreparedPeftModel:
+    """The PEFT-preparation boundary (#185 PR 2).
+
+    ``model`` is LoRA-wrapped and training-ready (stubs installed, k-bit
+    preparation or gradient checkpointing applied, adapters created under the
+    #188 forked-RNG contract) but carries NO fast-path optimization yet — the
+    façade hands it to the family optimization provider, which may decline
+    with a typed fallback without affecting preparation.
+    """
+
+    model: Any
+    lora_config: Any
+    quantized: bool
+    kbit_prepared: bool
+    gradient_checkpointing: Any
+    random_state: int | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "quantized": self.quantized,
+            "kbit_prepared": self.kbit_prepared,
+            "gradient_checkpointing": self.gradient_checkpointing,
+            "random_state": self.random_state,
+        }
+
+
 @dataclass
 class LoadedModel:
     """``from_pretrained`` result with its provenance."""
