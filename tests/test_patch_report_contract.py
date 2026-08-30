@@ -399,3 +399,76 @@ def test_loaded_model_provenance_native_path(tmp_path):
     model, tokenizer = loaded.as_tuple()
     assert model is loaded.model and tokenizer is loaded.tokenizer
     assert copy.copy(loaded.details)["quantized"] is False
+
+
+def _tiny_llada():
+    from unturtle.models.backbones.llada.configuration_llada import LLaDAConfig
+    from unturtle.models.backbones.llada.modeling_llada import LLaDAModelLM
+
+    config = LLaDAConfig(
+        d_model=64,
+        n_heads=4,
+        n_layers=2,
+        mlp_hidden_size=128,
+        vocab_size=512,
+        embedding_size=512,
+        max_sequence_length=64,
+        block_type="llama",
+        activation_type="silu",
+        rope=True,
+        include_bias=False,
+        include_qkv_bias=False,
+        weight_tying=False,
+    )
+    return LLaDAModelLM(config).eval()
+
+
+def test_rope_targets_are_counted_and_llada_qkv_o_are_install_only():
+    """LLaDA installs a bound fast rope forward: the probe must count it (otherwise
+    every LLaDA report is forced to live=False for the wrong reason).
+
+    It also records a real defect the report exists to expose: the LLaDA patcher
+    installs ``block.apply_qkv`` / ``block.apply_o`` but ``LLaDALlamaBlock.forward``
+    never calls them, so they are installed-not-live. PR 0 reports that faithfully;
+    making them live is family-extraction work, not a PR 0 change."""
+    if not torch.cuda.is_available():
+        pytest.skip("fast paths need CUDA")
+    from unturtle.fast_diffusion_model import FastDiffusionModel, probe_liveness
+
+    model, report = FastDiffusionModel.get_peft_model_with_report(
+        _tiny_llada().cuda(),
+        r=4,
+        lora_alpha=4,
+        lora_dropout=0.0,
+        bias="none",
+        target_modules=["q_proj", "k_proj", "v_proj", "attn_out"],
+        use_gradient_checkpointing=False,
+    )
+    assert len(report.applied.get("rope", ())) == 2, report.applied
+    assert len(report.applied["qkv"]) == 2 and len(report.applied["o"]) == 2
+    ids = torch.randint(2, 400, (1, 8), device="cuda")
+    liveness = probe_liveness(model, {"input_ids": ids}, applied=report.applied)
+    by_kind = {}
+    for key, count in liveness.forward.items():
+        by_kind.setdefault(key.rsplit(":", 1)[1], []).append(count)
+    assert all(v >= 1 for v in by_kind["rope"]), by_kind  # rope executes and is counted
+    assert all(v == 0 for v in by_kind["qkv"]), by_kind  # installed, never called
+    assert all(v == 0 for v in by_kind["o"]), by_kind
+    assert report.is_fast is True and liveness.live is False  # installed != live
+
+
+def test_probe_restores_originals_when_one_attr_is_installed_twice(cuda_dream_report):
+    """A caller-supplied `applied` map may list one module under two kinds that both
+    resolve to `forward`; restore must be LIFO so the pre-probe original survives."""
+    from unturtle.fast_diffusion_model import probe_liveness
+
+    model, report = cuda_dream_report
+    path = report.applied["attention_forward"][0]
+    module = dict(model.named_modules())[path]
+    original = module.__dict__["forward"]
+    applied = {"attention_forward": (path,), "rope": (path,)}
+    ids = torch.randint(2, 400, (1, 8), device="cuda")
+    liveness = probe_liveness(model, {"input_ids": ids}, applied=applied)
+    assert module.__dict__["forward"] is original
+    assert liveness.forward[f"{path}:attention_forward"] >= 1
+    assert liveness.forward[f"{path}:rope"] >= 1

@@ -1339,12 +1339,6 @@ def probe_liveness(
     modules = dict(model.named_modules())
     counts: dict[str, int] = {}
     restore: list[tuple[Any, str, Any]] = []
-    attr_for_kind = {
-        "qkv": "apply_qkv",
-        "o": None,
-        "mlp": None,
-        "attention_forward": "forward",
-    }
 
     def install(module: Any, attr: str, key: str, bound: bool) -> None:
         original = module.__dict__[attr]
@@ -1384,11 +1378,11 @@ def probe_liveness(
                 install(module, "apply_wo", key, bound=False)
             elif kind == "mlp" and "apply_mlp" in own:
                 install(module, "apply_mlp", key, bound=False)
-            elif kind in ("mlp", "attention_forward") and "forward" in own:
+            elif kind in ("mlp", "attention_forward", "rope") and "forward" in own:
+                # bound fast forwards (Dream/A2D/ModernBERT attention, LLaDA rope)
                 install(module, "forward", key, bound=True)
             else:
                 counts[key] = 0  # nothing to count: cannot be live
-    del attr_for_kind
 
     was_training = model.training
     backward_counts: dict[str, int] | None = None
@@ -1416,7 +1410,8 @@ def probe_liveness(
             with torch.no_grad():
                 model(**inputs)
     finally:
-        for module, attr, original in restore:
+        # LIFO: a (module, attr) installed twice must end at its pre-probe original
+        for module, attr, original in reversed(restore):
             module.__dict__[attr] = original
         model.train(was_training)
 
