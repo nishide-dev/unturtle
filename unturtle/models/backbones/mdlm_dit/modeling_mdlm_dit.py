@@ -71,13 +71,53 @@ class LayerNorm(nn.Module):
         return (x * self.weight[None, None, :]).to(self.weight.dtype)
 
 
+def build_inv_freq(
+    dim: int,
+    base: float,
+    *,
+    device: torch.device | str | None = None,
+    dtype: torch.dtype = torch.float32,
+) -> torch.Tensor:
+    """The ONE canonical RoPE inverse-frequency initializer for the DiT family.
+
+    Used by the constructor and by ``Rotary.reset_parameters`` (which
+    ``from_pretrained`` reaches through ``_init_weights``), so direct
+    construction and reload can never disagree on the formula (#174).
+    Computed in float32 (the historical contract) and cast last.
+    """
+    positions = torch.arange(0, dim, 2, dtype=torch.float32, device=device)
+    return (1.0 / (float(base) ** (positions / dim))).to(dtype)
+
+
 class Rotary(nn.Module):
-    """RoPE cos/sin cache. Returns per-position cos/sin shaped [1, L, 1, head_dim]."""
+    """RoPE cos/sin cache. Returns per-position cos/sin shaped [1, L, 1, head_dim].
+
+    ``inv_freq`` is a non-persistent buffer: transformers' ``from_pretrained``
+    re-materializes it with ``torch.empty_like`` (uninitialized memory) and
+    relies on ``_init_weights`` to give it a value. ``reset_parameters`` is
+    that value's single source; ``MDLMDiTPreTrainedModel._init_weights`` calls
+    it (#174).
+    """
 
     def __init__(self, dim: int, base: int = 10_000) -> None:
         super().__init__()
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
+        self.dim = dim
+        self.base = base
+        self.register_buffer(
+            "inv_freq", torch.empty(dim // 2, dtype=torch.float32), persistent=False
+        )
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        with torch.no_grad():
+            self.inv_freq.copy_(
+                build_inv_freq(
+                    self.dim,
+                    self.base,
+                    device=self.inv_freq.device,
+                    dtype=self.inv_freq.dtype,
+                )
+            )
 
     def forward(
         self, seq_len: int, device: torch.device
@@ -310,10 +350,14 @@ class MDLMDiTPreTrainedModel(PreTrainedModel):
     supports_gradient_checkpointing = True
 
     def _init_weights(self, module) -> None:
-        # No-op: every submodule self-initializes in its own ``__init__`` (adaLN-Zero
-        # gates are zero-initialized there). Re-initializing here via ``post_init`` would
-        # break the zero-init contract, so weight init is intentionally a no-op.
-        return
+        # Every weight-bearing submodule self-initializes in its own ``__init__``
+        # (adaLN-Zero gates are zero-initialized there), so re-initializing weights
+        # here would break the zero-init contract — for them this stays a no-op.
+        # The ONE exception is the non-persistent rotary buffer: ``from_pretrained``
+        # re-materializes it as uninitialized memory and reaches this hook to fill
+        # it (#174). Route to the module's own canonical initializer.
+        if isinstance(module, Rotary):
+            module.reset_parameters()
 
 
 def _normalize_attention_mask(

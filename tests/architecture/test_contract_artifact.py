@@ -147,7 +147,7 @@ def test_required_verdicts_present(artifact):
         "root_export_growth": "DEPRECATE",
         "universal_hierarchy": "DO NOT CREATE",
         "get_peft_model_random_state": "linked defect -> #188",
-        "save_reload_global_state_instability": "UNDECIDABLE -> #174",
+        "save_reload_global_state_instability": "RESOLVED -> #174 (uninitialized non-persistent rotary buffers; fixed)",
         "registry_hub_explicit_contract": "KEEP",
     }
     for key, value in required.items():

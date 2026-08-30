@@ -242,12 +242,16 @@ class _empty_like_nan:
     becomes NaN. Observation aid only — it never touches production code.
     """
 
+    calls = 0  # how many uninitialized allocations the wrapper poisoned
+
     def __enter__(self):
         import torch
 
         self._original = torch.empty_like
+        self.calls = 0
 
         def empty_like_nan(*args, **kwargs):
+            self.calls += 1
             return self._original(*args, **kwargs).fill_(float("nan"))
 
         torch.empty_like = empty_like_nan
@@ -326,9 +330,11 @@ def run(args) -> dict:
     out_dir = tempfile.mkdtemp()
     model.save_pretrained(out_dir)
     _poison_allocator(args.poison)
+    poison_calls = 0
     if args.poison == "empty_like_nan":
-        with _empty_like_nan():
+        with _empty_like_nan() as poison:
             reloaded = cls.from_pretrained(out_dir)
+        poison_calls = poison.calls
     else:
         reloaded = cls.from_pretrained(out_dir)
     reloaded = reloaded.to(device).eval()
@@ -367,6 +373,9 @@ def run(args) -> dict:
         "device": args.device,
         "sdpa_backend": args.sdpa,
         "poison": args.poison,
+        # evidence that the poison actually intercepted the load's allocations
+        # (a test that "passes" with the wrapper removed proves nothing)
+        "poison_empty_like_calls": poison_calls,
         "model_class": original_rec["class"],
         "rope_config_fields": rope_fields,
         "init_weights_owner": (

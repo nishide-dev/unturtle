@@ -521,7 +521,7 @@ MUTATION_LEDGER: list[dict] = [
             "re-initialize them (verdict ROPE LOAD-PATH CAUSAL, "
             "docs/artifacts/174-persistence-attribution-v1.json)"
         ),
-        classification="linked defect -> #174 (attributed; this row itself is inert)",
+        classification="linked defect -> #174 (attributed and FIXED: Rotary/DreamRotaryEmbedding reset_parameters via _init_weights; this row itself is inert)",
         linked_issue=174,
         claims=[(FDM, "rope.extend_rope_embedding(max_seq_length)")],
     ),
@@ -973,7 +973,7 @@ def build_verdicts(sections: dict) -> dict:
         ),
         "save_reload_global_state_instability": verdict(
             "Full-suite save/reload global-state instability",
-            "UNDECIDABLE -> #174",
+            "RESOLVED -> #174 (uninitialized non-persistent rotary buffers; fixed)",
             {
                 "persistence.native_fp": {
                     "state_dict": "identical",
