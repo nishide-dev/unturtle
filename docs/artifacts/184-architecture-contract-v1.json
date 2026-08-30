@@ -367,7 +367,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "04c9f52e426295cb"
+        "torch_cpu_rng_digest": "e48a7e402ef03755"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -521,7 +521,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "25cf13b9b9eb9f8c"
+        "torch_cpu_rng_digest": "e8c873ba421db7b6"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -675,7 +675,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "f0eece0000d02a22"
+        "torch_cpu_rng_digest": "109066893d2cc6b4"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -829,7 +829,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "211fa989a2442916"
+        "torch_cpu_rng_digest": "a2553ef19b8945d5"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -983,7 +983,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "9b3ba474038ea275"
+        "torch_cpu_rng_digest": "304de735375a0dcc"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1137,7 +1137,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "b12296b8addb9178"
+        "torch_cpu_rng_digest": "d0e7a0f60d2f710f"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -2571,7 +2571,7 @@
     }
   },
   "producer": {
-    "commit": "6706615420802a2b9a9b23ab6f569ba38226456b",
+    "commit": "05e523c368c415d061f22e08b0d60772ebbdb4d6",
     "dirty_paths": [],
     "import_root": "<repo>",
     "peft": "0.19.1",
