@@ -2330,3 +2330,95 @@ class TestFastPathDtypeGate:
 
         assert self._gate(model) is None
         assert self._gate(raising) is None
+
+
+# ---------------------------------------------------------------------------
+# get_peft_model(random_state=...) contract (#188)
+# ---------------------------------------------------------------------------
+
+
+def _tiny_dream_for_rng():
+    from unturtle.models.backbones.dream.configuration_dream import DreamConfig
+    from unturtle.models.backbones.dream.modeling_dream import DreamModel
+
+    torch.manual_seed(0)
+    config = DreamConfig(
+        vocab_size=64,
+        hidden_size=32,
+        intermediate_size=64,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        max_position_embeddings=16,
+        mask_token_id=1,
+        pad_token_id=0,
+    )
+    return DreamModel(config)
+
+
+def _lora_a_after_wrap(*, random_state, pre_consume: int) -> tuple[torch.Tensor, bool]:
+    """Wrap a fresh tiny model after consuming `pre_consume` RNG draws; return
+    the first lora_A and whether the caller's torch RNG state was untouched."""
+    from unturtle.fast_diffusion_model import FastDiffusionModel
+
+    model = _tiny_dream_for_rng()
+    torch.manual_seed(100)
+    if pre_consume:
+        torch.randn(pre_consume)
+    state_before = torch.get_rng_state().clone()
+    peft_model = FastDiffusionModel.get_peft_model(
+        model,
+        r=4,
+        lora_alpha=4,
+        lora_dropout=0.0,
+        bias="none",
+        target_modules=["q_proj"],
+        use_gradient_checkpointing=False,
+        random_state=random_state,
+    )
+    state_after = torch.get_rng_state()
+    lora_a = next(p for n, p in peft_model.named_parameters() if ".lora_A." in n)
+    return lora_a.detach().clone(), bool(torch.equal(state_before, state_after))
+
+
+class TestPeftRandomStateContract:
+    def test_same_random_state_gives_same_adapters_regardless_of_prior_rng(self):
+        a, _ = _lora_a_after_wrap(random_state=3407, pre_consume=0)
+        b, _ = _lora_a_after_wrap(random_state=3407, pre_consume=7)
+        assert torch.equal(a, b), "random_state did not own adapter initialization"
+
+    def test_different_random_state_gives_different_adapters(self):
+        a, _ = _lora_a_after_wrap(random_state=3407, pre_consume=0)
+        b, _ = _lora_a_after_wrap(random_state=3408, pre_consume=0)
+        assert not torch.equal(a, b)
+
+    def test_callers_global_rng_is_not_consumed_or_reseeded(self):
+        """Documented divergence from unsloth's set_seed: the seed lives in a
+        forked generator, so the caller's RNG stream continues unchanged."""
+        _, untouched = _lora_a_after_wrap(random_state=3407, pre_consume=3)
+        assert untouched
+        # and the caller's NEXT draw equals what it would have been without the wrap
+        torch.manual_seed(100)
+        torch.randn(3)
+        expected_next = torch.randn(4)
+        model = _tiny_dream_for_rng()
+        torch.manual_seed(100)
+        torch.randn(3)
+        from unturtle.fast_diffusion_model import FastDiffusionModel
+
+        FastDiffusionModel.get_peft_model(
+            model,
+            r=4,
+            lora_alpha=4,
+            lora_dropout=0.0,
+            bias="none",
+            target_modules=["q_proj"],
+            use_gradient_checkpointing=False,
+            random_state=3407,
+        )
+        assert torch.equal(torch.randn(4), expected_next)
+
+    def test_none_keeps_legacy_unseeded_behavior(self):
+        a, _ = _lora_a_after_wrap(random_state=None, pre_consume=0)
+        b, _ = _lora_a_after_wrap(random_state=None, pre_consume=7)
+        assert not torch.equal(a, b), "None must opt out of seeding (legacy contract)"
