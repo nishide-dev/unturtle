@@ -457,7 +457,7 @@ def test_central_no_longer_owns_the_family():
     assert not hasattr(fdm, "_patch_modernbert_peft")
     assert not hasattr(fdm, "_install_modernbert_stubs")
     remaining = [n for n in dir(fdm) if n.startswith("_patch_") and n.endswith("_peft")]
-    assert sorted(remaining) == ["_patch_dream_peft", "_patch_llada_peft"]
+    assert sorted(remaining) == ["_patch_llada_peft"]
     integration = find_peft_integration("modernbert-diffusion")
     assert integration.fast_paths is fast_paths
     assert integration.peft_patcher is fast_paths.patch_peft

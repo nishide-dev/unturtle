@@ -121,8 +121,11 @@ def _a2d_fast_paths() -> Any:
     return fast_paths
 
 
-def _dream_patcher() -> Any:
-    return _loader_attr("_patch_dream_peft")
+def _dream_fast_paths() -> Any:
+    """The Dream provider module (#185) — imported only when a lookup needs it."""
+    from unturtle.models.backbones.dream import fast_paths
+
+    return fast_paths
 
 
 def _llada_patcher() -> Any:
@@ -138,14 +141,6 @@ def _modernbert_fast_paths() -> Any:
 
 def _n_layers(model: Any) -> int:
     return len(model.base_model.model.model.layers)
-
-
-def _dream_report(model: Any, counts: tuple[int, int, int]) -> str:
-    n_qkv, n_o, n_mlp = counts
-    return (
-        f"FastDiffusionModel (Dream) patched {_n_layers(model)} layers with "
-        f"{n_qkv} QKV layers (bias kernel), {n_o} O layers and {n_mlp} MLP layers."
-    )
 
 
 def _llada_report(model: Any, counts: tuple[int, int, int]) -> str:
@@ -189,8 +184,7 @@ def _builtin_integrations() -> list[BackboneIntegration]:
             model_types=("dream", "Dream"),
             _native_resolver=_dream,
             peft_model_types=("dream", "Dream"),
-            _peft_patcher=_dream_patcher,
-            peft_report=_dream_report,
+            _fast_paths_resolver=_dream_fast_paths,
             capabilities=frozenset({"masked_generation", "block_decode"}),
         ),
         BackboneIntegration(

@@ -17,6 +17,7 @@ ARTIFACT = (
 )
 A2D_PROVIDER = "unturtle.models.conversion.a2d.tiny_a2d.fast_paths"
 MODERNBERT_PROVIDER = "unturtle.models.backbones.modernbert.fast_paths"
+DREAM_PROVIDER = "unturtle.models.backbones.dream.fast_paths"
 A2D_FAMILIES = ("tiny-a2d-llama", "tiny-a2d-qwen2", "tiny-a2d-qwen3")
 
 
@@ -39,17 +40,23 @@ def test_tiny_a2d_declares_its_patcher_through_the_provider(integrations, family
     assert row["fast_paths"]["target"] == A2D_PROVIDER, row
 
 
-def test_modernbert_declares_its_patcher_through_the_provider(integrations):
-    row = integrations["modernbert-diffusion"]
+@pytest.mark.parametrize(
+    "family,provider",
+    [("modernbert-diffusion", MODERNBERT_PROVIDER), ("dream", DREAM_PROVIDER)],
+)
+def test_backbone_families_declare_their_patcher_through_the_provider(
+    integrations, family, provider
+):
+    row = integrations[family]
     assert row["peft_patcher"]["declared"] is True, row
     assert row["peft_patcher"]["resolved"] is True, row
-    assert row["peft_patcher"]["target"] == f"{MODERNBERT_PROVIDER}.patch_peft", row
+    assert row["peft_patcher"]["target"] == f"{provider}.patch_peft", row
     assert row["peft_patcher"]["via"] == "fast_paths", row
     assert row["fast_paths"]["resolved"] is True, row
-    assert row["fast_paths"]["target"] == MODERNBERT_PROVIDER, row
+    assert row["fast_paths"]["target"] == provider, row
 
 
-@pytest.mark.parametrize("family", ("dream", "llada"))
+@pytest.mark.parametrize("family", ("llada",))
 def test_unextracted_families_still_patch_through_the_facade(integrations, family):
     row = integrations[family]
     assert row["peft_patcher"]["declared"] is True, row
@@ -65,7 +72,8 @@ def test_artifact_matches_the_live_registry():
     from unturtle.models.integrations import find_peft_integration
 
     for family, provider in [(f, A2D_PROVIDER) for f in A2D_FAMILIES] + [
-        ("modernbert-diffusion", MODERNBERT_PROVIDER)
+        ("modernbert-diffusion", MODERNBERT_PROVIDER),
+        ("dream", DREAM_PROVIDER),
     ]:
         integration = find_peft_integration(family)
         patcher = integration.peft_patcher

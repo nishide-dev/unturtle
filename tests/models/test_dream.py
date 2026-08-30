@@ -587,7 +587,7 @@ class TestDreamFastRoPE:
     @staticmethod
     def _install_fast_forward(model):
         """Install apply_qkv/apply_o stubs and the fast attention forward on
-        every layer (CPU-safe simulation of what _patch_dream_peft injects)."""
+        every layer (CPU-safe simulation of what dream.fast_paths.patch_peft injects)."""
         import types
 
         from unturtle.fast_diffusion_model import (
@@ -971,7 +971,7 @@ class TestDreamFastRoPE:
                 module.apply_qkv = _original_apply_qkv
                 module.apply_o = _original_apply_o
 
-        # Inject forward manually (simulates what _patch_dream_peft does
+        # Inject forward manually (simulates what dream.fast_paths.patch_peft does
         # unconditionally before the lora_dropout check)
         for layer in model.model.layers:
             layer.self_attn.forward = types.MethodType(
