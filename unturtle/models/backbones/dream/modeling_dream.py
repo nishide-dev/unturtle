@@ -1240,7 +1240,7 @@ def DreamAttention_fast_forward(
     ``fast_rope_embedding`` on CUDA (flatten + sequential row index, no double-index).
     The rest of the forward pass is unchanged.
 
-    Injected by ``FastDiffusionModel._patch_dream_peft`` when the model is on CUDA.
+    Injected by ``dream.fast_paths.patch_peft`` (#185 provider) when the model is on CUDA.
 
     Cache-enabled block decode (Dream's tuple KV caches, ``dual_cache`` /
     ``replace_position``) is not implemented by this fast path; those calls are

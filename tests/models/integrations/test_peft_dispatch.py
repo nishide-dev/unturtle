@@ -131,7 +131,9 @@ class TestReportedCounts:
         from unturtle.models.conversion.a2d.tiny_a2d import fast_paths as a2d_fast_paths
 
         monkeypatch.setattr(a2d_fast_paths, "patch_peft", lambda m, d, b: (1, 2, 3))
-        monkeypatch.setattr(fdm, "_patch_dream_peft", lambda m, d, b: (4, 5, 6))
+        from unturtle.models.backbones.dream import fast_paths as dream_fast_paths
+
+        monkeypatch.setattr(dream_fast_paths, "patch_peft", lambda m, d, b: (4, 5, 6))
         from unturtle.models.backbones.modernbert import fast_paths as mb_fast_paths
 
         monkeypatch.setattr(mb_fast_paths, "patch_peft", lambda m, d, b: (7, 8, 9))

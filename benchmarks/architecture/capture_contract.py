@@ -116,6 +116,7 @@ PROCESS_GLOBAL_CASES = ("rng_contract", "sdpa")
 # ---------------------------------------------------------------------------
 
 FDM = "unturtle/fast_diffusion_model.py"
+DREAM_PROVIDER = "unturtle/models/backbones/dream/fast_paths.py"  # #185 Dream provider
 MODERNBERT_PROVIDER = (
     "unturtle/models/backbones/modernbert/fast_paths.py"  # #185 ModernBERT provider
 )
@@ -229,7 +230,7 @@ MUTATION_LEDGER: list[dict] = [
     ),
     _mutation(
         "dream_attention_fast_forward",
-        owner="_patch_dream_peft",
+        owner="dream.fast_paths.patch_peft (#185 provider)",
         target="self_attn.forward (instance)",
         applicability="CUDA + dtype gate (#177)",
         before="DreamSdpaAttention.forward (class)",
@@ -239,15 +240,18 @@ MUTATION_LEDGER: list[dict] = [
         scope="object-local",
         success_signal=_WARN_ONLY,
         liveness_evidence="fourbit-contract probe: instance_forward_installed + forward/backward",
-        classification="EXTRACT -> #185",
+        classification="EXTRACTED -> dream.fast_paths (#185, family provider)",
         claims=[
-            (FDM, "self_attn.forward = types.MethodType(DreamAttention_fast_forward")
+            (
+                DREAM_PROVIDER,
+                "self_attn.forward = types.MethodType(DreamAttention_fast_forward",
+            )
         ],
         linked_issue=177,
     ),
     _mutation(
         "dream_qkv_fast_hook_bias",
-        owner="_patch_dream_peft",
+        owner="dream.fast_paths.patch_peft (#185 provider)",
         target="self_attn.apply_qkv",
         applicability="CUDA + lora_dropout==0 + bias==none + LoRA + no DoRA + dtype gate (#177)",
         before="_original_apply_qkv stub",
@@ -260,13 +264,13 @@ MUTATION_LEDGER: list[dict] = [
             "fourbit-contract probe: before=_original_apply_qkv, "
             "after=apply_lora_qkv_with_bias, forward+backward complete"
         ),
-        classification="EXTRACT -> #185",
-        claims=[(FDM, "self_attn.apply_qkv = apply_lora_qkv_with_bias")],
+        classification="EXTRACTED -> dream.fast_paths (#185, family provider)",
+        claims=[(DREAM_PROVIDER, "self_attn.apply_qkv = apply_lora_qkv_with_bias")],
         linked_issue=177,
     ),
     _mutation(
         "dream_o_fast_hook",
-        owner="_patch_dream_peft",
+        owner="dream.fast_paths.patch_peft (#185 provider)",
         target="self_attn.apply_o",
         applicability="CUDA + eligibility gates",
         before="_original_apply_o stub",
@@ -276,12 +280,12 @@ MUTATION_LEDGER: list[dict] = [
         scope="object-local",
         success_signal=_WARN_ONLY,
         liveness_evidence="fourbit-contract probe: apply_o_is_fast + backward",
-        classification="EXTRACT -> #185",
-        claims=[(FDM, "self_attn.apply_o = apply_lora_o")],
+        classification="EXTRACTED -> dream.fast_paths (#185, family provider)",
+        claims=[(DREAM_PROVIDER, "self_attn.apply_o = apply_lora_o")],
     ),
     _mutation(
         "dream_mlp_fast_hook",
-        owner="_patch_dream_peft",
+        owner="dream.fast_paths.patch_peft (#185 provider)",
         target="layer.mlp.forward (instance)",
         applicability="CUDA + eligibility gates",
         before="DreamMLP.forward (class)",
@@ -291,8 +295,13 @@ MUTATION_LEDGER: list[dict] = [
         scope="object-local",
         success_signal=_WARN_ONLY,
         liveness_evidence="fourbit-contract probe: mlp_forward_is_fast + backward",
-        classification="EXTRACT -> #185",
-        claims=[(FDM, "mlp.forward = types.MethodType(apply_lora_mlp_swiglu, mlp)")],
+        classification="EXTRACTED -> dream.fast_paths (#185, family provider)",
+        claims=[
+            (
+                DREAM_PROVIDER,
+                "mlp.forward = types.MethodType(apply_lora_mlp_swiglu, mlp)",
+            )
+        ],
     ),
     _mutation(
         "llada_rope_fast_forward",
