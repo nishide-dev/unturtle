@@ -146,7 +146,7 @@ def test_required_verdicts_present(artifact):
         "diffusion_gemma_class_swap": "REPLACE -> #186",
         "root_export_growth": "DEPRECATE",
         "universal_hierarchy": "DO NOT CREATE",
-        "get_peft_model_random_state": "linked defect -> #188",
+        "get_peft_model_random_state": "RESOLVED -> #188 (seeded inside a forked torch RNG)",
         "save_reload_global_state_instability": "RESOLVED -> #174 (uninitialized non-persistent rotary buffers; fixed)",
         "registry_hub_explicit_contract": "KEEP",
     }

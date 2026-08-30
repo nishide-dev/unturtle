@@ -83,18 +83,19 @@ def _wrap_lora_a_digest(pre_consume: int) -> str:
     raise AssertionError("no lora_A parameter found")
 
 
-def test_rng_contract_defect_is_real_and_recorded(artifact):
+def test_rng_contract_is_deterministic_after_188(artifact):
+    """#188 fixed: the same random_state yields the same adapters regardless
+    of prior RNG consumption, and the caller's RNG is untouched — recorded in
+    the artifact and re-derived live."""
     row = artifact["process_global_state"]["rng_contract"]
     assert row["linked_issue"] == 188
-    assert row["classification"] == "known_defect"
-    assert row["same_random_state_same_adapters"] is False
+    assert row["classification"] == "deterministic_by_random_state"
+    assert row["same_random_state_same_adapters"] is True
+    assert row["caller_rng_untouched_by_wrap"] is True
 
     digest_clean = _wrap_lora_a_digest(pre_consume=0)
     digest_shifted = _wrap_lora_a_digest(pre_consume=7)
-    # same random_state argument, different prior RNG consumption — the
-    # adapters MUST currently differ (that IS the defect). When #188 is
-    # fixed, this test and the artifact row change together.
-    assert digest_clean != digest_shifted
+    assert digest_clean == digest_shifted
 
 
 def test_sdpa_row_matches_runtime_defaults(artifact):

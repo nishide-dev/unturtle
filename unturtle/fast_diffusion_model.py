@@ -1381,7 +1381,7 @@ class FastDiffusionModel:
         lora_dropout: float = 0,
         bias: Literal["none", "all", "lora_only"] = "none",
         use_gradient_checkpointing: str | bool = "unsloth",
-        random_state: int = 3407,
+        random_state: int | None = 3407,
         **kwargs: Any,
     ) -> Any:
         """Apply LoRA and patch with unsloth's Triton kernels.
@@ -1399,7 +1399,15 @@ class FastDiffusionModel:
                                         ``"lora_only"``).
             use_gradient_checkpointing: ``"unsloth"`` for unsloth-style GC,
                                         ``True`` for standard, ``False`` to disable.
-            random_state:               Seed passed to PEFT.
+            random_state:               Seed for LoRA adapter initialization. PEFT
+                                        draws ``lora_A`` from torch's GLOBAL RNG, so
+                                        without this two wraps differ whenever anything
+                                        consumed the RNG earlier (#188). The seed is
+                                        applied inside a forked torch RNG: adapter init
+                                        is deterministic given ``random_state`` AND the
+                                        caller's global RNG state is neither consumed nor
+                                        changed (unsloth instead calls ``set_seed`` on the
+                                        global RNG). ``None`` disables seeding.
             **kwargs:                   Forwarded to ``LoraConfig``.
 
         Returns:
@@ -1454,7 +1462,7 @@ class FastDiffusionModel:
                     )
             _apply_gradient_checkpointing_mode(model, use_gradient_checkpointing)
 
-        model = get_peft_model(model, lora_config)
+        model = _wrap_with_peft_seeded(model, lora_config, random_state)
         model._unturtle_gradient_checkpointing_mode = use_gradient_checkpointing
 
         FastDiffusionModel.patch_peft_model(model, lora_dropout=lora_dropout, bias=bias)
@@ -1784,6 +1792,36 @@ class FastDiffusionModel:
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
+
+
+def _wrap_with_peft_seeded(
+    model: Any, lora_config: LoraConfig, random_state: int | None
+) -> Any:
+    """``peft.get_peft_model`` with adapter initialization owned by ``random_state``.
+
+    PEFT initializes ``lora_A`` (kaiming) from torch's global generator, so the
+    adapters depend on whatever consumed the RNG earlier in the process (#188:
+    measured as two bit-stable adapter sets flipping with test ordering).
+    Seeding happens inside ``torch.random.fork_rng`` covering the CPU generator
+    and every CUDA device, so:
+
+    - the same ``random_state`` yields the same adapters regardless of prior
+      RNG consumption (the documented contract of the parameter);
+    - the caller's global RNG state is restored on exit — unlike unsloth's
+      ``set_seed(random_state)``, this does not reseed the caller's process.
+
+    ``random_state=None`` keeps the legacy unseeded behavior.
+    """
+    if random_state is None:
+        return get_peft_model(model, lora_config)
+    devices = (
+        list(range(torch.cuda.device_count()))
+        if torch.cuda.is_available() and torch.cuda.is_initialized()
+        else []
+    )
+    with torch.random.fork_rng(devices=devices):
+        torch.manual_seed(random_state)
+        return get_peft_model(model, lora_config)
 
 
 def _original_apply_qkv(self: Any, X: torch.Tensor) -> tuple[torch.Tensor, ...]:

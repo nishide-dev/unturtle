@@ -1020,7 +1020,16 @@ def probe_process_global(args: dict) -> dict:
             "run_with_preconsumption": run_b,
             "same_random_state_same_adapters": run_a["lora_A_digest"]
             == run_b["lora_A_digest"],
-            "classification": "known_defect",
+            "caller_rng_untouched_by_wrap": (
+                not run_a["rng_consumed"] and not run_b["rng_consumed"]
+            ),
+            # measured, not asserted: the row says "known_defect" only while the
+            # adapters actually differ (#188 fix: seeded, forked RNG)
+            "classification": (
+                "deterministic_by_random_state"
+                if run_a["lora_A_digest"] == run_b["lora_A_digest"]
+                else "known_defect"
+            ),
             "linked_issue": 188,
         }
 

@@ -963,12 +963,15 @@ def build_verdicts(sections: dict) -> dict:
         ),
         "get_peft_model_random_state": verdict(
             "get_peft_model(random_state=...) contract",
-            "linked defect -> #188",
+            "RESOLVED -> #188 (seeded inside a forked torch RNG)",
             {
                 "process_global_state": (
                     "rng_contract row: same random_state, different pre-RNG "
-                    "consumption, different lora_A digests"
-                )
+                    "consumption, SAME lora_A digests; caller RNG untouched"
+                ),
+                "rng_contract_classification": sections.get("process_global_state", {})
+                .get("rng_contract", {})
+                .get("classification"),
             },
         ),
         "save_reload_global_state_instability": verdict(
