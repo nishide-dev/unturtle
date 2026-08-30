@@ -60,7 +60,7 @@
         },
         "persistent_digest": "bd32d36c11f147e4",
         "volatile": {
-          "object_id": 23113510640416
+          "object_id": 22457919909104
         }
       },
       "original": {
@@ -122,23 +122,21 @@
         },
         "persistent_digest": "bd32d36c11f147e4",
         "volatile": {
-          "object_id": 23113511626144
+          "object_id": 22457535844272
         }
       },
       "reload": {
         "buffers": {
           "model.rotary.inv_freq": {
             "device": "cpu",
+            "digest": "e34ca351e673150e",
             "dtype": "torch.float32",
-            "equals_formula": false,
-            "equals_reference": false,
-            "finite": false,
+            "equals_formula": true,
+            "equals_reference": true,
+            "finite": true,
             "shape": [
               8
-            ],
-            "volatile": {
-              "digest": "f67ddcc615342406"
-            }
+            ]
           }
         },
         "class": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTForMaskedDiffusionLM",
@@ -186,7 +184,7 @@
         },
         "persistent_digest": "bd32d36c11f147e4",
         "volatile": {
-          "object_id": 23113511923264
+          "object_id": 22457920951488
         }
       },
       "reload_restored": {
@@ -251,7 +249,7 @@
           "model.rotary.inv_freq"
         ],
         "volatile": {
-          "object_id": 23113500544608
+          "object_id": 22457920960368
         }
       }
     },
@@ -260,6 +258,7 @@
     "init_weights_owner": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTPreTrainedModel._init_weights",
     "model_class": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTForMaskedDiffusionLM",
     "poison": "empty_like_nan",
+    "poison_empty_like_calls": 1,
     "process_state": {
       "after": {
         "autocast_cpu_enabled": false,
@@ -333,7 +332,7 @@
         "volatile": {
           "cpu_rng_digest": "d57f33415962ab64",
           "cuda_rng_digest": "374708fff7719dd5",
-          "python_rng_digest": "aede0ffe8f365b0e"
+          "python_rng_digest": "3f44a12dfb108e75"
         }
       },
       "before": {
@@ -408,7 +407,7 @@
         "volatile": {
           "cpu_rng_digest": "804607d66c3ffcaa",
           "cuda_rng_digest": "374708fff7719dd5",
-          "python_rng_digest": "aede0ffe8f365b0e"
+          "python_rng_digest": "3f44a12dfb108e75"
         }
       },
       "changed_keys": [
@@ -435,17 +434,17 @@
   "cases": {
     "dream_native": {
       "classification": {
-        "attribution": "ROPE LOAD-PATH CAUSAL",
-        "causal_under": [
+        "attribution": "NO DIVERGENCE UNDER THIS CONDITION",
+        "causal_under": [],
+        "masked_under": [
           "cpu/FLASH/empty_like_nan",
           "cpu/MATH/empty_like_nan",
           "cuda/MATH/empty_like_nan"
         ],
-        "masked_under": [],
         "per_condition": {
-          "cpu/FLASH/empty_like_nan": "ROPE LOAD-PATH CAUSAL",
-          "cpu/MATH/empty_like_nan": "ROPE LOAD-PATH CAUSAL",
-          "cuda/MATH/empty_like_nan": "ROPE LOAD-PATH CAUSAL"
+          "cpu/FLASH/empty_like_nan": "NO DIVERGENCE UNDER THIS CONDITION",
+          "cpu/MATH/empty_like_nan": "NO DIVERGENCE UNDER THIS CONDITION",
+          "cuda/MATH/empty_like_nan": "NO DIVERGENCE UNDER THIS CONDITION"
         }
       },
       "conditions": {
@@ -532,7 +531,7 @@
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 22490943683952
+                "object_id": 23402158464304
               }
             },
             "original": {
@@ -616,49 +615,43 @@
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 22490942788320
+                "object_id": 23402158362736
               }
             },
             "reload": {
               "buffers": {
                 "model.layers.0.self_attn.rotary_emb.inv_freq": {
                   "device": "cpu",
+                  "digest": "e34ca351e673150e",
                   "dtype": "torch.float32",
-                  "equals_formula": false,
-                  "equals_reference": false,
-                  "finite": false,
+                  "equals_formula": true,
+                  "equals_reference": true,
+                  "finite": true,
                   "shape": [
                     8
-                  ],
-                  "volatile": {
-                    "digest": "f67ddcc615342406"
-                  }
+                  ]
                 },
                 "model.layers.1.self_attn.rotary_emb.inv_freq": {
                   "device": "cpu",
+                  "digest": "e34ca351e673150e",
                   "dtype": "torch.float32",
-                  "equals_formula": false,
-                  "equals_reference": false,
-                  "finite": false,
+                  "equals_formula": true,
+                  "equals_reference": true,
+                  "finite": true,
                   "shape": [
                     8
-                  ],
-                  "volatile": {
-                    "digest": "f67ddcc615342406"
-                  }
+                  ]
                 },
                 "model.rotary_emb.inv_freq": {
                   "device": "cpu",
+                  "digest": "e34ca351e673150e",
                   "dtype": "torch.float32",
-                  "equals_formula": false,
-                  "equals_reference": false,
-                  "finite": false,
+                  "equals_formula": true,
+                  "equals_reference": true,
+                  "finite": true,
                   "shape": [
                     8
-                  ],
-                  "volatile": {
-                    "digest": "f67ddcc615342406"
-                  }
+                  ]
                 }
               },
               "class": "unturtle.models.backbones.dream.modeling_dream.DreamModel",
@@ -674,7 +667,7 @@
               "output_vs_original": {
                 "any_inf": false,
                 "any_nan": false,
-                "bit_identical_after_cpu_serialization": false,
+                "bit_identical_after_cpu_serialization": true,
                 "device": [
                   "cpu",
                   "cpu"
@@ -683,7 +676,7 @@
                   "torch.float32",
                   "torch.float32"
                 ],
-                "equal": false,
+                "equal": true,
                 "label": "logits",
                 "shape": [
                   [
@@ -698,19 +691,15 @@
                   ]
                 ],
                 "volatile": {
-                  "first_differing_index": [
-                    0,
-                    0,
-                    0
-                  ],
-                  "max_abs_delta": 0.4221978336572647,
-                  "max_rel_delta": 3686.4656982575743,
-                  "non_equal_count": 12288
+                  "first_differing_index": null,
+                  "max_abs_delta": 0.0,
+                  "max_rel_delta": 0.0,
+                  "non_equal_count": 0
                 }
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 22490939570272
+                "object_id": 23402146902096
               }
             },
             "reload_restored": {
@@ -799,7 +788,7 @@
                 "model.rotary_emb.inv_freq"
               ],
               "volatile": {
-                "object_id": 22490931908672
+                "object_id": 23402146899888
               }
             }
           },
@@ -808,6 +797,7 @@
           "init_weights_owner": "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel._init_weights",
           "model_class": "unturtle.models.backbones.dream.modeling_dream.DreamModel",
           "poison": "empty_like_nan",
+          "poison_empty_like_calls": 3,
           "process_state": {
             "after": {
               "autocast_cpu_enabled": false,
@@ -881,7 +871,7 @@
               "volatile": {
                 "cpu_rng_digest": "d97336e56492e520",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "17a80c0bf5dd102b"
+                "python_rng_digest": "b1bccd97c8659486"
               }
             },
             "before": {
@@ -956,7 +946,7 @@
               "volatile": {
                 "cpu_rng_digest": "1fc712890a7443a4",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "17a80c0bf5dd102b"
+                "python_rng_digest": "b1bccd97c8659486"
               }
             },
             "changed_keys": [
@@ -975,15 +965,11 @@
           "sdpa_backend": "FLASH",
           "status": "observed",
           "verdict": {
-            "buffers_changed": [
-              "model.layers.0.self_attn.rotary_emb.inv_freq",
-              "model.layers.1.self_attn.rotary_emb.inv_freq",
-              "model.rotary_emb.inv_freq"
-            ],
+            "buffers_changed": [],
             "reasons": [
-              "persistent weights identical; reload diverges; restoring every changed non-persistent buffer removes the divergence"
+              "reload output equals original under this backend/poison condition; nothing to attribute"
             ],
-            "verdict": "ROPE LOAD-PATH CAUSAL"
+            "verdict": "NO DIVERGENCE UNDER THIS CONDITION"
           },
           "volatile": {
             "tmp_dir": "<tmp>"
@@ -1072,7 +1058,7 @@
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 22783719665456
+                "object_id": 22429409935040
               }
             },
             "original": {
@@ -1156,49 +1142,43 @@
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 22784070425328
+                "object_id": 22440386337664
               }
             },
             "reload": {
               "buffers": {
                 "model.layers.0.self_attn.rotary_emb.inv_freq": {
                   "device": "cpu",
+                  "digest": "e34ca351e673150e",
                   "dtype": "torch.float32",
-                  "equals_formula": false,
-                  "equals_reference": false,
-                  "finite": false,
+                  "equals_formula": true,
+                  "equals_reference": true,
+                  "finite": true,
                   "shape": [
                     8
-                  ],
-                  "volatile": {
-                    "digest": "f67ddcc615342406"
-                  }
+                  ]
                 },
                 "model.layers.1.self_attn.rotary_emb.inv_freq": {
                   "device": "cpu",
+                  "digest": "e34ca351e673150e",
                   "dtype": "torch.float32",
-                  "equals_formula": false,
-                  "equals_reference": false,
-                  "finite": false,
+                  "equals_formula": true,
+                  "equals_reference": true,
+                  "finite": true,
                   "shape": [
                     8
-                  ],
-                  "volatile": {
-                    "digest": "f67ddcc615342406"
-                  }
+                  ]
                 },
                 "model.rotary_emb.inv_freq": {
                   "device": "cpu",
+                  "digest": "e34ca351e673150e",
                   "dtype": "torch.float32",
-                  "equals_formula": false,
-                  "equals_reference": false,
-                  "finite": false,
+                  "equals_formula": true,
+                  "equals_reference": true,
+                  "finite": true,
                   "shape": [
                     8
-                  ],
-                  "volatile": {
-                    "digest": "f67ddcc615342406"
-                  }
+                  ]
                 }
               },
               "class": "unturtle.models.backbones.dream.modeling_dream.DreamModel",
@@ -1213,8 +1193,8 @@
               ],
               "output_vs_original": {
                 "any_inf": false,
-                "any_nan": true,
-                "bit_identical_after_cpu_serialization": false,
+                "any_nan": false,
+                "bit_identical_after_cpu_serialization": true,
                 "device": [
                   "cpu",
                   "cpu"
@@ -1223,7 +1203,7 @@
                   "torch.float32",
                   "torch.float32"
                 ],
-                "equal": false,
+                "equal": true,
                 "label": "logits",
                 "shape": [
                   [
@@ -1238,19 +1218,15 @@
                   ]
                 ],
                 "volatile": {
-                  "first_differing_index": [
-                    0,
-                    0,
-                    0
-                  ],
-                  "max_abs_delta": null,
-                  "max_rel_delta": null,
-                  "non_equal_count": 12288
+                  "first_differing_index": null,
+                  "max_abs_delta": 0.0,
+                  "max_rel_delta": 0.0,
+                  "non_equal_count": 0
                 }
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 22784074591184
+                "object_id": 22429392027424
               }
             },
             "reload_restored": {
@@ -1339,7 +1315,7 @@
                 "model.rotary_emb.inv_freq"
               ],
               "volatile": {
-                "object_id": 22784063625824
+                "object_id": 22429402994528
               }
             }
           },
@@ -1348,6 +1324,7 @@
           "init_weights_owner": "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel._init_weights",
           "model_class": "unturtle.models.backbones.dream.modeling_dream.DreamModel",
           "poison": "empty_like_nan",
+          "poison_empty_like_calls": 3,
           "process_state": {
             "after": {
               "autocast_cpu_enabled": false,
@@ -1421,7 +1398,7 @@
               "volatile": {
                 "cpu_rng_digest": "d97336e56492e520",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "df2394b3ab590f53"
+                "python_rng_digest": "5c21b207ab6dfc98"
               }
             },
             "before": {
@@ -1496,7 +1473,7 @@
               "volatile": {
                 "cpu_rng_digest": "1fc712890a7443a4",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "df2394b3ab590f53"
+                "python_rng_digest": "5c21b207ab6dfc98"
               }
             },
             "changed_keys": [
@@ -1515,15 +1492,11 @@
           "sdpa_backend": "MATH",
           "status": "observed",
           "verdict": {
-            "buffers_changed": [
-              "model.layers.0.self_attn.rotary_emb.inv_freq",
-              "model.layers.1.self_attn.rotary_emb.inv_freq",
-              "model.rotary_emb.inv_freq"
-            ],
+            "buffers_changed": [],
             "reasons": [
-              "persistent weights identical; reload diverges; restoring every changed non-persistent buffer removes the divergence"
+              "reload output equals original under this backend/poison condition; nothing to attribute"
             ],
-            "verdict": "ROPE LOAD-PATH CAUSAL"
+            "verdict": "NO DIVERGENCE UNDER THIS CONDITION"
           },
           "volatile": {
             "tmp_dir": "<tmp>"
@@ -1617,7 +1590,7 @@
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 22888625003344
+                "object_id": 22802645441936
               }
             },
             "original": {
@@ -1701,49 +1674,43 @@
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 22888630076576
+                "object_id": 22791657861680
               }
             },
             "reload": {
               "buffers": {
                 "model.layers.0.self_attn.rotary_emb.inv_freq": {
                   "device": "cuda:0",
+                  "digest": "e34ca351e673150e",
                   "dtype": "torch.float32",
-                  "equals_formula": false,
-                  "equals_reference": false,
-                  "finite": false,
+                  "equals_formula": true,
+                  "equals_reference": true,
+                  "finite": true,
                   "shape": [
                     8
-                  ],
-                  "volatile": {
-                    "digest": "f67ddcc615342406"
-                  }
+                  ]
                 },
                 "model.layers.1.self_attn.rotary_emb.inv_freq": {
                   "device": "cuda:0",
+                  "digest": "e34ca351e673150e",
                   "dtype": "torch.float32",
-                  "equals_formula": false,
-                  "equals_reference": false,
-                  "finite": false,
+                  "equals_formula": true,
+                  "equals_reference": true,
+                  "finite": true,
                   "shape": [
                     8
-                  ],
-                  "volatile": {
-                    "digest": "f67ddcc615342406"
-                  }
+                  ]
                 },
                 "model.rotary_emb.inv_freq": {
                   "device": "cuda:0",
+                  "digest": "e34ca351e673150e",
                   "dtype": "torch.float32",
-                  "equals_formula": false,
-                  "equals_reference": false,
-                  "finite": false,
+                  "equals_formula": true,
+                  "equals_reference": true,
+                  "finite": true,
                   "shape": [
                     8
-                  ],
-                  "volatile": {
-                    "digest": "f67ddcc615342406"
-                  }
+                  ]
                 }
               },
               "class": "unturtle.models.backbones.dream.modeling_dream.DreamModel",
@@ -1758,8 +1725,8 @@
               ],
               "output_vs_original": {
                 "any_inf": false,
-                "any_nan": true,
-                "bit_identical_after_cpu_serialization": false,
+                "any_nan": false,
+                "bit_identical_after_cpu_serialization": true,
                 "device": [
                   "cuda:0",
                   "cuda:0"
@@ -1768,7 +1735,7 @@
                   "torch.float32",
                   "torch.float32"
                 ],
-                "equal": false,
+                "equal": true,
                 "label": "logits",
                 "shape": [
                   [
@@ -1783,19 +1750,15 @@
                   ]
                 ],
                 "volatile": {
-                  "first_differing_index": [
-                    0,
-                    0,
-                    0
-                  ],
-                  "max_abs_delta": null,
-                  "max_rel_delta": null,
-                  "non_equal_count": 12288
+                  "first_differing_index": null,
+                  "max_abs_delta": 0.0,
+                  "max_rel_delta": 0.0,
+                  "non_equal_count": 0
                 }
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 22888625649616
+                "object_id": 22791654176864
               }
             },
             "reload_restored": {
@@ -1884,7 +1847,7 @@
                 "model.rotary_emb.inv_freq"
               ],
               "volatile": {
-                "object_id": 22888617895328
+                "object_id": 22791648095328
               }
             }
           },
@@ -1893,6 +1856,7 @@
           "init_weights_owner": "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel._init_weights",
           "model_class": "unturtle.models.backbones.dream.modeling_dream.DreamModel",
           "poison": "empty_like_nan",
+          "poison_empty_like_calls": 3,
           "process_state": {
             "after": {
               "autocast_cpu_enabled": false,
@@ -1966,7 +1930,7 @@
               "volatile": {
                 "cpu_rng_digest": "d97336e56492e520",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "2a173c1c5a73fa77"
+                "python_rng_digest": "dc16f6cc0e563c82"
               }
             },
             "before": {
@@ -2041,7 +2005,7 @@
               "volatile": {
                 "cpu_rng_digest": "1fc712890a7443a4",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "2a173c1c5a73fa77"
+                "python_rng_digest": "dc16f6cc0e563c82"
               }
             },
             "changed_keys": [
@@ -2060,18 +2024,37 @@
           "sdpa_backend": "MATH",
           "status": "observed",
           "verdict": {
-            "buffers_changed": [
-              "model.layers.0.self_attn.rotary_emb.inv_freq",
-              "model.layers.1.self_attn.rotary_emb.inv_freq",
-              "model.rotary_emb.inv_freq"
-            ],
+            "buffers_changed": [],
             "reasons": [
-              "persistent weights identical; reload diverges; restoring every changed non-persistent buffer removes the divergence"
+              "reload output equals original under this backend/poison condition; nothing to attribute"
             ],
-            "verdict": "ROPE LOAD-PATH CAUSAL"
+            "verdict": "NO DIVERGENCE UNDER THIS CONDITION"
           },
           "volatile": {
             "tmp_dir": "<tmp>"
+          }
+        }
+      },
+      "fix_invariants": {
+        "holds_under_math": true,
+        "per_condition": {
+          "cpu/FLASH/empty_like_nan": {
+            "all_arms_bit_identical": true,
+            "all_rotary_buffers_equal_formula_and_finite": true,
+            "poison_applied": true,
+            "reload_restored_equals_reload": true
+          },
+          "cpu/MATH/empty_like_nan": {
+            "all_arms_bit_identical": true,
+            "all_rotary_buffers_equal_formula_and_finite": true,
+            "poison_applied": true,
+            "reload_restored_equals_reload": true
+          },
+          "cuda/MATH/empty_like_nan": {
+            "all_arms_bit_identical": true,
+            "all_rotary_buffers_equal_formula_and_finite": true,
+            "poison_applied": true,
+            "reload_restored_equals_reload": true
           }
         }
       },
@@ -2125,7 +2108,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 23321203386192,
+                "object_id": 22858223697600,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -2205,7 +2188,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 23321447856080,
+                "object_id": 22858217125120,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -2243,21 +2226,21 @@
                 "buffers": {
                   "model.layers.0.self_attn.rotary_emb.inv_freq": {
                     "device": "cpu",
-                    "digest": "0c29f2c125d1bc24",
+                    "digest": "e34ca351e673150e",
                     "dtype": "torch.float32",
-                    "equals_formula": false,
-                    "equals_reference": false,
-                    "finite": false,
+                    "equals_formula": true,
+                    "equals_reference": true,
+                    "finite": true,
                     "shape": [
                       8
                     ]
                   },
                   "model.layers.1.self_attn.rotary_emb.inv_freq": {
                     "device": "cpu",
-                    "digest": "a470c45b4b4af93b",
+                    "digest": "e34ca351e673150e",
                     "dtype": "torch.float32",
-                    "equals_formula": false,
-                    "equals_reference": false,
+                    "equals_formula": true,
+                    "equals_reference": true,
                     "finite": true,
                     "shape": [
                       8
@@ -2265,10 +2248,10 @@
                   },
                   "model.rotary_emb.inv_freq": {
                     "device": "cpu",
-                    "digest": "a470c45b4b4af93b",
+                    "digest": "e34ca351e673150e",
                     "dtype": "torch.float32",
-                    "equals_formula": false,
-                    "equals_reference": false,
+                    "equals_formula": true,
+                    "equals_reference": true,
                     "finite": true,
                     "shape": [
                       8
@@ -2285,11 +2268,11 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 23321203892272,
+                "object_id": 22858216805568,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
-                  "bit_identical_after_cpu_serialization": false,
+                  "bit_identical_after_cpu_serialization": true,
                   "device": [
                     "cpu",
                     "cpu"
@@ -2298,16 +2281,12 @@
                     "torch.float32",
                     "torch.float32"
                   ],
-                  "equal": false,
-                  "first_differing_index": [
-                    0,
-                    0,
-                    0
-                  ],
+                  "equal": true,
+                  "first_differing_index": null,
                   "label": "logits",
-                  "max_abs_delta": 0.006315380334854126,
-                  "max_rel_delta": 76.71543030275322,
-                  "non_equal_count": 12288,
+                  "max_abs_delta": 0.0,
+                  "max_rel_delta": 0.0,
+                  "non_equal_count": 0,
                   "shape": [
                     [
                       2,
@@ -2369,7 +2348,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 23321209369328,
+                "object_id": 22858217508400,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -2414,6 +2393,7 @@
             "init_weights_owner": "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel._init_weights",
             "model_class": "unturtle.models.backbones.dream.modeling_dream.DreamModel",
             "poison": "nan",
+            "poison_empty_like_calls": 0,
             "process_state": {
               "after": {
                 "autocast_cpu_enabled": false,
@@ -2472,7 +2452,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "8af8a272f8e12d5e",
+                "python_rng_digest": "86531a5a4924fa0b",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -2545,7 +2525,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "8af8a272f8e12d5e",
+                "python_rng_digest": "86531a5a4924fa0b",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -2577,15 +2557,11 @@
             "sdpa_backend": "MATH",
             "status": "observed",
             "verdict": {
-              "buffers_changed": [
-                "model.layers.0.self_attn.rotary_emb.inv_freq",
-                "model.layers.1.self_attn.rotary_emb.inv_freq",
-                "model.rotary_emb.inv_freq"
-              ],
+              "buffers_changed": [],
               "reasons": [
-                "persistent weights identical; reload diverges; restoring every changed non-persistent buffer removes the divergence"
+                "reload output equals original under this backend/poison condition; nothing to attribute"
               ],
-              "verdict": "ROPE LOAD-PATH CAUSAL"
+              "verdict": "NO DIVERGENCE UNDER THIS CONDITION"
             },
             "volatile": {
               "tmp_dir": "<tmp>"
@@ -2639,7 +2615,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 22999181356992,
+                "object_id": 23102842297792,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -2719,7 +2695,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 22999566103712,
+                "object_id": 23102847407488,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -2757,10 +2733,10 @@
                 "buffers": {
                   "model.layers.0.self_attn.rotary_emb.inv_freq": {
                     "device": "cpu",
-                    "digest": "e2ac2caf1d56ea7d",
+                    "digest": "e34ca351e673150e",
                     "dtype": "torch.float32",
-                    "equals_formula": false,
-                    "equals_reference": false,
+                    "equals_formula": true,
+                    "equals_reference": true,
                     "finite": true,
                     "shape": [
                       8
@@ -2768,10 +2744,10 @@
                   },
                   "model.layers.1.self_attn.rotary_emb.inv_freq": {
                     "device": "cpu",
-                    "digest": "8e91713ee1a618b4",
+                    "digest": "e34ca351e673150e",
                     "dtype": "torch.float32",
-                    "equals_formula": false,
-                    "equals_reference": false,
+                    "equals_formula": true,
+                    "equals_reference": true,
                     "finite": true,
                     "shape": [
                       8
@@ -2779,10 +2755,10 @@
                   },
                   "model.rotary_emb.inv_freq": {
                     "device": "cpu",
-                    "digest": "ffeea59d9e9925fd",
+                    "digest": "e34ca351e673150e",
                     "dtype": "torch.float32",
-                    "equals_formula": false,
-                    "equals_reference": false,
+                    "equals_formula": true,
+                    "equals_reference": true,
                     "finite": true,
                     "shape": [
                       8
@@ -2799,11 +2775,11 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 22999548000736,
+                "object_id": 23102839945792,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
-                  "bit_identical_after_cpu_serialization": false,
+                  "bit_identical_after_cpu_serialization": true,
                   "device": [
                     "cpu",
                     "cpu"
@@ -2812,16 +2788,12 @@
                     "torch.float32",
                     "torch.float32"
                   ],
-                  "equal": false,
-                  "first_differing_index": [
-                    0,
-                    0,
-                    0
-                  ],
+                  "equal": true,
+                  "first_differing_index": null,
                   "label": "logits",
-                  "max_abs_delta": 0.006026342511177063,
-                  "max_rel_delta": 76.95566905556093,
-                  "non_equal_count": 12288,
+                  "max_abs_delta": 0.0,
+                  "max_rel_delta": 0.0,
+                  "non_equal_count": 0,
                   "shape": [
                     [
                       2,
@@ -2883,7 +2855,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 22999548682864,
+                "object_id": 23102831192512,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -2928,6 +2900,7 @@
             "init_weights_owner": "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel._init_weights",
             "model_class": "unturtle.models.backbones.dream.modeling_dream.DreamModel",
             "poison": "none",
+            "poison_empty_like_calls": 0,
             "process_state": {
               "after": {
                 "autocast_cpu_enabled": false,
@@ -2986,7 +2959,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "0ea1b8e8822f67d1",
+                "python_rng_digest": "a1b7290324f55966",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -3059,7 +3032,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "0ea1b8e8822f67d1",
+                "python_rng_digest": "a1b7290324f55966",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -3091,15 +3064,11 @@
             "sdpa_backend": "MATH",
             "status": "observed",
             "verdict": {
-              "buffers_changed": [
-                "model.layers.0.self_attn.rotary_emb.inv_freq",
-                "model.layers.1.self_attn.rotary_emb.inv_freq",
-                "model.rotary_emb.inv_freq"
-              ],
+              "buffers_changed": [],
               "reasons": [
-                "persistent weights identical; reload diverges; restoring every changed non-persistent buffer removes the divergence"
+                "reload output equals original under this backend/poison condition; nothing to attribute"
               ],
-              "verdict": "ROPE LOAD-PATH CAUSAL"
+              "verdict": "NO DIVERGENCE UNDER THIS CONDITION"
             },
             "volatile": {
               "tmp_dir": "<tmp>"
@@ -3153,7 +3122,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 22646967377104,
+                "object_id": 22427899058352,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -3233,7 +3202,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 22646967170160,
+                "object_id": 22427889859664,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -3271,10 +3240,10 @@
                 "buffers": {
                   "model.layers.0.self_attn.rotary_emb.inv_freq": {
                     "device": "cuda:0",
-                    "digest": "b6e48261f4c61c46",
+                    "digest": "e34ca351e673150e",
                     "dtype": "torch.float32",
-                    "equals_formula": false,
-                    "equals_reference": false,
+                    "equals_formula": true,
+                    "equals_reference": true,
                     "finite": true,
                     "shape": [
                       8
@@ -3282,10 +3251,10 @@
                   },
                   "model.layers.1.self_attn.rotary_emb.inv_freq": {
                     "device": "cuda:0",
-                    "digest": "4a3c80e24ecc51b1",
+                    "digest": "e34ca351e673150e",
                     "dtype": "torch.float32",
-                    "equals_formula": false,
-                    "equals_reference": false,
+                    "equals_formula": true,
+                    "equals_reference": true,
                     "finite": true,
                     "shape": [
                       8
@@ -3293,10 +3262,10 @@
                   },
                   "model.rotary_emb.inv_freq": {
                     "device": "cuda:0",
-                    "digest": "a9a4716f18cb119f",
+                    "digest": "e34ca351e673150e",
                     "dtype": "torch.float32",
-                    "equals_formula": false,
-                    "equals_reference": false,
+                    "equals_formula": true,
+                    "equals_reference": true,
                     "finite": true,
                     "shape": [
                       8
@@ -3313,11 +3282,11 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 22646967613056,
+                "object_id": 22427881781200,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
-                  "bit_identical_after_cpu_serialization": false,
+                  "bit_identical_after_cpu_serialization": true,
                   "device": [
                     "cuda:0",
                     "cuda:0"
@@ -3326,16 +3295,12 @@
                     "torch.float32",
                     "torch.float32"
                   ],
-                  "equal": false,
-                  "first_differing_index": [
-                    0,
-                    0,
-                    0
-                  ],
+                  "equal": true,
+                  "first_differing_index": null,
                   "label": "logits",
-                  "max_abs_delta": 0.006026282906532288,
-                  "max_rel_delta": 76.98419155181215,
-                  "non_equal_count": 12288,
+                  "max_abs_delta": 0.0,
+                  "max_rel_delta": 0.0,
+                  "non_equal_count": 0,
                   "shape": [
                     [
                       2,
@@ -3397,7 +3362,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 22646960025872,
+                "object_id": 22427883335520,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -3442,6 +3407,7 @@
             "init_weights_owner": "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel._init_weights",
             "model_class": "unturtle.models.backbones.dream.modeling_dream.DreamModel",
             "poison": "none",
+            "poison_empty_like_calls": 0,
             "process_state": {
               "after": {
                 "autocast_cpu_enabled": false,
@@ -3500,7 +3466,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "cbe57f8d129b7247",
+                "python_rng_digest": "342c835b1e5a7121",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -3573,7 +3539,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "cbe57f8d129b7247",
+                "python_rng_digest": "342c835b1e5a7121",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -3605,15 +3571,11 @@
             "sdpa_backend": "MATH",
             "status": "observed",
             "verdict": {
-              "buffers_changed": [
-                "model.layers.0.self_attn.rotary_emb.inv_freq",
-                "model.layers.1.self_attn.rotary_emb.inv_freq",
-                "model.rotary_emb.inv_freq"
-              ],
+              "buffers_changed": [],
               "reasons": [
-                "persistent weights identical; reload diverges; restoring every changed non-persistent buffer removes the divergence"
+                "reload output equals original under this backend/poison condition; nothing to attribute"
               ],
-              "verdict": "ROPE LOAD-PATH CAUSAL"
+              "verdict": "NO DIVERGENCE UNDER THIS CONDITION"
             },
             "volatile": {
               "tmp_dir": "<tmp>"
@@ -3624,18 +3586,17 @@
     },
     "mdlm_dit_latent_conditioned": {
       "classification": {
-        "attribution": "ROPE LOAD-PATH CAUSAL",
-        "causal_under": [
+        "attribution": "NO DIVERGENCE UNDER THIS CONDITION",
+        "causal_under": [],
+        "masked_under": [
+          "cpu/FLASH/empty_like_nan",
           "cpu/MATH/empty_like_nan",
           "cuda/MATH/empty_like_nan"
         ],
-        "masked_under": [
-          "cpu/FLASH/empty_like_nan"
-        ],
         "per_condition": {
           "cpu/FLASH/empty_like_nan": "NO DIVERGENCE UNDER THIS CONDITION",
-          "cpu/MATH/empty_like_nan": "ROPE LOAD-PATH CAUSAL",
-          "cuda/MATH/empty_like_nan": "ROPE LOAD-PATH CAUSAL"
+          "cpu/MATH/empty_like_nan": "NO DIVERGENCE UNDER THIS CONDITION",
+          "cuda/MATH/empty_like_nan": "NO DIVERGENCE UNDER THIS CONDITION"
         }
       },
       "conditions": {
@@ -3700,7 +3661,7 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 23046563500048
+                "object_id": 22608212977968
               }
             },
             "original": {
@@ -3762,23 +3723,21 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 23035585426112
+                "object_id": 22608593880176
               }
             },
             "reload": {
               "buffers": {
                 "model.rotary.inv_freq": {
                   "device": "cpu",
+                  "digest": "e34ca351e673150e",
                   "dtype": "torch.float32",
-                  "equals_formula": false,
-                  "equals_reference": false,
-                  "finite": false,
+                  "equals_formula": true,
+                  "equals_reference": true,
+                  "finite": true,
                   "shape": [
                     8
-                  ],
-                  "volatile": {
-                    "digest": "f67ddcc615342406"
-                  }
+                  ]
                 }
               },
               "class": "unturtle.models.latent.modeling_ladiff_dit.LatentConditionedMDLMDiT",
@@ -3826,7 +3785,7 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 23035595859552
+                "object_id": 22608580392576
               }
             },
             "reload_restored": {
@@ -3891,7 +3850,7 @@
                 "model.rotary.inv_freq"
               ],
               "volatile": {
-                "object_id": 23035586687728
+                "object_id": 22619554489472
               }
             }
           },
@@ -3900,6 +3859,7 @@
           "init_weights_owner": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTPreTrainedModel._init_weights",
           "model_class": "unturtle.models.latent.modeling_ladiff_dit.LatentConditionedMDLMDiT",
           "poison": "empty_like_nan",
+          "poison_empty_like_calls": 1,
           "process_state": {
             "after": {
               "autocast_cpu_enabled": false,
@@ -3973,7 +3933,7 @@
               "volatile": {
                 "cpu_rng_digest": "3dbcff81a8a34865",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "1e7329d01564033c"
+                "python_rng_digest": "9bae24a3659de0e1"
               }
             },
             "before": {
@@ -4048,7 +4008,7 @@
               "volatile": {
                 "cpu_rng_digest": "1943de2787227442",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "1e7329d01564033c"
+                "python_rng_digest": "9bae24a3659de0e1"
               }
             },
             "changed_keys": [
@@ -4063,9 +4023,7 @@
           "sdpa_backend": "FLASH",
           "status": "observed",
           "verdict": {
-            "buffers_changed": [
-              "model.rotary.inv_freq"
-            ],
+            "buffers_changed": [],
             "reasons": [
               "reload output equals original under this backend/poison condition; nothing to attribute"
             ],
@@ -4136,7 +4094,7 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 23291210281664
+                "object_id": 23066803729904
               }
             },
             "original": {
@@ -4198,23 +4156,21 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 23291215554144
+                "object_id": 23066792932080
               }
             },
             "reload": {
               "buffers": {
                 "model.rotary.inv_freq": {
                   "device": "cpu",
+                  "digest": "e34ca351e673150e",
                   "dtype": "torch.float32",
-                  "equals_formula": false,
-                  "equals_reference": false,
-                  "finite": false,
+                  "equals_formula": true,
+                  "equals_reference": true,
+                  "finite": true,
                   "shape": [
                     8
-                  ],
-                  "volatile": {
-                    "digest": "f67ddcc615342406"
-                  }
+                  ]
                 }
               },
               "class": "unturtle.models.latent.modeling_ladiff_dit.LatentConditionedMDLMDiT",
@@ -4229,8 +4185,8 @@
               ],
               "output_vs_original": {
                 "any_inf": false,
-                "any_nan": true,
-                "bit_identical_after_cpu_serialization": false,
+                "any_nan": false,
+                "bit_identical_after_cpu_serialization": true,
                 "device": [
                   "cpu",
                   "cpu"
@@ -4239,7 +4195,7 @@
                   "torch.float32",
                   "torch.float32"
                 ],
-                "equal": false,
+                "equal": true,
                 "label": "logits",
                 "shape": [
                   [
@@ -4254,19 +4210,15 @@
                   ]
                 ],
                 "volatile": {
-                  "first_differing_index": [
-                    0,
-                    0,
-                    0
-                  ],
-                  "max_abs_delta": null,
-                  "max_rel_delta": null,
-                  "non_equal_count": 384
+                  "first_differing_index": null,
+                  "max_abs_delta": 0.0,
+                  "max_rel_delta": 0.0,
+                  "non_equal_count": 0
                 }
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 23291204280080
+                "object_id": 23066802350240
               }
             },
             "reload_restored": {
@@ -4331,7 +4283,7 @@
                 "model.rotary.inv_freq"
               ],
               "volatile": {
-                "object_id": 23291211756800
+                "object_id": 23066794114176
               }
             }
           },
@@ -4340,6 +4292,7 @@
           "init_weights_owner": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTPreTrainedModel._init_weights",
           "model_class": "unturtle.models.latent.modeling_ladiff_dit.LatentConditionedMDLMDiT",
           "poison": "empty_like_nan",
+          "poison_empty_like_calls": 1,
           "process_state": {
             "after": {
               "autocast_cpu_enabled": false,
@@ -4413,7 +4366,7 @@
               "volatile": {
                 "cpu_rng_digest": "3dbcff81a8a34865",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "aa312a92a81a0613"
+                "python_rng_digest": "ecb6c6f2969b0553"
               }
             },
             "before": {
@@ -4488,7 +4441,7 @@
               "volatile": {
                 "cpu_rng_digest": "1943de2787227442",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "aa312a92a81a0613"
+                "python_rng_digest": "ecb6c6f2969b0553"
               }
             },
             "changed_keys": [
@@ -4503,13 +4456,11 @@
           "sdpa_backend": "MATH",
           "status": "observed",
           "verdict": {
-            "buffers_changed": [
-              "model.rotary.inv_freq"
-            ],
+            "buffers_changed": [],
             "reasons": [
-              "persistent weights identical; reload diverges; restoring every changed non-persistent buffer removes the divergence"
+              "reload output equals original under this backend/poison condition; nothing to attribute"
             ],
-            "verdict": "ROPE LOAD-PATH CAUSAL"
+            "verdict": "NO DIVERGENCE UNDER THIS CONDITION"
           },
           "volatile": {
             "tmp_dir": "<tmp>"
@@ -4581,7 +4532,7 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 22568721874576
+                "object_id": 22557851170480
               }
             },
             "original": {
@@ -4643,23 +4594,21 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 22568727342944
+                "object_id": 22557846183072
               }
             },
             "reload": {
               "buffers": {
                 "model.rotary.inv_freq": {
                   "device": "cuda:0",
+                  "digest": "e34ca351e673150e",
                   "dtype": "torch.float32",
-                  "equals_formula": false,
-                  "equals_reference": false,
-                  "finite": false,
+                  "equals_formula": true,
+                  "equals_reference": true,
+                  "finite": true,
                   "shape": [
                     8
-                  ],
-                  "volatile": {
-                    "digest": "f67ddcc615342406"
-                  }
+                  ]
                 }
               },
               "class": "unturtle.models.latent.modeling_ladiff_dit.LatentConditionedMDLMDiT",
@@ -4674,8 +4623,8 @@
               ],
               "output_vs_original": {
                 "any_inf": false,
-                "any_nan": true,
-                "bit_identical_after_cpu_serialization": false,
+                "any_nan": false,
+                "bit_identical_after_cpu_serialization": true,
                 "device": [
                   "cuda:0",
                   "cuda:0"
@@ -4684,7 +4633,7 @@
                   "torch.float32",
                   "torch.float32"
                 ],
-                "equal": false,
+                "equal": true,
                 "label": "logits",
                 "shape": [
                   [
@@ -4699,19 +4648,15 @@
                   ]
                 ],
                 "volatile": {
-                  "first_differing_index": [
-                    0,
-                    0,
-                    0
-                  ],
-                  "max_abs_delta": null,
-                  "max_rel_delta": null,
-                  "non_equal_count": 384
+                  "first_differing_index": null,
+                  "max_abs_delta": 0.0,
+                  "max_rel_delta": 0.0,
+                  "non_equal_count": 0
                 }
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 22568717397808
+                "object_id": 22557847038928
               }
             },
             "reload_restored": {
@@ -4776,7 +4721,7 @@
                 "model.rotary.inv_freq"
               ],
               "volatile": {
-                "object_id": 22568710355808
+                "object_id": 22557840649504
               }
             }
           },
@@ -4785,6 +4730,7 @@
           "init_weights_owner": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTPreTrainedModel._init_weights",
           "model_class": "unturtle.models.latent.modeling_ladiff_dit.LatentConditionedMDLMDiT",
           "poison": "empty_like_nan",
+          "poison_empty_like_calls": 1,
           "process_state": {
             "after": {
               "autocast_cpu_enabled": false,
@@ -4858,7 +4804,7 @@
               "volatile": {
                 "cpu_rng_digest": "3dbcff81a8a34865",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "1c3503d2a506b6f2"
+                "python_rng_digest": "1f0957f12e675a37"
               }
             },
             "before": {
@@ -4933,7 +4879,7 @@
               "volatile": {
                 "cpu_rng_digest": "1943de2787227442",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "1c3503d2a506b6f2"
+                "python_rng_digest": "1f0957f12e675a37"
               }
             },
             "changed_keys": [
@@ -4948,16 +4894,37 @@
           "sdpa_backend": "MATH",
           "status": "observed",
           "verdict": {
-            "buffers_changed": [
-              "model.rotary.inv_freq"
-            ],
+            "buffers_changed": [],
             "reasons": [
-              "persistent weights identical; reload diverges; restoring every changed non-persistent buffer removes the divergence"
+              "reload output equals original under this backend/poison condition; nothing to attribute"
             ],
-            "verdict": "ROPE LOAD-PATH CAUSAL"
+            "verdict": "NO DIVERGENCE UNDER THIS CONDITION"
           },
           "volatile": {
             "tmp_dir": "<tmp>"
+          }
+        }
+      },
+      "fix_invariants": {
+        "holds_under_math": true,
+        "per_condition": {
+          "cpu/FLASH/empty_like_nan": {
+            "all_arms_bit_identical": true,
+            "all_rotary_buffers_equal_formula_and_finite": true,
+            "poison_applied": true,
+            "reload_restored_equals_reload": true
+          },
+          "cpu/MATH/empty_like_nan": {
+            "all_arms_bit_identical": true,
+            "all_rotary_buffers_equal_formula_and_finite": true,
+            "poison_applied": true,
+            "reload_restored_equals_reload": true
+          },
+          "cuda/MATH/empty_like_nan": {
+            "all_arms_bit_identical": true,
+            "all_rotary_buffers_equal_formula_and_finite": true,
+            "poison_applied": true,
+            "reload_restored_equals_reload": true
           }
         }
       },
@@ -4989,7 +4956,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22409277828528,
+                "object_id": 22502696576752,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5047,7 +5014,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22409270014656,
+                "object_id": 22502682511840,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5085,11 +5052,11 @@
                 "buffers": {
                   "model.rotary.inv_freq": {
                     "device": "cpu",
-                    "digest": "e45a61bf69d03cc1",
+                    "digest": "e34ca351e673150e",
                     "dtype": "torch.float32",
-                    "equals_formula": false,
-                    "equals_reference": false,
-                    "finite": false,
+                    "equals_formula": true,
+                    "equals_reference": true,
+                    "finite": true,
                     "shape": [
                       8
                     ]
@@ -5105,11 +5072,11 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22409277013456,
+                "object_id": 22502675960640,
                 "output_vs_original": {
                   "any_inf": false,
-                  "any_nan": true,
-                  "bit_identical_after_cpu_serialization": false,
+                  "any_nan": false,
+                  "bit_identical_after_cpu_serialization": true,
                   "device": [
                     "cpu",
                     "cpu"
@@ -5118,16 +5085,12 @@
                     "torch.float32",
                     "torch.float32"
                   ],
-                  "equal": false,
-                  "first_differing_index": [
-                    0,
-                    0,
-                    0
-                  ],
+                  "equal": true,
+                  "first_differing_index": null,
                   "label": "logits",
-                  "max_abs_delta": null,
-                  "max_rel_delta": null,
-                  "non_equal_count": 384,
+                  "max_abs_delta": 0.0,
+                  "max_rel_delta": 0.0,
+                  "non_equal_count": 0,
                   "shape": [
                     [
                       2,
@@ -5167,7 +5130,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22409260921872,
+                "object_id": 22502677076624,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5210,6 +5173,7 @@
             "init_weights_owner": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTPreTrainedModel._init_weights",
             "model_class": "unturtle.models.latent.modeling_ladiff_dit.LatentConditionedMDLMDiT",
             "poison": "nan",
+            "poison_empty_like_calls": 0,
             "process_state": {
               "after": {
                 "autocast_cpu_enabled": false,
@@ -5268,7 +5232,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "a9524e58a80ae124",
+                "python_rng_digest": "e2a6910824e2d6c2",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -5341,7 +5305,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "a9524e58a80ae124",
+                "python_rng_digest": "e2a6910824e2d6c2",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -5369,13 +5333,11 @@
             "sdpa_backend": "MATH",
             "status": "observed",
             "verdict": {
-              "buffers_changed": [
-                "model.rotary.inv_freq"
-              ],
+              "buffers_changed": [],
               "reasons": [
-                "persistent weights identical; reload diverges; restoring every changed non-persistent buffer removes the divergence"
+                "reload output equals original under this backend/poison condition; nothing to attribute"
               ],
-              "verdict": "ROPE LOAD-PATH CAUSAL"
+              "verdict": "NO DIVERGENCE UNDER THIS CONDITION"
             },
             "volatile": {
               "tmp_dir": "<tmp>"
@@ -5407,7 +5369,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 23270811032928,
+                "object_id": 22953899041056,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5465,7 +5427,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 23270815377040,
+                "object_id": 22953518050592,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5503,10 +5465,10 @@
                 "buffers": {
                   "model.rotary.inv_freq": {
                     "device": "cpu",
-                    "digest": "8a318416a9ce2819",
+                    "digest": "e34ca351e673150e",
                     "dtype": "torch.float32",
-                    "equals_formula": false,
-                    "equals_reference": false,
+                    "equals_formula": true,
+                    "equals_reference": true,
                     "finite": true,
                     "shape": [
                       8
@@ -5523,7 +5485,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 23270811034848,
+                "object_id": 22953881687232,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5581,7 +5543,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 23270804499456,
+                "object_id": 22953883008080,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5624,6 +5586,7 @@
             "init_weights_owner": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTPreTrainedModel._init_weights",
             "model_class": "unturtle.models.latent.modeling_ladiff_dit.LatentConditionedMDLMDiT",
             "poison": "none",
+            "poison_empty_like_calls": 0,
             "process_state": {
               "after": {
                 "autocast_cpu_enabled": false,
@@ -5682,7 +5645,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "dde3b1052935eeed",
+                "python_rng_digest": "00eb7f108794c286",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -5755,7 +5718,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "dde3b1052935eeed",
+                "python_rng_digest": "00eb7f108794c286",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -5783,9 +5746,7 @@
             "sdpa_backend": "MATH",
             "status": "observed",
             "verdict": {
-              "buffers_changed": [
-                "model.rotary.inv_freq"
-              ],
+              "buffers_changed": [],
               "reasons": [
                 "reload output equals original under this backend/poison condition; nothing to attribute"
               ],
@@ -5821,7 +5782,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22975870479936,
+                "object_id": 22595831898160,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5879,7 +5840,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22975870828368,
+                "object_id": 22584863060096,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5917,10 +5878,10 @@
                 "buffers": {
                   "model.rotary.inv_freq": {
                     "device": "cuda:0",
-                    "digest": "d2637185b65de7bb",
+                    "digest": "e34ca351e673150e",
                     "dtype": "torch.float32",
-                    "equals_formula": false,
-                    "equals_reference": false,
+                    "equals_formula": true,
+                    "equals_reference": true,
                     "finite": true,
                     "shape": [
                       8
@@ -5937,7 +5898,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22975860550752,
+                "object_id": 22584861281648,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5995,7 +5956,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22975861726032,
+                "object_id": 22584852399360,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -6038,6 +5999,7 @@
             "init_weights_owner": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTPreTrainedModel._init_weights",
             "model_class": "unturtle.models.latent.modeling_ladiff_dit.LatentConditionedMDLMDiT",
             "poison": "none",
+            "poison_empty_like_calls": 0,
             "process_state": {
               "after": {
                 "autocast_cpu_enabled": false,
@@ -6096,7 +6058,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "c29f8fd5f82fc883",
+                "python_rng_digest": "12c3827ef3e8bc0a",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -6169,7 +6131,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "c29f8fd5f82fc883",
+                "python_rng_digest": "12c3827ef3e8bc0a",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -6197,9 +6159,7 @@
             "sdpa_backend": "MATH",
             "status": "observed",
             "verdict": {
-              "buffers_changed": [
-                "model.rotary.inv_freq"
-              ],
+              "buffers_changed": [],
               "reasons": [
                 "reload output equals original under this backend/poison condition; nothing to attribute"
               ],
@@ -6214,18 +6174,17 @@
     },
     "mdlm_dit_plain": {
       "classification": {
-        "attribution": "ROPE LOAD-PATH CAUSAL",
-        "causal_under": [
+        "attribution": "NO DIVERGENCE UNDER THIS CONDITION",
+        "causal_under": [],
+        "masked_under": [
+          "cpu/FLASH/empty_like_nan",
           "cpu/MATH/empty_like_nan",
           "cuda/MATH/empty_like_nan"
         ],
-        "masked_under": [
-          "cpu/FLASH/empty_like_nan"
-        ],
         "per_condition": {
           "cpu/FLASH/empty_like_nan": "NO DIVERGENCE UNDER THIS CONDITION",
-          "cpu/MATH/empty_like_nan": "ROPE LOAD-PATH CAUSAL",
-          "cuda/MATH/empty_like_nan": "ROPE LOAD-PATH CAUSAL"
+          "cpu/MATH/empty_like_nan": "NO DIVERGENCE UNDER THIS CONDITION",
+          "cuda/MATH/empty_like_nan": "NO DIVERGENCE UNDER THIS CONDITION"
         }
       },
       "conditions": {
@@ -6290,7 +6249,7 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 22397152892048
+                "object_id": 23117971400192
               }
             },
             "original": {
@@ -6352,23 +6311,21 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 22397164784240
+                "object_id": 23117979780592
               }
             },
             "reload": {
               "buffers": {
                 "model.rotary.inv_freq": {
                   "device": "cpu",
+                  "digest": "e34ca351e673150e",
                   "dtype": "torch.float32",
-                  "equals_formula": false,
-                  "equals_reference": false,
-                  "finite": false,
+                  "equals_formula": true,
+                  "equals_reference": true,
+                  "finite": true,
                   "shape": [
                     8
-                  ],
-                  "volatile": {
-                    "digest": "f67ddcc615342406"
-                  }
+                  ]
                 }
               },
               "class": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTForMaskedDiffusionLM",
@@ -6416,7 +6373,7 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 22397153912320
+                "object_id": 23117971386064
               }
             },
             "reload_restored": {
@@ -6481,7 +6438,7 @@
                 "model.rotary.inv_freq"
               ],
               "volatile": {
-                "object_id": 22397158178400
+                "object_id": 23117962561200
               }
             }
           },
@@ -6490,6 +6447,7 @@
           "init_weights_owner": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTPreTrainedModel._init_weights",
           "model_class": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTForMaskedDiffusionLM",
           "poison": "empty_like_nan",
+          "poison_empty_like_calls": 1,
           "process_state": {
             "after": {
               "autocast_cpu_enabled": false,
@@ -6563,7 +6521,7 @@
               "volatile": {
                 "cpu_rng_digest": "d57f33415962ab64",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "88618ffc128a1aa0"
+                "python_rng_digest": "53e913a2fa9c8a8b"
               }
             },
             "before": {
@@ -6638,7 +6596,7 @@
               "volatile": {
                 "cpu_rng_digest": "804607d66c3ffcaa",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "88618ffc128a1aa0"
+                "python_rng_digest": "53e913a2fa9c8a8b"
               }
             },
             "changed_keys": [
@@ -6653,9 +6611,7 @@
           "sdpa_backend": "FLASH",
           "status": "observed",
           "verdict": {
-            "buffers_changed": [
-              "model.rotary.inv_freq"
-            ],
+            "buffers_changed": [],
             "reasons": [
               "reload output equals original under this backend/poison condition; nothing to attribute"
             ],
@@ -6726,7 +6682,7 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 23029789226528
+                "object_id": 22893563941696
               }
             },
             "original": {
@@ -6788,23 +6744,21 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 23029803798448
+                "object_id": 22882585218992
               }
             },
             "reload": {
               "buffers": {
                 "model.rotary.inv_freq": {
                   "device": "cpu",
+                  "digest": "e34ca351e673150e",
                   "dtype": "torch.float32",
-                  "equals_formula": false,
-                  "equals_reference": false,
-                  "finite": false,
+                  "equals_formula": true,
+                  "equals_reference": true,
+                  "finite": true,
                   "shape": [
                     8
-                  ],
-                  "volatile": {
-                    "digest": "f67ddcc615342406"
-                  }
+                  ]
                 }
               },
               "class": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTForMaskedDiffusionLM",
@@ -6819,8 +6773,8 @@
               ],
               "output_vs_original": {
                 "any_inf": false,
-                "any_nan": true,
-                "bit_identical_after_cpu_serialization": false,
+                "any_nan": false,
+                "bit_identical_after_cpu_serialization": true,
                 "device": [
                   "cpu",
                   "cpu"
@@ -6829,7 +6783,7 @@
                   "torch.float32",
                   "torch.float32"
                 ],
-                "equal": false,
+                "equal": true,
                 "label": "logits",
                 "shape": [
                   [
@@ -6844,19 +6798,15 @@
                   ]
                 ],
                 "volatile": {
-                  "first_differing_index": [
-                    0,
-                    0,
-                    0
-                  ],
-                  "max_abs_delta": null,
-                  "max_rel_delta": null,
-                  "non_equal_count": 4096
+                  "first_differing_index": null,
+                  "max_abs_delta": 0.0,
+                  "max_rel_delta": 0.0,
+                  "non_equal_count": 0
                 }
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 23029790371440
+                "object_id": 22882586857200
               }
             },
             "reload_restored": {
@@ -6921,7 +6871,7 @@
                 "model.rotary.inv_freq"
               ],
               "volatile": {
-                "object_id": 23029790370336
+                "object_id": 22882588451584
               }
             }
           },
@@ -6930,6 +6880,7 @@
           "init_weights_owner": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTPreTrainedModel._init_weights",
           "model_class": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTForMaskedDiffusionLM",
           "poison": "empty_like_nan",
+          "poison_empty_like_calls": 1,
           "process_state": {
             "after": {
               "autocast_cpu_enabled": false,
@@ -7003,7 +6954,7 @@
               "volatile": {
                 "cpu_rng_digest": "d57f33415962ab64",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "03f17980103d210b"
+                "python_rng_digest": "c17106c2c24a4479"
               }
             },
             "before": {
@@ -7078,7 +7029,7 @@
               "volatile": {
                 "cpu_rng_digest": "804607d66c3ffcaa",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "03f17980103d210b"
+                "python_rng_digest": "c17106c2c24a4479"
               }
             },
             "changed_keys": [
@@ -7093,13 +7044,11 @@
           "sdpa_backend": "MATH",
           "status": "observed",
           "verdict": {
-            "buffers_changed": [
-              "model.rotary.inv_freq"
-            ],
+            "buffers_changed": [],
             "reasons": [
-              "persistent weights identical; reload diverges; restoring every changed non-persistent buffer removes the divergence"
+              "reload output equals original under this backend/poison condition; nothing to attribute"
             ],
-            "verdict": "ROPE LOAD-PATH CAUSAL"
+            "verdict": "NO DIVERGENCE UNDER THIS CONDITION"
           },
           "volatile": {
             "tmp_dir": "<tmp>"
@@ -7171,7 +7120,7 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 23218661634608
+                "object_id": 22485166698480
               }
             },
             "original": {
@@ -7233,23 +7182,21 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 23229627652992
+                "object_id": 22485166660336
               }
             },
             "reload": {
               "buffers": {
                 "model.rotary.inv_freq": {
                   "device": "cuda:0",
+                  "digest": "e34ca351e673150e",
                   "dtype": "torch.float32",
-                  "equals_formula": false,
-                  "equals_reference": false,
-                  "finite": false,
+                  "equals_formula": true,
+                  "equals_reference": true,
+                  "finite": true,
                   "shape": [
                     8
-                  ],
-                  "volatile": {
-                    "digest": "f67ddcc615342406"
-                  }
+                  ]
                 }
               },
               "class": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTForMaskedDiffusionLM",
@@ -7264,8 +7211,8 @@
               ],
               "output_vs_original": {
                 "any_inf": false,
-                "any_nan": true,
-                "bit_identical_after_cpu_serialization": false,
+                "any_nan": false,
+                "bit_identical_after_cpu_serialization": true,
                 "device": [
                   "cuda:0",
                   "cuda:0"
@@ -7274,7 +7221,7 @@
                   "torch.float32",
                   "torch.float32"
                 ],
-                "equal": false,
+                "equal": true,
                 "label": "logits",
                 "shape": [
                   [
@@ -7289,19 +7236,15 @@
                   ]
                 ],
                 "volatile": {
-                  "first_differing_index": [
-                    0,
-                    0,
-                    0
-                  ],
-                  "max_abs_delta": null,
-                  "max_rel_delta": null,
-                  "non_equal_count": 4096
+                  "first_differing_index": null,
+                  "max_abs_delta": 0.0,
+                  "max_rel_delta": 0.0,
+                  "non_equal_count": 0
                 }
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 23218660167408
+                "object_id": 22485160129936
               }
             },
             "reload_restored": {
@@ -7366,7 +7309,7 @@
                 "model.rotary.inv_freq"
               ],
               "volatile": {
-                "object_id": 23218660166112
+                "object_id": 22485160120864
               }
             }
           },
@@ -7375,6 +7318,7 @@
           "init_weights_owner": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTPreTrainedModel._init_weights",
           "model_class": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTForMaskedDiffusionLM",
           "poison": "empty_like_nan",
+          "poison_empty_like_calls": 1,
           "process_state": {
             "after": {
               "autocast_cpu_enabled": false,
@@ -7448,7 +7392,7 @@
               "volatile": {
                 "cpu_rng_digest": "d57f33415962ab64",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "2626b3b711d24932"
+                "python_rng_digest": "a9f1ae2dcccf7e71"
               }
             },
             "before": {
@@ -7523,7 +7467,7 @@
               "volatile": {
                 "cpu_rng_digest": "804607d66c3ffcaa",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "2626b3b711d24932"
+                "python_rng_digest": "a9f1ae2dcccf7e71"
               }
             },
             "changed_keys": [
@@ -7538,16 +7482,37 @@
           "sdpa_backend": "MATH",
           "status": "observed",
           "verdict": {
-            "buffers_changed": [
-              "model.rotary.inv_freq"
-            ],
+            "buffers_changed": [],
             "reasons": [
-              "persistent weights identical; reload diverges; restoring every changed non-persistent buffer removes the divergence"
+              "reload output equals original under this backend/poison condition; nothing to attribute"
             ],
-            "verdict": "ROPE LOAD-PATH CAUSAL"
+            "verdict": "NO DIVERGENCE UNDER THIS CONDITION"
           },
           "volatile": {
             "tmp_dir": "<tmp>"
+          }
+        }
+      },
+      "fix_invariants": {
+        "holds_under_math": true,
+        "per_condition": {
+          "cpu/FLASH/empty_like_nan": {
+            "all_arms_bit_identical": true,
+            "all_rotary_buffers_equal_formula_and_finite": true,
+            "poison_applied": true,
+            "reload_restored_equals_reload": true
+          },
+          "cpu/MATH/empty_like_nan": {
+            "all_arms_bit_identical": true,
+            "all_rotary_buffers_equal_formula_and_finite": true,
+            "poison_applied": true,
+            "reload_restored_equals_reload": true
+          },
+          "cuda/MATH/empty_like_nan": {
+            "all_arms_bit_identical": true,
+            "all_rotary_buffers_equal_formula_and_finite": true,
+            "poison_applied": true,
+            "reload_restored_equals_reload": true
           }
         }
       },
@@ -7579,7 +7544,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22508121152960,
+                "object_id": 23386509663392,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -7637,7 +7602,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22508127573712,
+                "object_id": 23386137153456,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -7675,11 +7640,11 @@
                 "buffers": {
                   "model.rotary.inv_freq": {
                     "device": "cpu",
-                    "digest": "9f145ae81169233a",
+                    "digest": "e34ca351e673150e",
                     "dtype": "torch.float32",
-                    "equals_formula": false,
-                    "equals_reference": false,
-                    "finite": false,
+                    "equals_formula": true,
+                    "equals_reference": true,
+                    "finite": true,
                     "shape": [
                       8
                     ]
@@ -7695,11 +7660,11 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22508119651056,
+                "object_id": 23386505188544,
                 "output_vs_original": {
                   "any_inf": false,
-                  "any_nan": true,
-                  "bit_identical_after_cpu_serialization": false,
+                  "any_nan": false,
+                  "bit_identical_after_cpu_serialization": true,
                   "device": [
                     "cpu",
                     "cpu"
@@ -7708,16 +7673,12 @@
                     "torch.float32",
                     "torch.float32"
                   ],
-                  "equal": false,
-                  "first_differing_index": [
-                    0,
-                    0,
-                    0
-                  ],
+                  "equal": true,
+                  "first_differing_index": null,
                   "label": "logits",
-                  "max_abs_delta": null,
-                  "max_rel_delta": null,
-                  "non_equal_count": 4096,
+                  "max_abs_delta": 0.0,
+                  "max_rel_delta": 0.0,
+                  "non_equal_count": 0,
                   "shape": [
                     [
                       1,
@@ -7757,7 +7718,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22508119650192,
+                "object_id": 23386505186912,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -7800,6 +7761,7 @@
             "init_weights_owner": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTPreTrainedModel._init_weights",
             "model_class": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTForMaskedDiffusionLM",
             "poison": "nan",
+            "poison_empty_like_calls": 0,
             "process_state": {
               "after": {
                 "autocast_cpu_enabled": false,
@@ -7858,7 +7820,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "c2b727dfbe9200b6",
+                "python_rng_digest": "b670182260440f3f",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -7931,7 +7893,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "c2b727dfbe9200b6",
+                "python_rng_digest": "b670182260440f3f",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -7959,13 +7921,11 @@
             "sdpa_backend": "MATH",
             "status": "observed",
             "verdict": {
-              "buffers_changed": [
-                "model.rotary.inv_freq"
-              ],
+              "buffers_changed": [],
               "reasons": [
-                "persistent weights identical; reload diverges; restoring every changed non-persistent buffer removes the divergence"
+                "reload output equals original under this backend/poison condition; nothing to attribute"
               ],
-              "verdict": "ROPE LOAD-PATH CAUSAL"
+              "verdict": "NO DIVERGENCE UNDER THIS CONDITION"
             },
             "volatile": {
               "tmp_dir": "<tmp>"
@@ -7997,7 +7957,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22602546077024,
+                "object_id": 23062397595920,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -8055,7 +8015,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22602543465632,
+                "object_id": 23062397897040,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -8093,10 +8053,10 @@
                 "buffers": {
                   "model.rotary.inv_freq": {
                     "device": "cpu",
-                    "digest": "33bb115ae60da178",
+                    "digest": "e34ca351e673150e",
                     "dtype": "torch.float32",
-                    "equals_formula": false,
-                    "equals_reference": false,
+                    "equals_formula": true,
+                    "equals_reference": true,
                     "finite": true,
                     "shape": [
                       8
@@ -8113,7 +8073,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22602543719984,
+                "object_id": 23062398693888,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -8171,7 +8131,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22602552081584,
+                "object_id": 23062398685440,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -8214,6 +8174,7 @@
             "init_weights_owner": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTPreTrainedModel._init_weights",
             "model_class": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTForMaskedDiffusionLM",
             "poison": "none",
+            "poison_empty_like_calls": 0,
             "process_state": {
               "after": {
                 "autocast_cpu_enabled": false,
@@ -8272,7 +8233,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "80141b4e95dcd843",
+                "python_rng_digest": "398e9479cb704628",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -8345,7 +8306,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "80141b4e95dcd843",
+                "python_rng_digest": "398e9479cb704628",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -8373,9 +8334,7 @@
             "sdpa_backend": "MATH",
             "status": "observed",
             "verdict": {
-              "buffers_changed": [
-                "model.rotary.inv_freq"
-              ],
+              "buffers_changed": [],
               "reasons": [
                 "reload output equals original under this backend/poison condition; nothing to attribute"
               ],
@@ -8411,7 +8370,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 23151571208480,
+                "object_id": 22754479889760,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -8469,7 +8428,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 23151574418352,
+                "object_id": 22754475029472,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -8507,10 +8466,10 @@
                 "buffers": {
                   "model.rotary.inv_freq": {
                     "device": "cuda:0",
-                    "digest": "218d36e86333ec95",
+                    "digest": "e34ca351e673150e",
                     "dtype": "torch.float32",
-                    "equals_formula": false,
-                    "equals_reference": false,
+                    "equals_formula": true,
+                    "equals_reference": true,
                     "finite": true,
                     "shape": [
                       8
@@ -8527,7 +8486,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 23151562715360,
+                "object_id": 22754468226608,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -8585,7 +8544,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 23151562711856,
+                "object_id": 22754468220704,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -8628,6 +8587,7 @@
             "init_weights_owner": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTPreTrainedModel._init_weights",
             "model_class": "unturtle.models.backbones.mdlm_dit.modeling_mdlm_dit.MDLMDiTForMaskedDiffusionLM",
             "poison": "none",
+            "poison_empty_like_calls": 0,
             "process_state": {
               "after": {
                 "autocast_cpu_enabled": false,
@@ -8686,7 +8646,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "37e137ce575ebb10",
+                "python_rng_digest": "520dae36f1c9da97",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -8759,7 +8719,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "37e137ce575ebb10",
+                "python_rng_digest": "520dae36f1c9da97",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -8787,9 +8747,7 @@
             "sdpa_backend": "MATH",
             "status": "observed",
             "verdict": {
-              "buffers_changed": [
-                "model.rotary.inv_freq"
-              ],
+              "buffers_changed": [],
               "reasons": [
                 "reload output equals original under this backend/poison condition; nothing to attribute"
               ],
@@ -8807,8 +8765,8 @@
     "identical_across_two_runs": true,
     "note": "the historical 2088 vs 2089 passed-count difference is not reproducible on this tree/environment (two fresh collections agree); conditional collection sites (collect-time skips, optional imports) remain the candidate explanation and the final gate requires an identical node set across three consecutive full runs",
     "run_1": {
-      "count": 2673,
-      "digest": "f653e2e0005b46f8",
+      "count": 2684,
+      "digest": "b757df6705bff29b",
       "volatile": {
         "nodes": [
           "tests/architecture/test_contract_artifact.py::test_diagnostics_never_imported_by_production",
@@ -10822,22 +10780,33 @@
           "tests/models/test_stream_callback_contract.py::TestTimingTraceSeparation::test_diverging_outputs_refuse_to_be_combined",
           "tests/models/test_stream_callback_contract.py::TestTimingTraceSeparation::test_matching_outputs_accept_the_trajectory",
           "tests/models/test_stream_callback_contract.py::TestTimingTraceSeparation::test_shape_mismatch_is_a_deviation_not_a_crash",
-          "tests/persistence/test_rope_attribution_contract.py::test_artifact_classifies_all_cases",
           "tests/persistence/test_rope_attribution_contract.py::test_artifact_collection_deterministic",
           "tests/persistence/test_rope_attribution_contract.py::test_artifact_digest_recomputes",
           "tests/persistence/test_rope_attribution_contract.py::test_artifact_persistent_weights_identical_everywhere",
+          "tests/persistence/test_rope_attribution_contract.py::test_artifact_records_the_fixed_state",
           "tests/persistence/test_rope_attribution_contract.py::test_artifact_unpinned_backend_is_inadmissible",
           "tests/persistence/test_rope_attribution_contract.py::test_genuine_case_is_causal",
-          "tests/persistence/test_rope_attribution_contract.py::test_live_flash_backend_masks_the_same_defect",
-          "tests/persistence/test_rope_attribution_contract.py::test_live_math_backend_reproduces_and_restoration_removes[dream_native]",
-          "tests/persistence/test_rope_attribution_contract.py::test_live_math_backend_reproduces_and_restoration_removes[mdlm_dit_latent_conditioned]",
-          "tests/persistence/test_rope_attribution_contract.py::test_live_math_backend_reproduces_and_restoration_removes[mdlm_dit_plain]",
+          "tests/persistence/test_rope_attribution_contract.py::test_live_flash_is_auxiliary_only",
+          "tests/persistence/test_rope_attribution_contract.py::test_live_math_backend_reload_is_exact_even_when_uninitialized_memory_is_nan[dream_native]",
+          "tests/persistence/test_rope_attribution_contract.py::test_live_math_backend_reload_is_exact_even_when_uninitialized_memory_is_nan[mdlm_dit_latent_conditioned]",
+          "tests/persistence/test_rope_attribution_contract.py::test_live_math_backend_reload_is_exact_even_when_uninitialized_memory_is_nan[mdlm_dit_plain]",
           "tests/persistence/test_rope_attribution_contract.py::test_mutant_arm1_vs_arm1",
           "tests/persistence/test_rope_attribution_contract.py::test_mutant_restore_one_layer_claim_full",
           "tests/persistence/test_rope_attribution_contract.py::test_mutant_rewrite_to_original_digest_but_report_changed",
           "tests/persistence/test_rope_attribution_contract.py::test_mutant_sdpa_backend_drift_is_inadmissible",
           "tests/persistence/test_rope_attribution_contract.py::test_mutant_skip_rewrite_but_report_it_ran",
           "tests/persistence/test_rope_attribution_contract.py::test_mutant_unrelated_persistent_weight_changed",
+          "tests/persistence/test_rotary_reinit_contract.py::test_dit_constructor_and_reset_share_one_initializer",
+          "tests/persistence/test_rotary_reinit_contract.py::test_dit_init_weights_reinitializes_rotary_only",
+          "tests/persistence/test_rotary_reinit_contract.py::test_dit_reset_rebuilds_exactly_what_the_constructor_built",
+          "tests/persistence/test_rotary_reinit_contract.py::test_dit_reset_respects_buffer_dtype_and_device",
+          "tests/persistence/test_rotary_reinit_contract.py::test_dit_rotary_matches_independent_formula[16-10000]",
+          "tests/persistence/test_rotary_reinit_contract.py::test_dit_rotary_matches_independent_formula[24-500]",
+          "tests/persistence/test_rotary_reinit_contract.py::test_dit_rotary_matches_independent_formula[32-10000]",
+          "tests/persistence/test_rotary_reinit_contract.py::test_dream_init_weights_keeps_linear_embedding_init",
+          "tests/persistence/test_rotary_reinit_contract.py::test_dream_reset_rebuilds_formula_on_every_rotary",
+          "tests/persistence/test_rotary_reinit_contract.py::test_from_pretrained_rebuilds_rotary_under_poisoned_memory[dream]",
+          "tests/persistence/test_rotary_reinit_contract.py::test_from_pretrained_rebuilds_rotary_under_poisoned_memory[mdlm_dit]",
           "tests/post_training/test_buffer.py::TestAPushIsAllOrNothing::test_a_bad_first_state_does_not_pin_the_block_size",
           "tests/post_training/test_buffer.py::TestAPushIsAllOrNothing::test_a_rejected_push_can_be_retried_once_corrected",
           "tests/post_training/test_buffer.py::TestAPushIsAllOrNothing::test_a_rejected_push_commits_nothing",
@@ -11488,8 +11457,8 @@
       }
     },
     "run_2": {
-      "count": 2673,
-      "digest": "f653e2e0005b46f8",
+      "count": 2684,
+      "digest": "b757df6705bff29b",
       "volatile": {
         "nodes": [
           "tests/architecture/test_contract_artifact.py::test_diagnostics_never_imported_by_production",
@@ -13503,22 +13472,33 @@
           "tests/models/test_stream_callback_contract.py::TestTimingTraceSeparation::test_diverging_outputs_refuse_to_be_combined",
           "tests/models/test_stream_callback_contract.py::TestTimingTraceSeparation::test_matching_outputs_accept_the_trajectory",
           "tests/models/test_stream_callback_contract.py::TestTimingTraceSeparation::test_shape_mismatch_is_a_deviation_not_a_crash",
-          "tests/persistence/test_rope_attribution_contract.py::test_artifact_classifies_all_cases",
           "tests/persistence/test_rope_attribution_contract.py::test_artifact_collection_deterministic",
           "tests/persistence/test_rope_attribution_contract.py::test_artifact_digest_recomputes",
           "tests/persistence/test_rope_attribution_contract.py::test_artifact_persistent_weights_identical_everywhere",
+          "tests/persistence/test_rope_attribution_contract.py::test_artifact_records_the_fixed_state",
           "tests/persistence/test_rope_attribution_contract.py::test_artifact_unpinned_backend_is_inadmissible",
           "tests/persistence/test_rope_attribution_contract.py::test_genuine_case_is_causal",
-          "tests/persistence/test_rope_attribution_contract.py::test_live_flash_backend_masks_the_same_defect",
-          "tests/persistence/test_rope_attribution_contract.py::test_live_math_backend_reproduces_and_restoration_removes[dream_native]",
-          "tests/persistence/test_rope_attribution_contract.py::test_live_math_backend_reproduces_and_restoration_removes[mdlm_dit_latent_conditioned]",
-          "tests/persistence/test_rope_attribution_contract.py::test_live_math_backend_reproduces_and_restoration_removes[mdlm_dit_plain]",
+          "tests/persistence/test_rope_attribution_contract.py::test_live_flash_is_auxiliary_only",
+          "tests/persistence/test_rope_attribution_contract.py::test_live_math_backend_reload_is_exact_even_when_uninitialized_memory_is_nan[dream_native]",
+          "tests/persistence/test_rope_attribution_contract.py::test_live_math_backend_reload_is_exact_even_when_uninitialized_memory_is_nan[mdlm_dit_latent_conditioned]",
+          "tests/persistence/test_rope_attribution_contract.py::test_live_math_backend_reload_is_exact_even_when_uninitialized_memory_is_nan[mdlm_dit_plain]",
           "tests/persistence/test_rope_attribution_contract.py::test_mutant_arm1_vs_arm1",
           "tests/persistence/test_rope_attribution_contract.py::test_mutant_restore_one_layer_claim_full",
           "tests/persistence/test_rope_attribution_contract.py::test_mutant_rewrite_to_original_digest_but_report_changed",
           "tests/persistence/test_rope_attribution_contract.py::test_mutant_sdpa_backend_drift_is_inadmissible",
           "tests/persistence/test_rope_attribution_contract.py::test_mutant_skip_rewrite_but_report_it_ran",
           "tests/persistence/test_rope_attribution_contract.py::test_mutant_unrelated_persistent_weight_changed",
+          "tests/persistence/test_rotary_reinit_contract.py::test_dit_constructor_and_reset_share_one_initializer",
+          "tests/persistence/test_rotary_reinit_contract.py::test_dit_init_weights_reinitializes_rotary_only",
+          "tests/persistence/test_rotary_reinit_contract.py::test_dit_reset_rebuilds_exactly_what_the_constructor_built",
+          "tests/persistence/test_rotary_reinit_contract.py::test_dit_reset_respects_buffer_dtype_and_device",
+          "tests/persistence/test_rotary_reinit_contract.py::test_dit_rotary_matches_independent_formula[16-10000]",
+          "tests/persistence/test_rotary_reinit_contract.py::test_dit_rotary_matches_independent_formula[24-500]",
+          "tests/persistence/test_rotary_reinit_contract.py::test_dit_rotary_matches_independent_formula[32-10000]",
+          "tests/persistence/test_rotary_reinit_contract.py::test_dream_init_weights_keeps_linear_embedding_init",
+          "tests/persistence/test_rotary_reinit_contract.py::test_dream_reset_rebuilds_formula_on_every_rotary",
+          "tests/persistence/test_rotary_reinit_contract.py::test_from_pretrained_rebuilds_rotary_under_poisoned_memory[dream]",
+          "tests/persistence/test_rotary_reinit_contract.py::test_from_pretrained_rebuilds_rotary_under_poisoned_memory[mdlm_dit]",
           "tests/post_training/test_buffer.py::TestAPushIsAllOrNothing::test_a_bad_first_state_does_not_pin_the_block_size",
           "tests/post_training/test_buffer.py::TestAPushIsAllOrNothing::test_a_rejected_push_can_be_retried_once_corrected",
           "tests/post_training/test_buffer.py::TestAPushIsAllOrNothing::test_a_rejected_push_commits_nothing",
@@ -14171,9 +14151,9 @@
   },
   "mechanism": {
     "evidence": {
-      "dream": "DreamPreTrainedModel._init_weights handles nn.Linear/nn.Embedding only and does not delegate to the base class, so DreamRotaryEmbedding.inv_freq is likewise uninitialized after from_pretrained (this reclassifies the #184 native_fp finding: not _extend_rope_if_possible, which is a no-op \u2014 no extend_rope_embedding exists in unturtle)",
+      "dream": "PR 0 finding: DreamPreTrainedModel._init_weights handled nn.Linear/nn.Embedding only and did not delegate to the base class, so DreamRotaryEmbedding.inv_freq was likewise uninitialized after from_pretrained (reclassifying the #184 native_fp finding: not _extend_rope_if_possible, which is a no-op). FIX: constructor and reset_parameters share _install_inv_freq, and _init_weights calls reset_parameters for DreamRotaryEmbedding; Linear/Embedding init unchanged",
       "load_path": "transformers PreTrainedModel.from_pretrained re-materializes every non-persistent buffer with torch.empty_like (uninitialized memory) and relies on _init_weights to give it a value",
-      "mdlm_dit": "MDLMDiTPreTrainedModel._init_weights is a deliberate no-op and Rotary is not a *RotaryEmbedding with original_inv_freq, so the upstream re-init branch never runs: model.rotary.inv_freq stays uninitialized after from_pretrained",
+      "mdlm_dit": "PR 0 finding: MDLMDiTPreTrainedModel._init_weights was a no-op and Rotary is not a *RotaryEmbedding with original_inv_freq, so the upstream re-init branch never ran and model.rotary.inv_freq stayed uninitialized after from_pretrained. FIX: Rotary.reset_parameters (the constructor's own initializer, build_inv_freq) is now called from _init_weights for Rotary modules only",
       "why_intermittent": "adaLN-Zero gates make finite garbage invisible at init; only NaN/Inf bit patterns in the recycled memory surface, and only under an SDPA backend that propagates NaN (CPU math does, CPU flash swallows it) \u2014 the process-bistable backend selection recorded in #184"
     },
     "owner": "#174",
@@ -14182,7 +14162,7 @@
     "status": "observed"
   },
   "producer": {
-    "commit": "0305ad45bff03638020bae1adb5cc12b7cdf6c3b",
+    "commit": "008c0d7505a997a1833d6ce266392f6d1ce7f965",
     "peft": "0.19.1",
     "platform": "Linux-5.15.0-122-generic-x86_64-with-glibc2.35",
     "probes": [
@@ -14700,5 +14680,5 @@
     "worktree_clean": true
   },
   "schema_version": 1,
-  "semantic_digest": "805a3ff87dce04155146fae67ec7c8dbc2d252536bd76a825ec599c8dc5b358e"
+  "semantic_digest": "231db9079edbdc9dd1ef8950a8cc5a30a798fd0e440a630f7c6db866f05f8144"
 }
