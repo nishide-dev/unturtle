@@ -83,12 +83,19 @@ def test_facade_and_registry_hold_no_family_helpers():
 
     remaining = [n for n in dir(fdm) if n.startswith("_patch_") and n.endswith("_peft")]
     assert remaining == [], remaining
+    # Family-specific patch/report helpers must be gone; the generic public
+    # resolver (resolve_peft_patcher) is loader API, not a family helper.
+    families = ("a2d", "dream", "llada", "modernbert")
     helpers = [
         n
         for n in dir(registry_mod)
-        if n.endswith("_patcher") or n.endswith("_report") or n == "_loader_attr"
+        if n.startswith("_")
+        and any(f in n for f in families)
+        and (n.endswith("_patcher") or n.endswith("_report"))
     ]
     assert helpers == [], helpers
+    assert not hasattr(registry_mod, "_loader_attr")
+    assert not hasattr(registry_mod, "_n_layers")
     for _, provider in ALL_FAMILY_PROVIDERS:
         module = importlib.import_module(provider)
         for name, value in vars(module).items():
