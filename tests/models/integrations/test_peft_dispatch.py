@@ -171,14 +171,16 @@ class TestReportedCounts:
 
         messages = []
         original_warn = fdm._warn_once
-        original_patch = fdm._patch_llada_peft
+        from unturtle.models.backbones.llada import fast_paths as llada_fast_paths
+
+        original_patch = llada_fast_paths.patch_peft
         fdm._warn_once = lambda msg: messages.append(msg)
-        fdm._patch_llada_peft = lambda m, d, b: (0, 0, 0)
+        llada_fast_paths.patch_peft = lambda m, d, b: (0, 0, 0)
         try:
             fdm.FastDiffusionModel.patch_peft_model(model)
         finally:
             fdm._warn_once = original_warn
-            fdm._patch_llada_peft = original_patch
+            llada_fast_paths.patch_peft = original_patch
 
         assert messages
         assert "5 blocks" in messages[0], messages[0]

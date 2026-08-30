@@ -701,6 +701,10 @@ class LLaDABlock(nn.Module):
             bias=config.include_bias,
             device=config.init_device,
         )
+        # apply_o stub — replaced by apply_lora_o via llada.fast_paths.patch_peft on
+        # CUDA (#185). The kernel reads ``self.o_proj``; the patcher installs the
+        # ``o_proj -> attn_out`` alias together with the hook.
+        self.apply_o = LLaDABlock._default_apply_o
 
         # Feed-forward output projection.
         self.ff_out = nn.Linear(
@@ -923,7 +927,13 @@ class LLaDABlock(nn.Module):
         att = att.transpose(1, 2).contiguous().view(B, T, C)
 
         # Apply output projection.
-        return self.attn_out(att), present
+        # Dispatch through apply_o — uses the Triton fused kernel when patched.
+        return self.apply_o(self, att), present
+
+    @staticmethod
+    def _default_apply_o(self, att: torch.Tensor) -> torch.Tensor:
+        """Default (non-Triton) attention output projection."""
+        return self.attn_out(att)
 
     @abstractmethod
     def forward(
@@ -1122,10 +1132,12 @@ class LLaDALlamaBlock(LLaDABlock):
             device=config.init_device,
         )
 
-        # apply_mlp stub — replaced by Triton kernel via _patch_llada_peft on CUDA.
+        # apply_mlp / apply_qkv stubs — replaced by Triton kernels via
+        # llada.fast_paths.patch_peft on CUDA (#185).
         # Aliased names for apply_lora_mlp_swiglu compatibility:
-        #   gate_proj → ff_proj, down_proj → ff_out (set in _patch_llada_peft)
+        #   gate_proj → ff_proj, down_proj → ff_out (set by the patcher)
         self.apply_mlp = LLaDALlamaBlock._default_apply_mlp
+        self.apply_qkv = LLaDALlamaBlock._default_apply_qkv
 
     def reset_parameters(self):
         super().reset_parameters()
@@ -1156,9 +1168,8 @@ class LLaDALlamaBlock(LLaDABlock):
         #  - for group query attn q: (batch_size, seq_len, d_model)
         #                      k, v: (batch_size, seq_len, d_model // n_kv_heads)
         x_normed = self.attn_norm(x)
-        q = self.q_proj(x_normed)
-        k = self.k_proj(x_normed)
-        v = self.v_proj(x_normed)
+        # Dispatch through apply_qkv — uses the Triton fused kernel when patched.
+        q, k, v = self.apply_qkv(self, x_normed)
 
         # Get attention scores.
         if self._activation_checkpoint_fn is not None:
@@ -1199,6 +1210,13 @@ class LLaDALlamaBlock(LLaDABlock):
         x = og_x + x
 
         return x, cache
+
+    @staticmethod
+    def _default_apply_qkv(
+        self, x: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Default (non-Triton) split QKV projections."""
+        return self.q_proj(x), self.k_proj(x), self.v_proj(x)
 
     @staticmethod
     def _default_apply_mlp(self, x: torch.Tensor) -> torch.Tensor:

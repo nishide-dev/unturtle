@@ -385,7 +385,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "8b2b859495b6d606"
+        "torch_cpu_rng_digest": "888dd5ee1b876785"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -539,7 +539,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "1f8c4b5e5854e48e"
+        "torch_cpu_rng_digest": "11f9aecea2428883"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -693,7 +693,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "8d91d18f023c63cf"
+        "torch_cpu_rng_digest": "ca9d2ee5b7f9aa2c"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -847,7 +847,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "365dd0a6dfe7b5aa"
+        "torch_cpu_rng_digest": "888c08e2eb95a95a"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1001,7 +1001,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "217bbcf4f1e5f3ac"
+        "torch_cpu_rng_digest": "f57b4973eaa78396"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1155,7 +1155,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "27560563bba899c9"
+        "torch_cpu_rng_digest": "78391615906585e4"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1216,7 +1216,9 @@
       },
       "llada": {
         "fast_paths": {
-          "declared": false
+          "declared": true,
+          "resolved": true,
+          "target": "unturtle.models.backbones.llada.fast_paths"
         },
         "model_types": [
           "llada"
@@ -1232,8 +1234,8 @@
         "peft_patcher": {
           "declared": true,
           "resolved": true,
-          "target": "unturtle.fast_diffusion_model._patch_llada_peft",
-          "via": "_peft_patcher"
+          "target": "unturtle.models.backbones.llada.fast_paths.patch_peft",
+          "via": "fast_paths"
         },
         "wrapper": {
           "declared": false
@@ -2587,7 +2589,7 @@
     }
   },
   "producer": {
-    "commit": "7598836aa99b3bd864c179e4fef04720597da74e",
+    "commit": "647d03368f68a82218a4ce21d2b0a14676c7b00f",
     "dirty_paths": [],
     "import_root": "<repo>",
     "peft": "0.19.1",
@@ -4190,26 +4192,26 @@
         "claims": [
           {
             "contains": "rotary_emb.forward = types.MethodType(",
-            "file": "unturtle/fast_diffusion_model.py"
+            "file": "unturtle/models/backbones/llada/fast_paths.py"
           }
         ],
-        "classification": "EXTRACT -> #185",
+        "classification": "EXTRACTED -> llada.fast_paths (#185, family provider; hooks wired LIVE)",
         "idempotent": "yes \u2014 guarded by _fast_rope_patched flag",
         "linked_issue": null,
         "liveness_evidence": "LLaDA fast-path tests",
         "mutation_id": "llada_rope_fast_forward",
-        "owner": "_patch_llada_peft",
+        "owner": "llada.fast_paths.patch_peft (#185 provider)",
         "reversible": "no API",
         "row": {
           "evidence": {
             "matched_claims": [
               {
                 "contains": "rotary_emb.forward = types.MethodType(",
-                "file": "unturtle/fast_diffusion_model.py"
+                "file": "unturtle/models/backbones/llada/fast_paths.py"
               }
             ]
           },
-          "owner": "_patch_llada_peft",
+          "owner": "llada.fast_paths.patch_peft (#185 provider)",
           "reason": null,
           "source": "static scan + curated ledger",
           "status": "observed"
@@ -4225,26 +4227,26 @@
         "claims": [
           {
             "contains": "block.apply_qkv = apply_lora_qkv",
-            "file": "unturtle/fast_diffusion_model.py"
+            "file": "unturtle/models/backbones/llada/fast_paths.py"
           }
         ],
-        "classification": "EXTRACT -> #185",
+        "classification": "EXTRACTED -> llada.fast_paths (#185, family provider; hooks wired LIVE)",
         "idempotent": "yes",
         "linked_issue": null,
-        "liveness_evidence": "NOT LIVE \u2014 installed but LLaDALlamaBlock.forward never calls it; probe_liveness counters stay 0 (tests/test_patch_report_contract.py::test_rope_targets_are_counted_and_llada_qkv_o_are_install_only)",
+        "liveness_evidence": "LIVE since the #185 wiring: LLaDALlamaBlock.forward dispatches through apply_qkv; probe_liveness counters positive per block, forward+backward (tests/models/test_llada_fast_paths.py)",
         "mutation_id": "llada_qkv_fast_hook",
-        "owner": "_patch_llada_peft",
+        "owner": "llada.fast_paths.patch_peft (#185 provider)",
         "reversible": "reassign",
         "row": {
           "evidence": {
             "matched_claims": [
               {
                 "contains": "block.apply_qkv = apply_lora_qkv",
-                "file": "unturtle/fast_diffusion_model.py"
+                "file": "unturtle/models/backbones/llada/fast_paths.py"
               }
             ]
           },
-          "owner": "_patch_llada_peft",
+          "owner": "llada.fast_paths.patch_peft (#185 provider)",
           "reason": null,
           "source": "static scan + curated ledger",
           "status": "observed"
@@ -4254,39 +4256,47 @@
         "target": "block.apply_qkv"
       },
       {
-        "after_identity": "apply_lora_o (unsloth)",
+        "after_identity": "apply_lora_o (unsloth) + __dict__ o_proj->attn_out alias (kernel reads self.o_proj; not module-registered, so state_dict is unchanged)",
         "applicability": "CUDA + eligibility gates",
         "before_identity": "unset / stub",
         "claims": [
           {
             "contains": "block.apply_o = apply_lora_o",
-            "file": "unturtle/fast_diffusion_model.py"
+            "file": "unturtle/models/backbones/llada/fast_paths.py"
+          },
+          {
+            "contains": "block.__dict__[\"o_proj\"] = block.attn_out",
+            "file": "unturtle/models/backbones/llada/fast_paths.py"
           }
         ],
-        "classification": "EXTRACT -> #185",
+        "classification": "EXTRACTED -> llada.fast_paths (#185, family provider; hooks wired LIVE)",
         "idempotent": "yes",
         "linked_issue": null,
-        "liveness_evidence": "NOT LIVE \u2014 installed but LLaDALlamaBlock.forward never calls it; probe_liveness counters stay 0 (tests/test_patch_report_contract.py::test_rope_targets_are_counted_and_llada_qkv_o_are_install_only)",
+        "liveness_evidence": "LIVE since the #185 wiring: LLaDABlock.attention dispatches through apply_o (o_proj alias installed with the hook); probe_liveness counters positive per block, forward+backward (tests/models/test_llada_fast_paths.py)",
         "mutation_id": "llada_o_fast_hook",
-        "owner": "_patch_llada_peft",
+        "owner": "llada.fast_paths.patch_peft (#185 provider)",
         "reversible": "reassign",
         "row": {
           "evidence": {
             "matched_claims": [
               {
                 "contains": "block.apply_o = apply_lora_o",
-                "file": "unturtle/fast_diffusion_model.py"
+                "file": "unturtle/models/backbones/llada/fast_paths.py"
+              },
+              {
+                "contains": "block.__dict__[\"o_proj\"] = block.attn_out",
+                "file": "unturtle/models/backbones/llada/fast_paths.py"
               }
             ]
           },
-          "owner": "_patch_llada_peft",
+          "owner": "llada.fast_paths.patch_peft (#185 provider)",
           "reason": null,
           "source": "static scan + curated ledger",
           "status": "observed"
         },
         "scope": "object-local",
         "success_signal": "warning-only (_warn_once patch report); no structured result \u2014 REPLACE target for #185's PatchReport",
-        "target": "block.apply_o"
+        "target": "block.apply_o + o_proj aliasing"
       },
       {
         "after_identity": "apply_lora_mlp_swiglu (unsloth) + block.gate_proj=ff_proj alias",
@@ -4295,34 +4305,34 @@
         "claims": [
           {
             "contains": "block.apply_mlp = apply_lora_mlp_swiglu",
-            "file": "unturtle/fast_diffusion_model.py"
+            "file": "unturtle/models/backbones/llada/fast_paths.py"
           },
           {
-            "contains": "block.gate_proj = ff_proj",
-            "file": "unturtle/fast_diffusion_model.py"
+            "contains": "block.gate_proj = block.ff_proj",
+            "file": "unturtle/models/backbones/llada/fast_paths.py"
           }
         ],
-        "classification": "EXTRACT -> #185",
+        "classification": "EXTRACTED -> llada.fast_paths (#185, family provider; hooks wired LIVE)",
         "idempotent": "yes",
         "linked_issue": null,
         "liveness_evidence": "LLaDA fast-path tests",
         "mutation_id": "llada_mlp_fast_hook",
-        "owner": "_patch_llada_peft",
+        "owner": "llada.fast_paths.patch_peft (#185 provider)",
         "reversible": "reassign + alias removal (no API)",
         "row": {
           "evidence": {
             "matched_claims": [
               {
                 "contains": "block.apply_mlp = apply_lora_mlp_swiglu",
-                "file": "unturtle/fast_diffusion_model.py"
+                "file": "unturtle/models/backbones/llada/fast_paths.py"
               },
               {
-                "contains": "block.gate_proj = ff_proj",
-                "file": "unturtle/fast_diffusion_model.py"
+                "contains": "block.gate_proj = block.ff_proj",
+                "file": "unturtle/models/backbones/llada/fast_paths.py"
               }
             ]
           },
-          "owner": "_patch_llada_peft",
+          "owner": "llada.fast_paths.patch_peft (#185 provider)",
           "reason": null,
           "source": "static scan + curated ledger",
           "status": "observed"
@@ -4626,6 +4636,76 @@
         "scope": "object-local",
         "success_signal": "n/a",
         "target": "self.apply_mlp"
+      },
+      {
+        "after_identity": "LLaDALlamaBlock._default_apply_qkv",
+        "applicability": "constructor default (not a patch)",
+        "before_identity": "n/a (construction)",
+        "claims": [
+          {
+            "contains": "self.apply_qkv = LLaDALlamaBlock._default_apply_qkv",
+            "file": "unturtle/models/backbones/llada/modeling_llada.py"
+          }
+        ],
+        "classification": "KEEP",
+        "idempotent": "yes",
+        "linked_issue": null,
+        "liveness_evidence": "LLaDA forward tests + tests/models/test_llada_fast_paths.py (default stub == direct projection, bit-identical)",
+        "mutation_id": "llada_default_apply_qkv",
+        "owner": "LLaDABlock.__init__ / LLaDALlamaBlock.__init__ (#185 wiring)",
+        "reversible": "n/a",
+        "row": {
+          "evidence": {
+            "matched_claims": [
+              {
+                "contains": "self.apply_qkv = LLaDALlamaBlock._default_apply_qkv",
+                "file": "unturtle/models/backbones/llada/modeling_llada.py"
+              }
+            ]
+          },
+          "owner": "LLaDABlock.__init__ / LLaDALlamaBlock.__init__ (#185 wiring)",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "n/a",
+        "target": "self.apply_qkv"
+      },
+      {
+        "after_identity": "LLaDABlock._default_apply_o",
+        "applicability": "constructor default (not a patch)",
+        "before_identity": "n/a (construction)",
+        "claims": [
+          {
+            "contains": "self.apply_o = LLaDABlock._default_apply_o",
+            "file": "unturtle/models/backbones/llada/modeling_llada.py"
+          }
+        ],
+        "classification": "KEEP",
+        "idempotent": "yes",
+        "linked_issue": null,
+        "liveness_evidence": "LLaDA forward tests + tests/models/test_llada_fast_paths.py (default stub == direct projection, bit-identical)",
+        "mutation_id": "llada_default_apply_o",
+        "owner": "LLaDABlock.__init__ / LLaDALlamaBlock.__init__ (#185 wiring)",
+        "reversible": "n/a",
+        "row": {
+          "evidence": {
+            "matched_claims": [
+              {
+                "contains": "self.apply_o = LLaDABlock._default_apply_o",
+                "file": "unturtle/models/backbones/llada/modeling_llada.py"
+              }
+            ]
+          },
+          "owner": "LLaDABlock.__init__ / LLaDALlamaBlock.__init__ (#185 wiring)",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "n/a",
+        "target": "self.apply_o"
       },
       {
         "after_identity": "MethodType(unturtle push wrapper), original kept as original_push_to_hub",
@@ -5042,11 +5122,11 @@
         "target": "unturtle.registry._default_hub"
       }
     ],
-    "scanned_hits": 42,
+    "scanned_hits": 44,
     "unclaimed_hits": []
   },
   "schema_version": 1,
-  "semantic_digest": "652a2b8c6f18d9cba1e8c4e14bcd47e8e86964f1ed308b1b6b1199d79a1b6062",
+  "semantic_digest": "484a4e1bb02265c1a19543630bdbab4b3c8836a121e7874f1559eea5ce92dabd",
   "verdicts": {
     "diffusion_gemma_class_swap": {
       "area": "DiffusionGemma runtime class swap",

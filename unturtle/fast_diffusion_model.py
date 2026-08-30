@@ -118,166 +118,6 @@ _logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _patch_llada_peft(
-    model: Any, lora_dropout: float, bias: Literal["none", "all", "lora_only"]
-) -> tuple[int, int, int]:
-    """Patch LLaDA model with Triton LoRA kernels.
-
-    LLaDA uses a non-standard layer hierarchy:
-      ``model.base_model.model.transformer.blocks`` (list of ``LLaDABlock``).
-
-    ``LLaDALlamaBlock`` has ``q_proj/k_proj/v_proj/attn_out/ff_proj/up_proj``.
-    Other block types (``LLaDASequentialBlock``) use ``att_proj`` (fused QKV)
-    and are not supported by the split QKV kernel — they are skipped with a
-    warning.
-    """
-    from unturtle.models.backbones.llada.modeling_llada import (
-        LLaDALlamaBlock,
-        _make_llada_fast_rope_forward,
-    )
-
-    n_qkv = n_o = n_mlp = 0
-
-    # Triton kernels require the model to be on CUDA.
-    first_param = next(iter(model.parameters()), None)
-    if first_param is None or first_param.device.type != "cuda":
-        return n_qkv, n_o, n_mlp
-
-    # LLaDAModelLM wraps LLaDAModel in self.model, so the path differs:
-    # PeftModel → base_model → model (LLaDAModelLM) → model (LLaDAModel) → transformer
-    inner = model.base_model.model
-    if hasattr(inner, "model") and hasattr(inner.model, "transformer"):
-        transformer = inner.model.transformer
-    elif hasattr(inner, "transformer"):
-        transformer = inner.transformer
-    else:
-        _warn_once(
-            "FastDiffusionModel (LLaDA): could not locate transformer — "
-            "cannot patch LoRA kernels. Is this a supported LLaDA checkpoint?"
-        )
-        return n_qkv, n_o, n_mlp
-
-    if not hasattr(transformer, "blocks"):
-        _warn_once(
-            "FastDiffusionModel (LLaDA): transformer.blocks not found — "
-            "cannot patch LoRA kernels. Is this a supported LLaDA checkpoint?"
-        )
-        return n_qkv, n_o, n_mlp
-
-    blocks = transformer.blocks
-
-    if lora_dropout == 0 and bias == "none":
-        _require_fast_lora()
-
-    for block in blocks:
-        if not isinstance(block, LLaDALlamaBlock):
-            _warn_once(
-                f"FastDiffusionModel (LLaDA): skipping block type {type(block).__name__} "
-                "(only LLaDALlamaBlock is supported for Triton LoRA patching)."
-            )
-            continue
-
-        # Inject Triton RoPE fast forward unconditionally (CUDA already checked above).
-        rotary_emb = getattr(block, "rotary_emb", None)
-        if rotary_emb is not None and not getattr(
-            rotary_emb, "_fast_rope_patched", False
-        ):
-            import types
-
-            rotary_emb.forward = types.MethodType(
-                _make_llada_fast_rope_forward(type(rotary_emb).forward), rotary_emb
-            )
-            rotary_emb._fast_rope_patched = True
-
-        if lora_dropout != 0 or bias != "none":
-            continue
-
-        # LLaDALlamaBlock: q_proj / k_proj / v_proj (bias depends on config)
-        q_proj = getattr(block, "q_proj", None)
-        k_proj = getattr(block, "k_proj", None)
-        v_proj = getattr(block, "v_proj", None)
-        if (
-            q_proj is not None
-            and k_proj is not None
-            and v_proj is not None
-            and hasattr(q_proj, "lora_A")
-            and hasattr(k_proj, "lora_A")
-            and hasattr(v_proj, "lora_A")
-            and _no_bias(q_proj)
-            and _no_bias(k_proj)
-            and _no_bias(v_proj)
-            and _no_lora_mag(q_proj)
-            and _no_lora_mag(k_proj)
-            and _no_lora_mag(v_proj)
-        ):
-            block.apply_qkv = apply_lora_qkv
-            n_qkv += 1
-        else:
-            _warn_once(
-                "FastDiffusionModel (LLaDA): cannot patch QKV with Triton kernel "
-                "(LoRA not enabled or bias present — config.include_qkv_bias=True)."
-            )
-
-        # attn_out (o_proj equivalent)
-        attn_out = getattr(block, "attn_out", None)
-        if (
-            attn_out is not None
-            and hasattr(attn_out, "lora_A")
-            and _no_bias(attn_out)
-            and _no_lora_mag(attn_out)
-        ):
-            block.apply_o = apply_lora_o
-            n_o += 1
-        else:
-            _warn_once(
-                "FastDiffusionModel (LLaDA): cannot patch attn_out with Triton kernel."
-            )
-
-        # ff_proj / up_proj / ff_out — gated MLP (gate/up/down).
-        # apply_lora_mlp_swiglu reads self.gate_proj / self.up_proj / self.down_proj
-        # and uses the SiLU-gated SwiGLU Triton kernel.
-        # Only patch when activation_type is SiLU (output_multiplier==1); with SwiGLU
-        # (output_multiplier==0.5) ff_proj output is halved by chunk(2) while up_proj
-        # stays full-width, producing a shape mismatch in the Triton kernel.
-        block_act = getattr(block, "act", None)
-        act_is_silu = block_act is not None and isinstance(block_act, torch.nn.SiLU)
-        ff_proj = getattr(block, "ff_proj", None)
-        up_proj = getattr(block, "up_proj", None)
-        ff_out = getattr(block, "ff_out", None)
-        if not act_is_silu:
-            _warn_once(
-                f"FastDiffusionModel (LLaDA): skipping Triton MLP patch for "
-                f"{type(block_act).__name__} activation — only SiLU is supported. "
-                "MLP LoRA will use PEFT default path."
-            )
-        elif (
-            ff_proj is not None
-            and up_proj is not None
-            and ff_out is not None
-            and hasattr(ff_proj, "lora_A")
-            and hasattr(up_proj, "lora_A")
-            and hasattr(ff_out, "lora_A")
-            and _no_bias(ff_proj)
-            and _no_bias(up_proj)
-            and _no_bias(ff_out)
-            and _no_lora_mag(ff_proj)
-            and _no_lora_mag(up_proj)
-            and _no_lora_mag(ff_out)
-        ):
-            # Set gate_proj/down_proj aliases for apply_lora_mlp_swiglu compatibility.
-            block.gate_proj = ff_proj
-            block.down_proj = ff_out
-            block.apply_mlp = apply_lora_mlp_swiglu
-            n_mlp += 1
-        else:
-            _warn_once(
-                "FastDiffusionModel (LLaDA): cannot patch MLP with Triton kernel "
-                "(LoRA not enabled, bias present, or magnitude scaling active)."
-            )
-
-    return n_qkv, n_o, n_mlp
-
-
 def _load_model_with_optional_4bit_fallback(
     loader: Any,
     model_name: str,
@@ -1101,10 +941,16 @@ def probe_liveness(
                     if module is None:
                         backward_counts[f"{path}:{kind}"] = 0
                         continue
+                    lora_params = [
+                        param for n, param in module.named_parameters() if "lora_" in n
+                    ]
+                    if not lora_params:
+                        # A parameter-less target (e.g. LLaDA's rotary module)
+                        # cannot receive gradients by construction — it must not
+                        # gate backward liveness. Forward counters still cover it.
+                        continue
                     backward_counts[f"{path}:{kind}"] = sum(
-                        1
-                        for n, param in module.named_parameters()
-                        if "lora_" in n and param.grad is not None
+                        1 for param in lora_params if param.grad is not None
                     )
             model.zero_grad(set_to_none=True)
         else:
@@ -1587,7 +1433,7 @@ class FastDiffusionModel:
             )
 
         # Resolved through the registry rather than a module-level reference so
-        # that tests monkeypatching `_patch_*_peft` by name still take effect.
+        # that tests monkeypatching `<provider>.patch_peft` by name still take effect.
         provider = integration.fast_paths
         patcher = integration.peft_patcher
         if patcher is None:

@@ -408,7 +408,7 @@ class TestLLaDAFastRoPE:
 
     @pytest.mark.skipif(not cuda, reason="Triton fast RoPE requires CUDA")
     def test_patch_applied_via_fast_diffusion_model(self):
-        """_patch_llada_peft injects Triton RoPE into rotary_emb on CUDA."""
+        """llada.fast_paths.patch_peft injects Triton RoPE into rotary_emb on CUDA."""
         from unturtle.fast_diffusion_model import FastDiffusionModel
         from unturtle.models.backbones.llada import LLaDAConfig, LLaDAModelLM
 
@@ -546,7 +546,7 @@ class TestLLaDAFastRoPE:
 
     @pytest.mark.skipif(not cuda, reason="Triton fast RoPE requires CUDA")
     def test_double_patch_idempotent(self):
-        """Calling _patch_llada_peft twice does not stack the fast forward wrapper."""
+        """Calling llada.fast_paths.patch_peft twice does not stack the fast forward wrapper."""
         from unturtle.fast_diffusion_model import FastDiffusionModel
         from unturtle.models.backbones.llada import LLaDAConfig, LLaDAModelLM
 
@@ -583,9 +583,9 @@ class TestLLaDAFastRoPE:
         ]
 
         # Simulate a second patch call
-        from unturtle.fast_diffusion_model import _patch_llada_peft
+        from unturtle.models.backbones.llada.fast_paths import patch_peft
 
-        _patch_llada_peft(peft_model, lora_dropout=0, bias="none")
+        patch_peft(peft_model, lora_dropout=0, bias="none")
 
         forwards_after_second = [
             id(b.rotary_emb.forward) for b in blocks if hasattr(b, "rotary_emb")
@@ -649,7 +649,7 @@ class TestLLaDAFastMLP:
 
     @pytest.mark.skipif(not cuda, reason="Triton MLP LoRA requires CUDA")
     def test_mlp_patched_to_triton(self, llama_config):
-        """_patch_llada_peft replaces apply_mlp with apply_lora_mlp_swiglu on CUDA."""
+        """llada.fast_paths.patch_peft replaces apply_mlp with apply_lora_mlp_swiglu on CUDA."""
         from unturtle.fast_diffusion_model import FastDiffusionModel
         from unturtle.kernels.fast_lora import apply_lora_mlp_swiglu
         from unturtle.models.backbones.llada import LLaDAModelLM

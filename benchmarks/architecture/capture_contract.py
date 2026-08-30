@@ -116,6 +116,7 @@ PROCESS_GLOBAL_CASES = ("rng_contract", "sdpa")
 # ---------------------------------------------------------------------------
 
 FDM = "unturtle/fast_diffusion_model.py"
+LLADA_PROVIDER = "unturtle/models/backbones/llada/fast_paths.py"  # #185 LLaDA provider
 DREAM_PROVIDER = "unturtle/models/backbones/dream/fast_paths.py"  # #185 Dream provider
 MODERNBERT_PROVIDER = (
     "unturtle/models/backbones/modernbert/fast_paths.py"  # #185 ModernBERT provider
@@ -305,7 +306,7 @@ MUTATION_LEDGER: list[dict] = [
     ),
     _mutation(
         "llada_rope_fast_forward",
-        owner="_patch_llada_peft",
+        owner="llada.fast_paths.patch_peft (#185 provider)",
         target="block.rotary_emb.forward (instance)",
         applicability="CUDA",
         before="class rotary forward",
@@ -315,12 +316,12 @@ MUTATION_LEDGER: list[dict] = [
         scope="object-local",
         success_signal=_WARN_ONLY,
         liveness_evidence="LLaDA fast-path tests",
-        classification="EXTRACT -> #185",
-        claims=[(FDM, "rotary_emb.forward = types.MethodType(")],
+        classification="EXTRACTED -> llada.fast_paths (#185, family provider; hooks wired LIVE)",
+        claims=[(LLADA_PROVIDER, "rotary_emb.forward = types.MethodType(")],
     ),
     _mutation(
         "llada_qkv_fast_hook",
-        owner="_patch_llada_peft",
+        owner="llada.fast_paths.patch_peft (#185 provider)",
         target="block.apply_qkv",
         applicability="CUDA + eligibility gates",
         before="unset / stub",
@@ -329,28 +330,31 @@ MUTATION_LEDGER: list[dict] = [
         reversible="reassign",
         scope="object-local",
         success_signal=_WARN_ONLY,
-        liveness_evidence="NOT LIVE — installed but LLaDALlamaBlock.forward never calls it; probe_liveness counters stay 0 (tests/test_patch_report_contract.py::test_rope_targets_are_counted_and_llada_qkv_o_are_install_only)",
-        classification="EXTRACT -> #185",
-        claims=[(FDM, "block.apply_qkv = apply_lora_qkv")],
+        liveness_evidence="LIVE since the #185 wiring: LLaDALlamaBlock.forward dispatches through apply_qkv; probe_liveness counters positive per block, forward+backward (tests/models/test_llada_fast_paths.py)",
+        classification="EXTRACTED -> llada.fast_paths (#185, family provider; hooks wired LIVE)",
+        claims=[(LLADA_PROVIDER, "block.apply_qkv = apply_lora_qkv")],
     ),
     _mutation(
         "llada_o_fast_hook",
-        owner="_patch_llada_peft",
-        target="block.apply_o",
+        owner="llada.fast_paths.patch_peft (#185 provider)",
+        target="block.apply_o + o_proj aliasing",
         applicability="CUDA + eligibility gates",
         before="unset / stub",
-        after="apply_lora_o (unsloth)",
+        after="apply_lora_o (unsloth) + __dict__ o_proj->attn_out alias (kernel reads self.o_proj; not module-registered, so state_dict is unchanged)",
         idempotent="yes",
         reversible="reassign",
         scope="object-local",
         success_signal=_WARN_ONLY,
-        liveness_evidence="NOT LIVE — installed but LLaDALlamaBlock.forward never calls it; probe_liveness counters stay 0 (tests/test_patch_report_contract.py::test_rope_targets_are_counted_and_llada_qkv_o_are_install_only)",
-        classification="EXTRACT -> #185",
-        claims=[(FDM, "block.apply_o = apply_lora_o")],
+        liveness_evidence="LIVE since the #185 wiring: LLaDABlock.attention dispatches through apply_o (o_proj alias installed with the hook); probe_liveness counters positive per block, forward+backward (tests/models/test_llada_fast_paths.py)",
+        classification="EXTRACTED -> llada.fast_paths (#185, family provider; hooks wired LIVE)",
+        claims=[
+            (LLADA_PROVIDER, "block.apply_o = apply_lora_o"),
+            (LLADA_PROVIDER, 'block.__dict__["o_proj"] = block.attn_out'),
+        ],
     ),
     _mutation(
         "llada_mlp_fast_hook",
-        owner="_patch_llada_peft",
+        owner="llada.fast_paths.patch_peft (#185 provider)",
         target="block.apply_mlp + gate_proj/down_proj aliasing",
         applicability="CUDA + SiLU activation + eligibility gates",
         before="LLaDALlamaBlock._default_apply_mlp",
@@ -360,10 +364,10 @@ MUTATION_LEDGER: list[dict] = [
         scope="object-local",
         success_signal=_WARN_ONLY,
         liveness_evidence="LLaDA fast-path tests",
-        classification="EXTRACT -> #185",
+        classification="EXTRACTED -> llada.fast_paths (#185, family provider; hooks wired LIVE)",
         claims=[
-            (FDM, "block.apply_mlp = apply_lora_mlp_swiglu"),
-            (FDM, "block.gate_proj = ff_proj"),
+            (LLADA_PROVIDER, "block.apply_mlp = apply_lora_mlp_swiglu"),
+            (LLADA_PROVIDER, "block.gate_proj = block.ff_proj"),
         ],
     ),
     _mutation(
@@ -504,6 +508,46 @@ MUTATION_LEDGER: list[dict] = [
             (
                 "unturtle/models/backbones/llada/modeling_llada.py",
                 "self.apply_mlp = LLaDALlamaBlock._default_apply_mlp",
+            )
+        ],
+    ),
+    _mutation(
+        "llada_default_apply_qkv",
+        owner="LLaDABlock.__init__ / LLaDALlamaBlock.__init__ (#185 wiring)",
+        target="self.apply_qkv",
+        applicability="constructor default (not a patch)",
+        before="n/a (construction)",
+        after="LLaDALlamaBlock._default_apply_qkv",
+        idempotent="yes",
+        reversible="n/a",
+        scope="object-local",
+        success_signal="n/a",
+        liveness_evidence="LLaDA forward tests + tests/models/test_llada_fast_paths.py (default stub == direct projection, bit-identical)",
+        classification="KEEP",
+        claims=[
+            (
+                "unturtle/models/backbones/llada/modeling_llada.py",
+                "self.apply_qkv = LLaDALlamaBlock._default_apply_qkv",
+            )
+        ],
+    ),
+    _mutation(
+        "llada_default_apply_o",
+        owner="LLaDABlock.__init__ / LLaDALlamaBlock.__init__ (#185 wiring)",
+        target="self.apply_o",
+        applicability="constructor default (not a patch)",
+        before="n/a (construction)",
+        after="LLaDABlock._default_apply_o",
+        idempotent="yes",
+        reversible="n/a",
+        scope="object-local",
+        success_signal="n/a",
+        liveness_evidence="LLaDA forward tests + tests/models/test_llada_fast_paths.py (default stub == direct projection, bit-identical)",
+        classification="KEEP",
+        claims=[
+            (
+                "unturtle/models/backbones/llada/modeling_llada.py",
+                "self.apply_o = LLaDABlock._default_apply_o",
             )
         ],
     ),
@@ -737,6 +781,7 @@ SCAN_PATTERNS = (
     r"\.apply_o = ",
     r"\.apply_mlp = ",
     r"\.apply_wo = ",
+    r"__dict__\[\"o_proj\"\] = ",
     r"__dict__\.pop\(\"generate\"",
     r"os\.environ\[",
     r"\.generation_config = ",
