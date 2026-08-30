@@ -60,7 +60,7 @@
         },
         "persistent_digest": "bd32d36c11f147e4",
         "volatile": {
-          "object_id": 22457919909104
+          "object_id": 23192163815584
         }
       },
       "original": {
@@ -122,7 +122,7 @@
         },
         "persistent_digest": "bd32d36c11f147e4",
         "volatile": {
-          "object_id": 22457535844272
+          "object_id": 23192154059648
         }
       },
       "reload": {
@@ -184,7 +184,7 @@
         },
         "persistent_digest": "bd32d36c11f147e4",
         "volatile": {
-          "object_id": 22457920951488
+          "object_id": 23192158483088
         }
       },
       "reload_restored": {
@@ -249,7 +249,7 @@
           "model.rotary.inv_freq"
         ],
         "volatile": {
-          "object_id": 22457920960368
+          "object_id": 23192159587456
         }
       }
     },
@@ -332,7 +332,7 @@
         "volatile": {
           "cpu_rng_digest": "d57f33415962ab64",
           "cuda_rng_digest": "374708fff7719dd5",
-          "python_rng_digest": "3f44a12dfb108e75"
+          "python_rng_digest": "aa0c5216fabd53d6"
         }
       },
       "before": {
@@ -407,7 +407,7 @@
         "volatile": {
           "cpu_rng_digest": "804607d66c3ffcaa",
           "cuda_rng_digest": "374708fff7719dd5",
-          "python_rng_digest": "3f44a12dfb108e75"
+          "python_rng_digest": "aa0c5216fabd53d6"
         }
       },
       "changed_keys": [
@@ -531,7 +531,7 @@
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 23402158464304
+                "object_id": 22706721664576
               }
             },
             "original": {
@@ -615,7 +615,7 @@
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 23402158362736
+                "object_id": 22717701821200
               }
             },
             "reload": {
@@ -699,7 +699,7 @@
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 23402146902096
+                "object_id": 22706733082256
               }
             },
             "reload_restored": {
@@ -788,7 +788,7 @@
                 "model.rotary_emb.inv_freq"
               ],
               "volatile": {
-                "object_id": 23402146899888
+                "object_id": 22706722203568
               }
             }
           },
@@ -871,7 +871,7 @@
               "volatile": {
                 "cpu_rng_digest": "d97336e56492e520",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "b1bccd97c8659486"
+                "python_rng_digest": "85212539843f841e"
               }
             },
             "before": {
@@ -946,7 +946,7 @@
               "volatile": {
                 "cpu_rng_digest": "1fc712890a7443a4",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "b1bccd97c8659486"
+                "python_rng_digest": "85212539843f841e"
               }
             },
             "changed_keys": [
@@ -1058,7 +1058,7 @@
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 22429409935040
+                "object_id": 23155864668400
               }
             },
             "original": {
@@ -1142,7 +1142,7 @@
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 22440386337664
+                "object_id": 23155853275120
               }
             },
             "reload": {
@@ -1226,7 +1226,7 @@
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 22429392027424
+                "object_id": 23155856536496
               }
             },
             "reload_restored": {
@@ -1315,7 +1315,7 @@
                 "model.rotary_emb.inv_freq"
               ],
               "volatile": {
-                "object_id": 22429402994528
+                "object_id": 23155846361360
               }
             }
           },
@@ -1398,7 +1398,7 @@
               "volatile": {
                 "cpu_rng_digest": "d97336e56492e520",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "5c21b207ab6dfc98"
+                "python_rng_digest": "bf33c68f70f2a9b1"
               }
             },
             "before": {
@@ -1473,7 +1473,7 @@
               "volatile": {
                 "cpu_rng_digest": "1fc712890a7443a4",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "5c21b207ab6dfc98"
+                "python_rng_digest": "bf33c68f70f2a9b1"
               }
             },
             "changed_keys": [
@@ -1590,7 +1590,7 @@
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 22802645441936
+                "object_id": 22738640424736
               }
             },
             "original": {
@@ -1674,7 +1674,7 @@
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 22791657861680
+                "object_id": 22738636687024
               }
             },
             "reload": {
@@ -1758,7 +1758,7 @@
               },
               "persistent_digest": "da413bae51ff8901",
               "volatile": {
-                "object_id": 22791654176864
+                "object_id": 22738630433952
               }
             },
             "reload_restored": {
@@ -1847,7 +1847,7 @@
                 "model.rotary_emb.inv_freq"
               ],
               "volatile": {
-                "object_id": 22791648095328
+                "object_id": 22738630431360
               }
             }
           },
@@ -1930,7 +1930,7 @@
               "volatile": {
                 "cpu_rng_digest": "d97336e56492e520",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "dc16f6cc0e563c82"
+                "python_rng_digest": "df484d171234f5ee"
               }
             },
             "before": {
@@ -2005,7 +2005,7 @@
               "volatile": {
                 "cpu_rng_digest": "1fc712890a7443a4",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "dc16f6cc0e563c82"
+                "python_rng_digest": "df484d171234f5ee"
               }
             },
             "changed_keys": [
@@ -2108,7 +2108,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 22858223697600,
+                "object_id": 22636432615296,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -2188,7 +2188,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 22858217125120,
+                "object_id": 22636432919344,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -2268,7 +2268,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 22858216805568,
+                "object_id": 22636037009056,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -2348,7 +2348,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 22858217508400,
+                "object_id": 22636429630288,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -2452,7 +2452,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "86531a5a4924fa0b",
+                "python_rng_digest": "6726c668afedef6f",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -2525,7 +2525,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "86531a5a4924fa0b",
+                "python_rng_digest": "6726c668afedef6f",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -2615,7 +2615,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 23102842297792,
+                "object_id": 23212385286096,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -2695,7 +2695,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 23102847407488,
+                "object_id": 23212385086224,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -2775,7 +2775,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 23102839945792,
+                "object_id": 23212393218176,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -2855,7 +2855,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 23102831192512,
+                "object_id": 23212385545744,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -2959,7 +2959,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "a1b7290324f55966",
+                "python_rng_digest": "081fb587a1b77520",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -3032,7 +3032,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "a1b7290324f55966",
+                "python_rng_digest": "081fb587a1b77520",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -3122,7 +3122,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 22427899058352,
+                "object_id": 23241518265408,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -3202,7 +3202,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 22427889859664,
+                "object_id": 23241526739600,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -3282,7 +3282,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 22427881781200,
+                "object_id": 23241518397392,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -3362,7 +3362,7 @@
                   "unturtle.models.generation.block_decode_mixin.BlockDecodeMixin",
                   "unturtle.models.backbones.dream.modeling_dream.DreamPreTrainedModel"
                 ],
-                "object_id": 22427883335520,
+                "object_id": 23241518898048,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -3466,7 +3466,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "342c835b1e5a7121",
+                "python_rng_digest": "0dccdd4c431a0fbc",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -3539,7 +3539,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "342c835b1e5a7121",
+                "python_rng_digest": "0dccdd4c431a0fbc",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -3661,7 +3661,7 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 22608212977968
+                "object_id": 22459926629936
               }
             },
             "original": {
@@ -3723,7 +3723,7 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 22608593880176
+                "object_id": 22459949313024
               }
             },
             "reload": {
@@ -3785,7 +3785,7 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 22608580392576
+                "object_id": 22459937151344
               }
             },
             "reload_restored": {
@@ -3850,7 +3850,7 @@
                 "model.rotary.inv_freq"
               ],
               "volatile": {
-                "object_id": 22619554489472
+                "object_id": 22459928670720
               }
             }
           },
@@ -3933,7 +3933,7 @@
               "volatile": {
                 "cpu_rng_digest": "3dbcff81a8a34865",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "9bae24a3659de0e1"
+                "python_rng_digest": "b73df5ea4486781d"
               }
             },
             "before": {
@@ -4008,7 +4008,7 @@
               "volatile": {
                 "cpu_rng_digest": "1943de2787227442",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "9bae24a3659de0e1"
+                "python_rng_digest": "b73df5ea4486781d"
               }
             },
             "changed_keys": [
@@ -4094,7 +4094,7 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 23066803729904
+                "object_id": 22392426126016
               }
             },
             "original": {
@@ -4156,7 +4156,7 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 23066792932080
+                "object_id": 22381462327120
               }
             },
             "reload": {
@@ -4218,7 +4218,7 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 23066802350240
+                "object_id": 22381445019120
               }
             },
             "reload_restored": {
@@ -4283,7 +4283,7 @@
                 "model.rotary.inv_freq"
               ],
               "volatile": {
-                "object_id": 23066794114176
+                "object_id": 22381453043584
               }
             }
           },
@@ -4366,7 +4366,7 @@
               "volatile": {
                 "cpu_rng_digest": "3dbcff81a8a34865",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "ecb6c6f2969b0553"
+                "python_rng_digest": "7b2fa29a4947505c"
               }
             },
             "before": {
@@ -4441,7 +4441,7 @@
               "volatile": {
                 "cpu_rng_digest": "1943de2787227442",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "ecb6c6f2969b0553"
+                "python_rng_digest": "7b2fa29a4947505c"
               }
             },
             "changed_keys": [
@@ -4532,7 +4532,7 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 22557851170480
+                "object_id": 23112687656384
               }
             },
             "original": {
@@ -4594,7 +4594,7 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 22557846183072
+                "object_id": 23113030150112
               }
             },
             "reload": {
@@ -4656,7 +4656,7 @@
               },
               "persistent_digest": "72299b7be2b66229",
               "volatile": {
-                "object_id": 22557847038928
+                "object_id": 23113031677472
               }
             },
             "reload_restored": {
@@ -4721,7 +4721,7 @@
                 "model.rotary.inv_freq"
               ],
               "volatile": {
-                "object_id": 22557840649504
+                "object_id": 23113038646976
               }
             }
           },
@@ -4804,7 +4804,7 @@
               "volatile": {
                 "cpu_rng_digest": "3dbcff81a8a34865",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "1f0957f12e675a37"
+                "python_rng_digest": "6781f7f9a31c6e55"
               }
             },
             "before": {
@@ -4879,7 +4879,7 @@
               "volatile": {
                 "cpu_rng_digest": "1943de2787227442",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "1f0957f12e675a37"
+                "python_rng_digest": "6781f7f9a31c6e55"
               }
             },
             "changed_keys": [
@@ -4956,7 +4956,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22502696576752,
+                "object_id": 23399516414768,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5014,7 +5014,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22502682511840,
+                "object_id": 23399524003488,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5072,7 +5072,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22502675960640,
+                "object_id": 23399525330832,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5130,7 +5130,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22502677076624,
+                "object_id": 23399518090496,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5232,7 +5232,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "e2a6910824e2d6c2",
+                "python_rng_digest": "421c1d564006ee03",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -5305,7 +5305,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "e2a6910824e2d6c2",
+                "python_rng_digest": "421c1d564006ee03",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -5369,7 +5369,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22953899041056,
+                "object_id": 22380950191712,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5427,7 +5427,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22953518050592,
+                "object_id": 22381315932576,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5485,7 +5485,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22953881687232,
+                "object_id": 22381310914496,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5543,7 +5543,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22953883008080,
+                "object_id": 22381310915312,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5645,7 +5645,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "00eb7f108794c286",
+                "python_rng_digest": "aa85dd1de60f8945",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -5718,7 +5718,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "00eb7f108794c286",
+                "python_rng_digest": "aa85dd1de60f8945",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -5782,7 +5782,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22595831898160,
+                "object_id": 23014256489008,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5840,7 +5840,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22584863060096,
+                "object_id": 23014252844368,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5898,7 +5898,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22584861281648,
+                "object_id": 23014254291056,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -5956,7 +5956,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22584852399360,
+                "object_id": 23014248023680,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -6058,7 +6058,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "12c3827ef3e8bc0a",
+                "python_rng_digest": "5ffa354a9f8a6aaf",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -6131,7 +6131,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "12c3827ef3e8bc0a",
+                "python_rng_digest": "5ffa354a9f8a6aaf",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -6249,7 +6249,7 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 23117971400192
+                "object_id": 22389535468832
               }
             },
             "original": {
@@ -6311,7 +6311,7 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 23117979780592
+                "object_id": 22389535327728
               }
             },
             "reload": {
@@ -6373,7 +6373,7 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 23117971386064
+                "object_id": 22389535568432
               }
             },
             "reload_restored": {
@@ -6438,7 +6438,7 @@
                 "model.rotary.inv_freq"
               ],
               "volatile": {
-                "object_id": 23117962561200
+                "object_id": 22389535559456
               }
             }
           },
@@ -6521,7 +6521,7 @@
               "volatile": {
                 "cpu_rng_digest": "d57f33415962ab64",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "53e913a2fa9c8a8b"
+                "python_rng_digest": "ad55dd1d5a8e84aa"
               }
             },
             "before": {
@@ -6596,7 +6596,7 @@
               "volatile": {
                 "cpu_rng_digest": "804607d66c3ffcaa",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "53e913a2fa9c8a8b"
+                "python_rng_digest": "ad55dd1d5a8e84aa"
               }
             },
             "changed_keys": [
@@ -6682,7 +6682,7 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 22893563941696
+                "object_id": 22354338713520
               }
             },
             "original": {
@@ -6744,7 +6744,7 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 22882585218992
+                "object_id": 22354331726720
               }
             },
             "reload": {
@@ -6806,7 +6806,7 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 22882586857200
+                "object_id": 22354331481824
               }
             },
             "reload_restored": {
@@ -6871,7 +6871,7 @@
                 "model.rotary.inv_freq"
               ],
               "volatile": {
-                "object_id": 22882588451584
+                "object_id": 22354341089152
               }
             }
           },
@@ -6954,7 +6954,7 @@
               "volatile": {
                 "cpu_rng_digest": "d57f33415962ab64",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "c17106c2c24a4479"
+                "python_rng_digest": "372786d87bfd7910"
               }
             },
             "before": {
@@ -7029,7 +7029,7 @@
               "volatile": {
                 "cpu_rng_digest": "804607d66c3ffcaa",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "c17106c2c24a4479"
+                "python_rng_digest": "372786d87bfd7910"
               }
             },
             "changed_keys": [
@@ -7120,7 +7120,7 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 22485166698480
+                "object_id": 23221662532960
               }
             },
             "original": {
@@ -7182,7 +7182,7 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 22485166660336
+                "object_id": 23221646214304
               }
             },
             "reload": {
@@ -7244,7 +7244,7 @@
               },
               "persistent_digest": "bd32d36c11f147e4",
               "volatile": {
-                "object_id": 22485160129936
+                "object_id": 23221646322976
               }
             },
             "reload_restored": {
@@ -7309,7 +7309,7 @@
                 "model.rotary.inv_freq"
               ],
               "volatile": {
-                "object_id": 22485160120864
+                "object_id": 23221646317984
               }
             }
           },
@@ -7392,7 +7392,7 @@
               "volatile": {
                 "cpu_rng_digest": "d57f33415962ab64",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "a9f1ae2dcccf7e71"
+                "python_rng_digest": "a5b93410c52db787"
               }
             },
             "before": {
@@ -7467,7 +7467,7 @@
               "volatile": {
                 "cpu_rng_digest": "804607d66c3ffcaa",
                 "cuda_rng_digest": "374708fff7719dd5",
-                "python_rng_digest": "a9f1ae2dcccf7e71"
+                "python_rng_digest": "a5b93410c52db787"
               }
             },
             "changed_keys": [
@@ -7544,7 +7544,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 23386509663392,
+                "object_id": 23116459865776,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -7602,7 +7602,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 23386137153456,
+                "object_id": 23116459246224,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -7660,7 +7660,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 23386505188544,
+                "object_id": 23116464991136,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -7718,7 +7718,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 23386505186912,
+                "object_id": 23116452883504,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -7820,7 +7820,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "b670182260440f3f",
+                "python_rng_digest": "eb6f955b62d6d888",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -7893,7 +7893,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "b670182260440f3f",
+                "python_rng_digest": "eb6f955b62d6d888",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -7957,7 +7957,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 23062397595920,
+                "object_id": 23302679832304,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -8015,7 +8015,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 23062397897040,
+                "object_id": 23302697240624,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -8073,7 +8073,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 23062398693888,
+                "object_id": 23302681013200,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -8131,7 +8131,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 23062398685440,
+                "object_id": 23302681013824,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -8233,7 +8233,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "398e9479cb704628",
+                "python_rng_digest": "23a613feb3b7c37b",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -8306,7 +8306,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "398e9479cb704628",
+                "python_rng_digest": "23a613feb3b7c37b",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -8370,7 +8370,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22754479889760,
+                "object_id": 22735887777280,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -8428,7 +8428,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22754475029472,
+                "object_id": 22735896297888,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -8486,7 +8486,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22754468226608,
+                "object_id": 22735879722176,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -8544,7 +8544,7 @@
                   "transformers.modeling_utils.PreTrainedModel",
                   "torch.nn.modules.module.Module"
                 ],
-                "object_id": 22754468220704,
+                "object_id": 22735886495104,
                 "output_vs_original": {
                   "any_inf": false,
                   "any_nan": false,
@@ -8646,7 +8646,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "520dae36f1c9da97",
+                "python_rng_digest": "dcccd110d5a0e7fd",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -8719,7 +8719,7 @@
                 "deterministic_algorithms": false,
                 "float32_matmul_precision": "highest",
                 "matmul_allow_tf32": false,
-                "python_rng_digest": "520dae36f1c9da97",
+                "python_rng_digest": "dcccd110d5a0e7fd",
                 "sdpa_flags": {
                   "cudnn": true,
                   "flash": true,
@@ -8766,7 +8766,7 @@
     "note": "the historical 2088 vs 2089 passed-count difference is not reproducible on this tree/environment (two fresh collections agree); conditional collection sites (collect-time skips, optional imports) remain the candidate explanation and the final gate requires an identical node set across three consecutive full runs",
     "run_1": {
       "count": 2684,
-      "digest": "b757df6705bff29b",
+      "digest": "d46f410d90a4cbcd",
       "volatile": {
         "nodes": [
           "tests/architecture/test_contract_artifact.py::test_diagnostics_never_imported_by_production",
@@ -8790,7 +8790,7 @@
           "tests/architecture/test_persistence_contract.py::test_adapter_roundtrips_recorded",
           "tests/architecture/test_persistence_contract.py::test_autoconfig_roundtrip_asymmetry_recorded",
           "tests/architecture/test_persistence_contract.py::test_generation_reload_row",
-          "tests/architecture/test_persistence_contract.py::test_native_fp_rope_buffer_rewrite_is_real",
+          "tests/architecture/test_persistence_contract.py::test_native_fp_roundtrip_is_exact_after_174_fix",
           "tests/architecture/test_persistence_contract.py::test_native_fp_state_dict_roundtrips",
           "tests/architecture/test_process_global_state_contract.py::test_rng_contract_defect_is_real_and_recorded",
           "tests/architecture/test_process_global_state_contract.py::test_sdpa_row_matches_runtime_defaults",
@@ -11458,7 +11458,7 @@
     },
     "run_2": {
       "count": 2684,
-      "digest": "b757df6705bff29b",
+      "digest": "d46f410d90a4cbcd",
       "volatile": {
         "nodes": [
           "tests/architecture/test_contract_artifact.py::test_diagnostics_never_imported_by_production",
@@ -11482,7 +11482,7 @@
           "tests/architecture/test_persistence_contract.py::test_adapter_roundtrips_recorded",
           "tests/architecture/test_persistence_contract.py::test_autoconfig_roundtrip_asymmetry_recorded",
           "tests/architecture/test_persistence_contract.py::test_generation_reload_row",
-          "tests/architecture/test_persistence_contract.py::test_native_fp_rope_buffer_rewrite_is_real",
+          "tests/architecture/test_persistence_contract.py::test_native_fp_roundtrip_is_exact_after_174_fix",
           "tests/architecture/test_persistence_contract.py::test_native_fp_state_dict_roundtrips",
           "tests/architecture/test_process_global_state_contract.py::test_rng_contract_defect_is_real_and_recorded",
           "tests/architecture/test_process_global_state_contract.py::test_sdpa_row_matches_runtime_defaults",
@@ -14162,7 +14162,7 @@
     "status": "observed"
   },
   "producer": {
-    "commit": "008c0d7505a997a1833d6ce266392f6d1ce7f965",
+    "commit": "191f33fffa4645a767e57fd8460bfead8fb15e94",
     "peft": "0.19.1",
     "platform": "Linux-5.15.0-122-generic-x86_64-with-glibc2.35",
     "probes": [
@@ -14680,5 +14680,5 @@
     "worktree_clean": true
   },
   "schema_version": 1,
-  "semantic_digest": "231db9079edbdc9dd1ef8950a8cc5a30a798fd0e440a630f7c6db866f05f8144"
+  "semantic_digest": "65bb3fd194397261e335aa189e06a988205592fdb44f0b2baebd01365003e733"
 }
