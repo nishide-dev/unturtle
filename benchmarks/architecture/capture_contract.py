@@ -642,10 +642,11 @@ MUTATION_LEDGER: list[dict] = [
         success_signal="silent",
         liveness_evidence=(
             "persistence.generation_reload probe: reloaded model carries "
-            "DreamGenerationConfig, yet the default-config generate path "
-            "still crashes (it never consults self.generation_config — #189)"
+            "DreamGenerationConfig, and since the #189 fix the default-config "
+            "generate path consults it (priority: explicit > attached > "
+            "from_model_config; tests/models/test_dream_generation_defaults.py)"
         ),
-        classification="linked defect -> #189",
+        classification="RESOLVED -> #189 (default-config path consults the attached config)",
         linked_issue=189,
         claims=[
             (
@@ -1080,11 +1081,12 @@ def build_verdicts(sections: dict) -> dict:
         ),
         "dream_default_generation_config": verdict(
             "Dream unified generate with default config",
-            "linked defect -> #189",
+            "RESOLVED -> #189 (5.x-safe from_model_config override; explicit > attached > default priority)",
             {
                 "generation_probe": (
-                    "default-config runs raise AttributeError eps on "
-                    "transformers 5.x; explicit DreamGenerationConfig executes"
+                    "default-config runs executed (was: AttributeError eps on "
+                    "transformers 5.x); explicit DreamGenerationConfig unchanged "
+                    "vs the verbatim oracle"
                 )
             },
         ),

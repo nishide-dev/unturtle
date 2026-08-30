@@ -16,12 +16,6 @@
       "per_algorithm": {
         "auto": {
           "default_config_run": {
-            "invoked_methods": [],
-            "nfe": 0,
-            "output_shape": null,
-            "raised": "AttributeError: 'GenerationConfig' object has no attribute 'eps'"
-          },
-          "explicit_config_run": {
             "invoked_methods": [
               "_sample_with_cache",
               "_block_decode_loop",
@@ -63,12 +57,6 @@
         },
         "block_decode": {
           "default_config_run": {
-            "invoked_methods": [],
-            "nfe": 0,
-            "output_shape": null,
-            "raised": "AttributeError: 'GenerationConfig' object has no attribute 'eps'"
-          },
-          "explicit_config_run": {
             "invoked_methods": [
               "_sample_with_cache",
               "_block_decode_loop",
@@ -88,12 +76,6 @@
         },
         "mdlm": {
           "default_config_run": {
-            "invoked_methods": [],
-            "nfe": 0,
-            "output_shape": null,
-            "raised": "AttributeError: 'GenerationConfig' object has no attribute 'eps'"
-          },
-          "explicit_config_run": {
             "invoked_methods": [
               "_sample"
             ],
@@ -385,7 +367,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "f0c584ab00824ec5"
+        "torch_cpu_rng_digest": "e48a7e402ef03755"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -539,7 +521,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "2fa88e164e7679c3"
+        "torch_cpu_rng_digest": "e8c873ba421db7b6"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -693,7 +675,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "835ccd6716ed8fd8"
+        "torch_cpu_rng_digest": "109066893d2cc6b4"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -847,7 +829,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "feaa92c82b018c6a"
+        "torch_cpu_rng_digest": "a2553ef19b8945d5"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1001,7 +983,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "7d80a534226f5e83"
+        "torch_cpu_rng_digest": "304de735375a0dcc"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1155,7 +1137,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "87145466afb84b7a"
+        "torch_cpu_rng_digest": "d0e7a0f60d2f710f"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -2463,7 +2445,7 @@
         "case": "generation_reload"
       },
       "case": "generation_reload",
-      "default_config_reload_raised": "AttributeError: 'GenerationConfig' object has no attribute 'eps'",
+      "default_config_reload_raised": null,
       "generation_config_class_after_reload": "DreamGenerationConfig",
       "probe": "persistence",
       "status": "observed",
@@ -2589,7 +2571,7 @@
     }
   },
   "producer": {
-    "commit": "1081cd78e49a0dd33129fdcc544eeeb6b1a72ea2",
+    "commit": "05e523c368c415d061f22e08b0d60772ebbdb4d6",
     "dirty_paths": [],
     "import_root": "<repo>",
     "peft": "0.19.1",
@@ -4873,10 +4855,10 @@
             "file": "unturtle/models/backbones/dream/modeling_dream.py"
           }
         ],
-        "classification": "linked defect -> #189",
+        "classification": "RESOLVED -> #189 (default-config path consults the attached config)",
         "idempotent": "yes",
         "linked_issue": 189,
-        "liveness_evidence": "persistence.generation_reload probe: reloaded model carries DreamGenerationConfig, yet the default-config generate path still crashes (it never consults self.generation_config \u2014 #189)",
+        "liveness_evidence": "persistence.generation_reload probe: reloaded model carries DreamGenerationConfig, and since the #189 fix the default-config generate path consults it (priority: explicit > attached > from_model_config; tests/models/test_dream_generation_defaults.py)",
         "mutation_id": "dream_generation_config_from_pretrained",
         "owner": "DreamModel.from_pretrained (family hook)",
         "reversible": "reassign",
@@ -5126,7 +5108,7 @@
     "unclaimed_hits": []
   },
   "schema_version": 1,
-  "semantic_digest": "4e8090a0524dbdfaa070f2ce2579ff3286f030901286413b8314f16231979157",
+  "semantic_digest": "83e78a0a79106a7759e926600b1748d7b1f2e8c89934843625c30c675a333915",
   "verdicts": {
     "diffusion_gemma_class_swap": {
       "area": "DiffusionGemma runtime class swap",
@@ -5145,14 +5127,14 @@
       "area": "Dream unified generate with default config",
       "row": {
         "evidence": {
-          "generation_probe": "default-config runs raise AttributeError eps on transformers 5.x; explicit DreamGenerationConfig executes"
+          "generation_probe": "default-config runs executed (was: AttributeError eps on transformers 5.x); explicit DreamGenerationConfig unchanged vs the verbatim oracle"
         },
         "owner": "#184",
         "reason": null,
         "source": "characterization sections",
         "status": "observed"
       },
-      "verdict": "linked defect -> #189"
+      "verdict": "RESOLVED -> #189 (5.x-safe from_model_config override; explicit > attached > default priority)"
     },
     "dtype_gate_fail_open": {
       "area": "Fast-path dtype gate: unresolvable embedding structure",
