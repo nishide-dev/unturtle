@@ -354,6 +354,23 @@ class DreamGenerationMixin(BlockDecodeMixin):
                         self.generation_config.mask_token_id
                     )
 
+        # Dream's special tokens may exist only on the MODEL config: an
+        # in-memory model's attached config is the plain 5.x GenerationConfig,
+        # which has no mask_token_id field at all — adopting it would
+        # otherwise leave mask_token_id None and silently corrupt generation
+        # (#189 review). Any special token still None falls back to
+        # self.config.
+        for token_attr in (
+            "mask_token_id",
+            "pad_token_id",
+            "bos_token_id",
+            "eos_token_id",
+        ):
+            if getattr(generation_config, token_attr, None) is None:
+                value = getattr(self.config, token_attr, None)
+                if value is not None:
+                    setattr(generation_config, token_attr, value)
+
         return generation_config
 
     def _prepare_special_tokens(

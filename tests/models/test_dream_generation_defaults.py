@@ -114,6 +114,24 @@ def test_default_config_generate_no_longer_raises_eps():
     torch.manual_seed(7)
     out = model.generate(ids, max_new_tokens=8, steps=4)
     assert tuple(out.shape) == (1, 16)
+    # not silently degenerate: the mask token must have flowed (a None
+    # mask_token_id pads with 0 and unmasks nothing — #189 review)
+    generated = out[:, 8:]
+    assert not bool((generated == 0).all())
+    torch.manual_seed(7)
+    out_mdlm = model.generate(ids, algorithm="mdlm", max_new_tokens=8, steps=4)
+    assert not bool((out_mdlm[:, 8:] == 0).all())
+
+
+def test_attached_plain_config_recovers_special_tokens_from_model_config():
+    """An in-memory model's attached config is a plain 5.x GenerationConfig
+    with NO mask_token_id field — the prepared config must recover it (and
+    pad) from self.config, never leave it None."""
+    model = _tiny_dream()
+    assert not hasattr(model.generation_config, "mask_token_id")
+    prepared = model._prepare_generation_config(None)
+    assert prepared.mask_token_id == model.config.mask_token_id
+    assert prepared.pad_token_id == model.config.pad_token_id
 
 
 def test_default_route_equals_the_explicit_equivalent_bit_for_bit():
