@@ -28,6 +28,9 @@ from unittest.mock import MagicMock
 import pytest
 import torch
 
+import unturtle.save as _usave
+from unturtle.models import loading as _loading
+
 # ---------------------------------------------------------------------------
 # Shared tiny A2D-Llama config fixture
 # ---------------------------------------------------------------------------
@@ -1459,7 +1462,7 @@ class TestFromPretrainedAdapterDetection:
         # when the adapter detection path is correctly skipped.
         with (
             patch(
-                "unturtle.fast_diffusion_model._load_model_auto",
+                "unturtle.models.loading._load_model_auto",
                 side_effect=RuntimeError("reached full-weight load path"),
             ),
             pytest.raises(RuntimeError, match="reached full-weight load path"),
@@ -1484,7 +1487,7 @@ class TestFromPretrainedAdapterDetection:
 
         with (
             patch(
-                "unturtle.fast_diffusion_model._load_model_auto",
+                "unturtle.models.loading._load_model_auto",
                 side_effect=RuntimeError("reached full-weight load path"),
             ),
             pytest.raises(RuntimeError, match="reached full-weight load path"),
@@ -1549,7 +1552,7 @@ class TestFromPretrainedAdapterDetection:
         with (
             patch.object(_peft_mod, "PeftModel", mock_peft_cls),
             patch(
-                "unturtle.fast_diffusion_model._load_model_auto",
+                "unturtle.models.loading._load_model_auto",
                 return_value=(tiny_model, None),
             ) as mock_load_auto,
             patch(
@@ -1599,7 +1602,7 @@ class TestFastModelDelegation:
 
         from unturtle import fast_diffusion_model as fdm
 
-        monkeypatch.setattr(fdm, "_import_fastmodel", lambda: _FakeFastModel)
+        monkeypatch.setattr(_loading, "_import_fastmodel", lambda: _FakeFastModel)
         out = fdm._load_via_fastmodel(
             "some/hub-model", {"torch_dtype": "bf16"}, load_in_4bit=True
         )
@@ -1613,7 +1616,7 @@ class TestFastModelDelegation:
         def _boom():
             raise ImportError("no unsloth")
 
-        monkeypatch.setattr(fdm, "_import_fastmodel", _boom)
+        monkeypatch.setattr(_loading, "_import_fastmodel", _boom)
         assert fdm._load_via_fastmodel("x", {}, load_in_4bit=False) is None
 
     def test_load_model_auto_tries_fastmodel_before_automodel(self, monkeypatch):
@@ -1621,15 +1624,15 @@ class TestFastModelDelegation:
 
         order = []
         monkeypatch.setattr(
-            fdm, "_load_native", lambda *a, **k: (order.append("native"), None)[1]
+            _loading, "_load_native", lambda *a, **k: (order.append("native"), None)[1]
         )
         monkeypatch.setattr(
-            fdm,
+            _loading,
             "_load_via_fastmodel",
             lambda *a, **k: (order.append("fastmodel"), ("M", "T"))[1],
         )
         monkeypatch.setattr(
-            fdm,
+            _loading,
             "_load_via_automodel",
             lambda *a, **k: (order.append("automodel"), "AM")[1],
         )
@@ -1640,9 +1643,9 @@ class TestFastModelDelegation:
     def test_load_model_auto_falls_through_to_automodel(self, monkeypatch):
         from unturtle import fast_diffusion_model as fdm
 
-        monkeypatch.setattr(fdm, "_load_native", lambda *a, **k: None)
-        monkeypatch.setattr(fdm, "_load_via_fastmodel", lambda *a, **k: None)
-        monkeypatch.setattr(fdm, "_load_via_automodel", lambda *a, **k: "AM")
+        monkeypatch.setattr(_loading, "_load_native", lambda *a, **k: None)
+        monkeypatch.setattr(_loading, "_load_via_fastmodel", lambda *a, **k: None)
+        monkeypatch.setattr(_loading, "_load_via_automodel", lambda *a, **k: "AM")
         model, tok = fdm._load_model_auto("x", {}, trust_remote_code=False)
         assert model == "AM"
         assert tok is None
@@ -1810,7 +1813,7 @@ class TestAutoFallbackPrefersTheRegisteredHead:
             def from_pretrained(name, **kwargs):
                 return type("C", (), {"model_type": "headswap"})()
 
-        monkeypatch.setattr(fdm, "AutoConfig", _FakeAutoConfig, raising=False)
+        monkeypatch.setattr(_loading, "AutoConfig", _FakeAutoConfig, raising=False)
         # Patch fdm's own loader seam, NOT the transformers module: unsloth
         # replaces sys.modules["transformers"] at import time, so attribute
         # patches on any previously-bound transformers object are invisible
@@ -1818,7 +1821,7 @@ class TestAutoFallbackPrefersTheRegisteredHead:
         # mutant survived a transformers-patching version of this test while
         # the patched attribute read back correctly).
         monkeypatch.setattr(
-            fdm,
+            _loading,
             "_automodel_loaders",
             lambda: [
                 (n, _recording_auto(n))
@@ -1826,7 +1829,7 @@ class TestAutoFallbackPrefersTheRegisteredHead:
             ],
         )
         monkeypatch.setattr(
-            fdm,
+            _loading,
             "_load_model_with_optional_4bit_fallback",
             lambda loader, name, kw: loader.from_pretrained(name, **kw),
         )
@@ -1863,14 +1866,14 @@ class TestAutoFallbackPrefersTheRegisteredHead:
                 loaded.append(name)
                 return object()
 
-        monkeypatch.setattr(fdm, "AutoConfig", _FakeAutoConfig, raising=False)
+        monkeypatch.setattr(_loading, "AutoConfig", _FakeAutoConfig, raising=False)
         monkeypatch.setattr(
-            fdm,
+            _loading,
             "_load_model_with_optional_4bit_fallback",
             lambda loader, name, kw: loader.from_pretrained(name, **kw),
         )
         monkeypatch.setattr(
-            fdm, "_automodel_loaders", lambda: [("AutoModel", _FakeAutoModel)]
+            _loading, "_automodel_loaders", lambda: [("AutoModel", _FakeAutoModel)]
         )
 
         model = fdm._load_via_automodel("org/other", {})
@@ -2009,7 +2012,7 @@ class TestFastModelKwargForwarding:
 
         from unturtle import fast_diffusion_model as fdm
 
-        monkeypatch.setattr(fdm, "_import_fastmodel", lambda: _FakeFastModel)
+        monkeypatch.setattr(_loading, "_import_fastmodel", lambda: _FakeFastModel)
         out = fdm._load_via_fastmodel(
             "some/hub-model",
             {
@@ -2046,7 +2049,7 @@ class TestFastModelKwargForwarding:
 
         from unturtle import fast_diffusion_model as fdm
 
-        monkeypatch.setattr(fdm, "_import_fastmodel", lambda: _FakeFastModel)
+        monkeypatch.setattr(_loading, "_import_fastmodel", lambda: _FakeFastModel)
         fdm._load_via_fastmodel(
             "x", {"quantization_config": object(), "revision": "r"}, load_in_4bit=True
         )
@@ -2073,8 +2076,8 @@ class TestFastModelKwargForwarding:
 
         from unturtle import fast_diffusion_model as fdm
 
-        monkeypatch.setattr(fdm, "_import_fastmodel", lambda: _FakeStrictFastModel)
-        monkeypatch.setattr(fdm, "_warn_once", warnings_seen.append)
+        monkeypatch.setattr(_loading, "_import_fastmodel", lambda: _FakeStrictFastModel)
+        monkeypatch.setattr(_loading, "_warn_once", warnings_seen.append)
         out = fdm._load_via_fastmodel(
             "x",
             {"torch_dtype": "bf16", "revision": "r", "not_a_real_kwarg": 1},
@@ -2115,7 +2118,7 @@ class TestFourBitFallback:
         from unturtle import fast_diffusion_model as fdm
 
         warnings_seen: list[str] = []
-        monkeypatch.setattr(fdm, "_warn_once", warnings_seen.append)
+        monkeypatch.setattr(_loading, "_warn_once", warnings_seen.append)
         attempts = []
 
         class _FlakyLoader:
@@ -2180,7 +2183,7 @@ class TestMergedSaveDequantizes:
                 def dequantize_4bit(data, quant_state):
                     return torch.zeros(8, 4, dtype=torch.float16)
 
-        monkeypatch.setattr(fdm, "_import_bitsandbytes", lambda: _FakeBnb)
+        monkeypatch.setattr(_usave, "import_bitsandbytes", lambda: _FakeBnb)
         model = _FakeQuantizedModel()
         out = fdm._dequantize_merged_model_(model)
 
@@ -2197,7 +2200,7 @@ class TestMergedSaveDequantizes:
         def _boom():
             raise ImportError("no bitsandbytes")
 
-        monkeypatch.setattr(fdm, "_import_bitsandbytes", _boom)
+        monkeypatch.setattr(_usave, "import_bitsandbytes", _boom)
         with pytest.raises(RuntimeError, match="load_in_4bit=False"):
             fdm._dequantize_merged_model_(_FakeQuantizedModel())
 
@@ -2210,7 +2213,7 @@ class TestMergedSaveDequantizes:
                 def dequantize_4bit(data, quant_state):
                     raise ValueError("bad quant_state")
 
-        monkeypatch.setattr(fdm, "_import_bitsandbytes", lambda: _FakeBnb)
+        monkeypatch.setattr(_usave, "import_bitsandbytes", lambda: _FakeBnb)
         with pytest.raises(RuntimeError, match="load_in_4bit=False"):
             fdm._dequantize_merged_model_(_FakeQuantizedModel())
 
@@ -2228,7 +2231,7 @@ class TestMergedSaveDequantizes:
         def _boom():
             raise ImportError("no bitsandbytes")
 
-        monkeypatch.setattr(fdm, "_import_bitsandbytes", _boom)
+        monkeypatch.setattr(_usave, "import_bitsandbytes", _boom)
 
         saved: list[bool] = []
 

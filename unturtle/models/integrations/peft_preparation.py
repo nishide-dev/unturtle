@@ -39,6 +39,7 @@ Nothing here installs a Triton kernel or a fast forward.
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any, Literal, Optional
 
 import torch
@@ -244,3 +245,40 @@ __all__ = [
     "prepare_peft_model",
     "wrap_with_peft_seeded",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Mode transitions (#185 PR 3) — the GC-mode owner also owns train/inference
+# switching; the façade delegates here.
+# ---------------------------------------------------------------------------
+
+
+def set_inference_mode(model: Any) -> Any:
+    """``model.eval()`` + gradient checkpointing off. Returns the model."""
+    model.eval()
+    apply_gradient_checkpointing_mode(model, False)
+    return model
+
+
+def set_training_mode(model: Any, use_gradient_checkpointing: bool | str = True) -> Any:
+    """``model.train()`` + gradient checkpointing per ``use_gradient_checkpointing``."""
+    model.train()
+    apply_gradient_checkpointing_mode(model, use_gradient_checkpointing)
+    return model
+
+
+@contextlib.contextmanager
+def inference_mode(model: Any):
+    """Temporarily switch to inference mode; restore the tracked GC mode on exit."""
+    was_training = model.training
+    gc_mode = get_gradient_checkpointing_mode(model)
+    set_inference_mode(model)
+    try:
+        with torch.no_grad():
+            yield model
+    finally:
+        if was_training:
+            set_training_mode(model, use_gradient_checkpointing=gc_mode)
+        else:
+            model.eval()
+            apply_gradient_checkpointing_mode(model, gc_mode)
