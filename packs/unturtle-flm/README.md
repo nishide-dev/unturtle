@@ -44,3 +44,26 @@ self-describing.
 No stable ABI, no capability promotion, no cross-family claims: this pack
 fills the `flow_map` Tier-A role (and provides the one-hot Euclidean flow
 control) for the #152 frontier protocol.
+
+
+## Lifecycle (see packs/README.md)
+
+**Stage: reference** (since 2026-08; #155 freeze). Parity + generation/
+evaluation against the pinned oracle only.
+
+- **Compatibility scope**: the host Unturtle at this repo revision;
+  oracle `david3684/flm@a1918d51`; checkpoints `david3684/FLM-B-OWT@624471b9`
+  and `david3684/FMLM-B-OWT@483ea1b3` (gpt2 tokenizer, length 1024, one-hot
+  Euclidean state). flash-attn required for the GPU path (oracle DiT
+  hard-imports it).
+- **Entry points**: `unturtle_flm.plugin` (explicit `load_plugins` target);
+  registered algorithms `flm` (multi-step Euler) and `fmlm` (distilled flow
+  map — NOT flm with steps=1).
+- **Test command**: `uv run python -m pytest tests/test_flm_pack_parity.py -q`
+  (parity tiers marked by resource requirement; GPU tiers need flash-attn).
+- **Training**: NOT provided; no training or distillation reproduction is
+  promised at this stage.
+- **Retirement condition → archived**: when the FMLM posterior-refinement
+  line (#162) concludes without adopting this pack as its base, or when
+  parity against the frozen oracle can no longer be kept green without core
+  changes, or when the pinned checkpoints become unavailable.
