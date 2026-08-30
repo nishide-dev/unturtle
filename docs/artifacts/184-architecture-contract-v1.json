@@ -385,7 +385,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "04304e55aeaeac6f"
+        "torch_cpu_rng_digest": "5d9e8b734cebf619"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -539,7 +539,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "e637f63221a6907e"
+        "torch_cpu_rng_digest": "dd094f83d3f121c2"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -693,7 +693,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "e3fc42c8bce77d5a"
+        "torch_cpu_rng_digest": "e71849cb4e72351e"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -847,7 +847,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "eb47597b22a85073"
+        "torch_cpu_rng_digest": "04c24269b86c586b"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1001,7 +1001,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "0ff6bcb17198f678"
+        "torch_cpu_rng_digest": "3bef4a69b67a8f61"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1155,7 +1155,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "ab49643ba2dcf309"
+        "torch_cpu_rng_digest": "3ec854c73323c1fc"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -2487,24 +2487,25 @@
       "args": {
         "case": "rng_contract"
       },
+      "caller_rng_untouched_by_wrap": true,
       "case": "rng_contract",
-      "classification": "known_defect",
+      "classification": "deterministic_by_random_state",
       "linked_issue": 188,
       "probe": "process-global",
       "random_state_argument": 3407,
       "run_with_preconsumption": {
-        "lora_A_digest": "24567fd211974e62",
-        "rng_after": "d34b456e9ad93b7e",
+        "lora_A_digest": "a14c5f86d60b1824",
+        "rng_after": "29d52a8cb4d7ea75",
         "rng_before": "29d52a8cb4d7ea75",
-        "rng_consumed": true
+        "rng_consumed": false
       },
       "run_without_preconsumption": {
-        "lora_A_digest": "058c7545c207e835",
-        "rng_after": "edb457f7b690f00e",
+        "lora_A_digest": "a14c5f86d60b1824",
+        "rng_after": "a57e8655b6988cb4",
         "rng_before": "a57e8655b6988cb4",
-        "rng_consumed": true
+        "rng_consumed": false
       },
-      "same_random_state_same_adapters": false,
+      "same_random_state_same_adapters": true,
       "status": "observed"
     },
     "sdpa": {
@@ -2546,7 +2547,7 @@
     }
   },
   "producer": {
-    "commit": "008c0d7505a997a1833d6ce266392f6d1ce7f965",
+    "commit": "12385e7bbc4ec0d8e514763c1e1290b12d430570",
     "dirty_paths": [],
     "import_root": "<repo>",
     "peft": "0.19.1",
@@ -4970,7 +4971,7 @@
     "unclaimed_hits": []
   },
   "schema_version": 1,
-  "semantic_digest": "816bd67aea327107426bcafaaecdb096f41c8060b28d910f7df1d2e8962ca1a7",
+  "semantic_digest": "1ddff908f9bd59052049315d32af861d34ab275c5e2101b16b33e21969551eb7",
   "verdicts": {
     "diffusion_gemma_class_swap": {
       "area": "DiffusionGemma runtime class swap",
@@ -5086,14 +5087,15 @@
       "area": "get_peft_model(random_state=...) contract",
       "row": {
         "evidence": {
-          "process_global_state": "rng_contract row: same random_state, different pre-RNG consumption, different lora_A digests"
+          "process_global_state": "rng_contract row: same random_state, different pre-RNG consumption, SAME lora_A digests; caller RNG untouched",
+          "rng_contract_classification": "deterministic_by_random_state"
         },
         "owner": "#184",
         "reason": null,
         "source": "characterization sections",
         "status": "observed"
       },
-      "verdict": "linked defect -> #188"
+      "verdict": "RESOLVED -> #188 (seeded inside a forked torch RNG)"
     },
     "installation_only_fast_path_success": {
       "area": "Installation-only fast-path success",
