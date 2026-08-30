@@ -781,6 +781,7 @@ SCAN_PATTERNS = (
     r"\.apply_o = ",
     r"\.apply_mlp = ",
     r"\.apply_wo = ",
+    r"__dict__\[\"o_proj\"\] = ",
     r"__dict__\.pop\(\"generate\"",
     r"os\.environ\[",
     r"\.generation_config = ",
