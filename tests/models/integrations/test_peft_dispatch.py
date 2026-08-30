@@ -132,7 +132,9 @@ class TestReportedCounts:
 
         monkeypatch.setattr(a2d_fast_paths, "patch_peft", lambda m, d, b: (1, 2, 3))
         monkeypatch.setattr(fdm, "_patch_dream_peft", lambda m, d, b: (4, 5, 6))
-        monkeypatch.setattr(fdm, "_patch_modernbert_peft", lambda m, d, b: (7, 8, 9))
+        from unturtle.models.backbones.modernbert import fast_paths as mb_fast_paths
+
+        monkeypatch.setattr(mb_fast_paths, "patch_peft", lambda m, d, b: (7, 8, 9))
 
         fdm.FastDiffusionModel.patch_peft_model(self._peft_like(model_type))
 

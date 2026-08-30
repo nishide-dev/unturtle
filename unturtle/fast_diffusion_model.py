@@ -64,7 +64,6 @@ from unturtle.models.backbones.dream.modeling_dream import (
 )
 from unturtle.models.backbones.modernbert._fast_forward import (
     ModernBertAttention_fast_forward,
-    _install_modernbert_stubs,
 )
 from unturtle.models.conversion.a2d.tiny_a2d._fast_forward import (
     TinyA2DAttention_fast_forward,
@@ -380,84 +379,6 @@ def _patch_llada_peft(
             )
 
     return n_qkv, n_o, n_mlp
-
-
-def _patch_modernbert_peft(
-    model: Any, lora_dropout: float, bias: Literal["none", "all", "lora_only"]
-) -> tuple[int, int, int]:
-    """Patch ModernBERT diffusion model with bidirectional fast attention and Triton O-projection.
-
-    ModernBERT uses fused ``Wqkv`` and ``Wo`` (attention) and ``Wi`` / ``Wo`` (MLP).
-    Unlike the LLaMA/Qwen2 path, QKV and MLP Triton kernels are **not** applied
-    in this initial implementation because the fused projection shapes differ from
-    what ``apply_lora_qkv`` / ``apply_lora_mlp_swiglu`` expect.
-
-    What IS patched:
-    - ``layer.attn.forward`` → ``ModernBertAttention_fast_forward`` (CUDA only)
-    - ``layer.attn.Wo``     → ``apply_lora_o`` when conditions allow (CUDA, no dropout, no bias)
-
-    Layer hierarchy:
-        PeftModel → base_model → model (DiffusionModernBertForMaskedLM)
-
-    Returns (n_qkv_patched=0, n_o_patched, n_mlp_patched=0).
-    """
-    n_o = 0
-
-    first_param = next(iter(model.parameters()), None)
-    on_cuda = first_param is not None and first_param.device.type == "cuda"
-
-    # A2DModernBertForMaskedLM wraps A2DModernBertModel in self.model
-    # Path: PeftModel → base_model → model (LM) → model (encoder) → layers
-    try:
-        layers = model.base_model.model.model.layers
-    except AttributeError:
-        _warn_once(
-            "FastDiffusionModel (ModernBERT): could not locate model.layers — "
-            "is this a valid A2DModernBertForMaskedLM PEFT model?"
-        )
-        return 0, 0, 0
-
-    # Install apply_wo stubs unconditionally (CPU + CUDA) so fast_forward
-    # and downstream code can dispatch through apply_wo regardless of device.
-    _install_modernbert_stubs(model)
-
-    if not on_cuda:
-        return 0, 0, 0
-
-    if lora_dropout == 0 and bias == "none":
-        _require_fast_lora()
-
-    for layer in layers:
-        attn = getattr(layer, "attn", None)
-        if attn is None:
-            continue
-
-        # Always inject bidirectional fast-forward on CUDA
-        attn.forward = types.MethodType(ModernBertAttention_fast_forward, attn)
-
-        if lora_dropout != 0 or bias != "none":
-            continue
-
-        # Wo output projection — apply Triton apply_lora_o when conditions met
-        wo = getattr(attn, "Wo", None)
-        if (
-            wo is not None
-            and hasattr(wo, "lora_A")
-            and _no_bias(wo)
-            and _no_lora_mag(wo)
-        ):
-            # Redirect apply_wo to Triton apply_lora_o.
-            # apply_lora_o reads self.o_proj — we alias Wo as o_proj for compatibility.
-            attn.o_proj = attn.Wo
-            attn.apply_wo = apply_lora_o
-            n_o += 1
-        elif wo is not None and not hasattr(wo, "lora_A"):
-            _warn_once(
-                "FastDiffusionModel (ModernBERT): Wo has no LoRA adapter — "
-                "is 'Wo' in target_modules?"
-            )
-
-    return 0, n_o, 0
 
 
 def _load_model_with_optional_4bit_fallback(
