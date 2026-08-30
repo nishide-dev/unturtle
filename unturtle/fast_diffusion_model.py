@@ -47,6 +47,7 @@ Usage::
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import functools
 import importlib
 import logging
@@ -94,6 +95,12 @@ from unturtle.models.integrations import (
     native_model_classes,
     post_load_class_swaps,
     supported_peft_model_types,
+)
+from unturtle.models.integrations.reports import (
+    LivenessReport,
+    LoadedModel,
+    PatchReport,
+    SupportResult,
 )
 from unturtle.save import patch_saving_functions, prepare_model_for_kbit_training
 
@@ -616,8 +623,60 @@ def _find_quantized_linear_modules(model: Any) -> list[tuple[str, Any]]:
     ]
 
 
+def _fast_path_support(model: Any) -> SupportResult:
+    """Three-valued dtype gate for the fused fast paths (#177, frozen by #184).
+
+    - ``supported``: no quantized weights, or the embedding dtype equals the
+      single dtype the quantized weights dequantize to;
+    - ``unsupported`` / ``incompatible_compute_dtype``: mixed or mismatched;
+    - ``unverified`` / ``input_embedding_unresolvable``: the structure could
+      not be inspected. Production stays fail-open here (per-layer gates still
+      apply) but the report says so — never ``supported``.
+    """
+    quantized = _find_quantized_linear_modules(model)
+    if not quantized:
+        return SupportResult("supported", details={"quantized_modules": 0})
+    quant_dtypes = {
+        str(getattr(module.weight.quant_state, "dtype", None))
+        for _, module in quantized
+    }
+    quant_dtypes.discard("None")
+    if not quant_dtypes:
+        return SupportResult(
+            "unverified",
+            reason="quant_state_dtype_unreadable",
+            details={"quantized_modules": len(quantized)},
+        )
+    try:
+        get_embeddings = getattr(model, "get_input_embeddings", None)
+        embedding = get_embeddings() if callable(get_embeddings) else None
+    except Exception:  # noqa: BLE001 — e.g. NotImplementedError on exotic models
+        embedding = None
+    weight = getattr(embedding, "weight", None)
+    if weight is None:
+        return SupportResult(
+            "unverified",
+            reason="input_embedding_unresolvable",
+            details={"quant_dtypes": sorted(quant_dtypes)},
+        )
+    details = {
+        "embedding_dtype": str(weight.dtype),
+        "quant_dtypes": sorted(quant_dtypes),
+        "quantized_modules": len(quantized),
+    }
+    if len(quant_dtypes) != 1 or str(weight.dtype) not in quant_dtypes:
+        return SupportResult(
+            "unsupported", reason="incompatible_compute_dtype", details=details
+        )
+    return SupportResult("supported", details=details)
+
+
 def _fast_path_dtype_incompatibility(model: Any) -> str | None:
     """Typed reason when no fast path can execute on this model, else ``None``.
+
+    Compatibility adapter over :func:`_fast_path_support`: only an
+    ``unsupported`` verdict blocks patching; ``unverified`` stays fail-open
+    (behavior unchanged from #177) and is surfaced by the PatchReport instead.
 
     The fused LoRA paths (unsloth ``matmul_lora``) multiply the activation
     directly against the dequantized quantized weight, and the fast attention
@@ -642,26 +701,8 @@ def _fast_path_dtype_incompatibility(model: Any) -> str | None:
     in the patchers still apply and a false ``incompatible`` verdict would
     silently disable every fast path on a healthy model.
     """
-    quantized = _find_quantized_linear_modules(model)
-    if not quantized:
-        return None
-    quant_dtypes = {
-        getattr(module.weight.quant_state, "dtype", None) for _, module in quantized
-    }
-    quant_dtypes.discard(None)
-    if not quant_dtypes:
-        return None
-    try:
-        get_embeddings = getattr(model, "get_input_embeddings", None)
-        embedding = get_embeddings() if callable(get_embeddings) else None
-    except Exception:  # noqa: BLE001 — e.g. NotImplementedError on exotic models
-        return None
-    weight = getattr(embedding, "weight", None)
-    if weight is None:
-        return None
-    if len(quant_dtypes) != 1 or weight.dtype not in quant_dtypes:
-        return "incompatible_compute_dtype"
-    return None
+    support = _fast_path_support(model)
+    return support.reason if support.status == "unsupported" else None
 
 
 def _dequantize_merged_model_(model: Any) -> Any:
@@ -1078,15 +1119,55 @@ def _load_model_auto(
     loaders when unsloth is unavailable or the load fails.  Kept as a single
     module-level entry point for callers and tests that patch it by name.
     """
+    model, tokenizer, path = _load_model_auto_traced(
+        model_name, load_kwargs, trust_remote_code, load_in_4bit=load_in_4bit
+    )
+    _LOAD_PATH_TRACE.set(path)
+    return model, tokenizer
+
+
+#: Load path taken by the most recent `_load_model_auto` call in this context.
+#: `from_pretrained_with_report` reads it right after calling the module-level
+#: seam (which tests monkeypatch by name); a replaced loader that does not
+#: report leaves the default, so the report says "unknown" rather than guessing.
+_LOAD_PATH_TRACE: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "unturtle_load_path", default="unknown"
+)
+
+
+def _load_model_auto_traced(
+    model_name: str,
+    load_kwargs: dict,
+    trust_remote_code: bool,
+    *,
+    load_in_4bit: bool = False,
+) -> tuple[Any, Any | None, str]:
+    """:func:`_load_model_auto` plus the load path taken (``native`` /
+    ``upstream`` / ``auto``). Same resolution order, same module-level seams."""
     model = _load_native(model_name, load_kwargs, trust_remote_code)
     if model is not None:
-        return model, None
+        return model, None, "native"
 
     result = _load_via_fastmodel(model_name, load_kwargs, load_in_4bit=load_in_4bit)
     if result is not None:
-        return result  # (model, tokenizer)
+        model, tokenizer = result
+        return model, tokenizer, "upstream"
 
-    return _load_via_automodel(model_name, load_kwargs), None
+    return _load_via_automodel(model_name, load_kwargs), None, "auto"
+
+
+def _integration_name_for(model: Any) -> str | None:
+    """Family name for a loaded (possibly PEFT-wrapped) model, read-only."""
+    model_type = getattr(getattr(model, "config", None), "model_type", None)
+    from unturtle.models.integrations.registry import iter_integrations
+
+    for integration in iter_integrations():
+        if (
+            model_type in integration.model_types
+            or model_type in integration.peft_model_types
+        ):
+            return integration.name
+    return None
 
 
 def _load_tokenizer(
@@ -1161,6 +1242,219 @@ def _patch_for_diffusion(model: Any, max_seq_length: int) -> Any:
 
 
 # ---------------------------------------------------------------------------
+# Observed fast-path installation and liveness (#185 PR 0 — descriptive only)
+# ---------------------------------------------------------------------------
+
+
+def _fast_callables() -> dict[str, tuple[Any, ...]]:
+    """The fast callables a report recognises, by kind (None-safe when the
+    kernels failed to import)."""
+    qkv = tuple(f for f in (apply_lora_qkv, apply_lora_qkv_with_bias) if f is not None)
+    o = tuple(f for f in (apply_lora_o,) if f is not None)
+    mlp = tuple(f for f in (apply_lora_mlp_swiglu,) if f is not None)
+    attention = (
+        DreamAttention_fast_forward,
+        TinyA2DAttention_fast_forward,
+        ModernBertAttention_fast_forward,
+    )
+    return {"qkv": qkv, "o": o, "mlp": mlp, "attention_forward": attention}
+
+
+def _has_lora(*modules: Any) -> bool:
+    return all(hasattr(m, "lora_A") for m in modules if m is not None)
+
+
+def _observe_fast_paths(model: Any) -> dict[str, dict[str, tuple[str, ...]]]:
+    """Which fast callables are INSTALLED on which modules — by identity.
+
+    Observation, not intention: a callable is ``applied`` only when the module
+    attribute *is* one of the known fast implementations. ``skipped`` lists
+    modules that carry the standard stub / class implementation although they
+    are shaped for the kind (LoRA present on the projections). Installation is
+    still not liveness — see :func:`probe_liveness`.
+    """
+    fast = _fast_callables()
+    applied: dict[str, list[str]] = {k: [] for k in fast}
+    applied["rope"] = []
+    skipped: dict[str, list[str]] = {k: [] for k in applied}
+    for name, module in model.named_modules():
+        own = module.__dict__
+        if "apply_qkv" in own:
+            (applied if own["apply_qkv"] in fast["qkv"] else skipped)["qkv"].append(
+                name
+            )
+        if "apply_o" in own:
+            (applied if own["apply_o"] in fast["o"] else skipped)["o"].append(name)
+        if "apply_wo" in own:
+            (applied if own["apply_wo"] in fast["o"] else skipped)["o"].append(name)
+        if "apply_mlp" in own:
+            (applied if own["apply_mlp"] in fast["mlp"] else skipped)["mlp"].append(
+                name
+            )
+        instance_forward = own.get("forward")
+        func = getattr(instance_forward, "__func__", None)
+        if func in fast["attention_forward"]:
+            applied["attention_forward"].append(name)
+        elif "apply_qkv" in own and instance_forward is None:
+            skipped["attention_forward"].append(name)
+        if func in fast["mlp"]:
+            applied["mlp"].append(name)
+        elif (
+            instance_forward is None
+            and hasattr(module, "down_proj")
+            and hasattr(module, "up_proj")
+            and _has_lora(module.down_proj, module.up_proj)
+            and "apply_mlp" not in own
+        ):
+            skipped["mlp"].append(name)
+        if getattr(module, "_fast_rope_patched", False):
+            applied["rope"].append(name)
+    return {
+        "applied": {k: tuple(v) for k, v in applied.items() if v},
+        "skipped": {k: tuple(v) for k, v in skipped.items() if v},
+    }
+
+
+def probe_liveness(
+    model: Any,
+    inputs: dict[str, Any],
+    *,
+    backward: bool = False,
+    applied: dict[str, tuple[str, ...]] | None = None,
+) -> LivenessReport:
+    """Prove which installed fast callables actually EXECUTE.
+
+    Temporarily wraps every applied target on its own module with a counting
+    wrapper (``functools.wraps`` keeps the sampler-visible signature), runs one
+    forward with ``inputs`` (and a scalar backward when ``backward=True``),
+    then restores the originals. Counters live on the very module/kind the
+    report lists, so a counter on the wrong module cannot vouch for another.
+    ``live`` requires every applied target to run at least once; backward
+    liveness additionally requires every LoRA parameter under an applied
+    target to receive a gradient. The model's state (mode, grads) is restored.
+    """
+
+    if applied is None:
+        applied = _observe_fast_paths(model)["applied"]
+    modules = dict(model.named_modules())
+    counts: dict[str, int] = {}
+    restore: list[tuple[Any, str, Any]] = []
+    attr_for_kind = {
+        "qkv": "apply_qkv",
+        "o": None,
+        "mlp": None,
+        "attention_forward": "forward",
+    }
+
+    def install(module: Any, attr: str, key: str, bound: bool) -> None:
+        original = module.__dict__[attr]
+        counts[key] = 0
+        if bound:  # MethodType(func, module)
+            func = original.__func__
+
+            @functools.wraps(func)
+            def counting(self, *args, **kwargs):
+                counts[key] += 1
+                return func(self, *args, **kwargs)
+
+            module.__dict__[attr] = types.MethodType(counting, module)
+        else:  # plain function called as attr(self, X)
+
+            @functools.wraps(original)
+            def counting(*args, **kwargs):
+                counts[key] += 1
+                return original(*args, **kwargs)
+
+            module.__dict__[attr] = counting
+        restore.append((module, attr, original))
+
+    for kind, paths in applied.items():
+        for path in paths:
+            module = modules.get(path)
+            if module is None:
+                counts[f"{path}:{kind}"] = 0
+                continue
+            key = f"{path}:{kind}"
+            own = module.__dict__
+            if kind == "qkv" and "apply_qkv" in own:
+                install(module, "apply_qkv", key, bound=False)
+            elif kind == "o" and "apply_o" in own:
+                install(module, "apply_o", key, bound=False)
+            elif kind == "o" and "apply_wo" in own:
+                install(module, "apply_wo", key, bound=False)
+            elif kind == "mlp" and "apply_mlp" in own:
+                install(module, "apply_mlp", key, bound=False)
+            elif kind in ("mlp", "attention_forward") and "forward" in own:
+                install(module, "forward", key, bound=True)
+            else:
+                counts[key] = 0  # nothing to count: cannot be live
+    del attr_for_kind
+
+    was_training = model.training
+    backward_counts: dict[str, int] | None = None
+    try:
+        if backward:
+            model.train()
+            model.zero_grad(set_to_none=True)
+            output = model(**inputs)
+            logits = output.logits if hasattr(output, "logits") else output
+            logits.float().square().mean().backward()
+            backward_counts = {}
+            for kind, paths in applied.items():
+                for path in paths:
+                    module = modules.get(path)
+                    if module is None:
+                        backward_counts[f"{path}:{kind}"] = 0
+                        continue
+                    backward_counts[f"{path}:{kind}"] = sum(
+                        1
+                        for n, param in module.named_parameters()
+                        if "lora_" in n and param.grad is not None
+                    )
+            model.zero_grad(set_to_none=True)
+        else:
+            with torch.no_grad():
+                model(**inputs)
+    finally:
+        for module, attr, original in restore:
+            module.__dict__[attr] = original
+        model.train(was_training)
+
+    forward_live = bool(counts) and all(v > 0 for v in counts.values())
+    backward_live = (
+        None
+        if backward_counts is None
+        else bool(backward_counts) and all(v > 0 for v in backward_counts.values())
+    )
+    return LivenessReport(
+        forward=dict(counts),
+        backward=backward_counts,
+        forward_live=forward_live,
+        backward_live=backward_live,
+        live=forward_live and (backward_live is not False),
+        probe={
+            "input_keys": sorted(inputs),
+            "backward_requested": backward,
+            "targets": len(counts),
+        },
+    )
+
+
+def _requested_kinds(target_modules: Any, on_cuda: bool) -> tuple[str, ...]:
+    names = set(target_modules or ())
+    requested: list[str] = []
+    if names & {"q_proj", "k_proj", "v_proj", "Wqkv", "att_proj"}:
+        requested.append("qkv")
+    if names & {"o_proj", "attn_out", "Wo"}:
+        requested.append("o")
+    if names & {"gate_proj", "up_proj", "down_proj", "ff_proj", "ff_out", "Wi"}:
+        requested.append("mlp")
+    if on_cuda:
+        requested.append("attention_forward")
+    return tuple(requested)
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -1179,7 +1473,33 @@ class FastDiffusionModel:
         token: Optional[str] = None,
         **kwargs: Any,
     ) -> tuple[Any, Any]:
-        """Load a dLLM model (optionally 4-bit quantised).
+        """Load a dLLM model (optionally 4-bit quantised). Returns
+        ``(model, tokenizer)`` — the compatibility shape of
+        :meth:`from_pretrained_with_report`, whose objects are returned as-is.
+        """
+        return FastDiffusionModel.from_pretrained_with_report(
+            model_name,
+            max_seq_length=max_seq_length,
+            dtype=dtype,
+            load_in_4bit=load_in_4bit,
+            model_class=model_class,
+            trust_remote_code=trust_remote_code,
+            token=token,
+            **kwargs,
+        ).as_tuple()
+
+    @staticmethod
+    def from_pretrained_with_report(
+        model_name: str,
+        max_seq_length: int = 2048,
+        dtype: Optional[torch.dtype] = None,
+        load_in_4bit: bool = True,
+        model_class: Any = None,
+        trust_remote_code: bool = True,
+        token: Optional[str] = None,
+        **kwargs: Any,
+    ) -> LoadedModel:
+        """Load a dLLM model (optionally 4-bit quantised) with provenance.
 
         Does NOT call unsloth's ``pre_patch()`` — that would inject causal
         fast-forward functions, which is wrong for bidirectional dLLMs.
@@ -1294,7 +1614,13 @@ class FastDiffusionModel:
             _logger.info(
                 "FastDiffusionModel: PEFT adapter loaded from %r.", str(_local)
             )
-            return model, tokenizer
+            return LoadedModel(
+                model=model,
+                tokenizer=tokenizer,
+                integration=_integration_name_for(model),
+                load_path="adapter",
+                details={"base_model": _base_model_id},
+            )
 
         # --- dtype auto-detection ---
         if dtype is None:
@@ -1348,17 +1674,22 @@ class FastDiffusionModel:
         # --- Resolve model class (explicit override → native dLLM → FastModel → Auto*) ---
         fm_tokenizer: Any | None = None
         if model_class is None:
+            _LOAD_PATH_TRACE.set("unknown")
             model, fm_tokenizer = _load_model_auto(
                 model_name,
                 load_kwargs,
                 trust_remote_code,
                 load_in_4bit=load_in_4bit and not is_on_cpu,
             )
+            load_path = _LOAD_PATH_TRACE.get()
         else:
             model = model_class.from_pretrained(model_name, **load_kwargs)
+            load_path = "explicit_class"
 
         # --- Post-load class swap (e.g. DiffusionGemma wrapper) ---
+        class_before = type(model)
         _apply_post_load_class_swap(model, model_name=model_name)
+        class_swapped = type(model) is not class_before
 
         # --- Diffusion patch (shared across load paths) ---
         _patch_for_diffusion(model, max_seq_length)
@@ -1370,10 +1701,21 @@ class FastDiffusionModel:
             else _load_tokenizer(model_name, trust_remote_code, token)
         )
 
-        return model, tokenizer
+        return LoadedModel(
+            model=model,
+            tokenizer=tokenizer,
+            integration=_integration_name_for(model),
+            load_path=load_path,
+            details={
+                "class_swapped": class_swapped,
+                "model_class": f"{type(model).__module__}.{type(model).__qualname__}",
+                "quantized": bool(_find_quantized_linear_modules(model)),
+                "tokenizer_from_fastmodel": fm_tokenizer is not None,
+            },
+        )
 
     @staticmethod
-    def get_peft_model(
+    def get_peft_model_with_report(
         model: Any,
         r: int = 16,
         target_modules: Optional[list[str]] = None,
@@ -1383,8 +1725,9 @@ class FastDiffusionModel:
         use_gradient_checkpointing: str | bool = "unsloth",
         random_state: int | None = 3407,
         **kwargs: Any,
-    ) -> Any:
-        """Apply LoRA and patch with unsloth's Triton kernels.
+    ) -> tuple[Any, PatchReport]:
+        """Apply LoRA and patch with unsloth's Triton kernels; return the model
+        AND its :class:`PatchReport`.
 
         Uses ``TaskType.FEATURE_EXTRACTION`` (not CAUSAL_LM) to avoid
         ``PeftModelForCausalLM`` type guards in unsloth's ``patch_peft_model``.
@@ -1465,9 +1808,42 @@ class FastDiffusionModel:
         model = _wrap_with_peft_seeded(model, lora_config, random_state)
         model._unturtle_gradient_checkpointing_mode = use_gradient_checkpointing
 
-        FastDiffusionModel.patch_peft_model(model, lora_dropout=lora_dropout, bias=bias)
+        report = FastDiffusionModel.patch_peft_model_with_report(
+            model, lora_dropout=lora_dropout, bias=bias
+        )
         patch_saving_functions(model)
 
+        return model, report
+
+    @staticmethod
+    def get_peft_model(
+        model: Any,
+        r: int = 16,
+        target_modules: Optional[list[str]] = None,
+        lora_alpha: int = 16,
+        lora_dropout: float = 0,
+        bias: Literal["none", "all", "lora_only"] = "none",
+        use_gradient_checkpointing: str | bool = "unsloth",
+        random_state: int | None = 3407,
+        **kwargs: Any,
+    ) -> Any:
+        """Apply LoRA and patch with unsloth's Triton kernels.
+
+        Compatibility entry point: identical behavior to
+        :meth:`get_peft_model_with_report`, report discarded — the returned
+        object IS the one the report path built.
+        """
+        model, _report = FastDiffusionModel.get_peft_model_with_report(
+            model,
+            r=r,
+            target_modules=target_modules,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            bias=bias,
+            use_gradient_checkpointing=use_gradient_checkpointing,
+            random_state=random_state,
+            **kwargs,
+        )
         return model
 
     @staticmethod
@@ -1478,12 +1854,32 @@ class FastDiffusionModel:
     ) -> None:
         """Inject Triton LoRA kernels and bidirectional attention into a PEFT model.
 
-        Safe to call again after adding new adapters.
+        Safe to call again after adding new adapters. Compatibility entry point:
+        identical behavior to :meth:`patch_peft_model_with_report`, report
+        discarded.
 
         Args:
             model:          PEFT-wrapped dLLM model.
             lora_dropout:   Must match the LoRA config used when wrapping.
             bias:           Must match the LoRA config used when wrapping.
+        """
+        FastDiffusionModel.patch_peft_model_with_report(
+            model, lora_dropout=lora_dropout, bias=bias
+        )
+
+    @staticmethod
+    def patch_peft_model_with_report(
+        model: Any,
+        lora_dropout: float = 0,
+        bias: Literal["none", "all", "lora_only"] = "none",
+        *,
+        requested: tuple[str, ...] | None = None,
+    ) -> PatchReport:
+        """:meth:`patch_peft_model` plus a :class:`PatchReport` describing what
+        was requested, applied (observed by callable identity), skipped, or
+        withheld as a typed fallback. Liveness is NOT claimed here — call
+        :func:`probe_liveness` (or ``FastDiffusionModel.probe_liveness``) with
+        real inputs to prove execution.
         """
         model_type = model.config.model_type
 
@@ -1506,28 +1902,69 @@ class FastDiffusionModel:
                 f"the {integration.name!r} patcher could not be imported."
             )
 
-        incompatibility = _fast_path_dtype_incompatibility(model)
+        support = _fast_path_support(model)
+        incompatibility = support.reason if support.status == "unsupported" else None
+        warnings_seen: list[str] = []
+        fallback: str | None = None
         if incompatibility is not None:
             # All-or-nothing: a model whose hidden states cannot feed the fused
             # kernels must not end up with SOME fast hooks installed (#177) —
             # the pre-fix failure mode was exactly a fully-hooked model whose
             # first forward raised. The standard PEFT path handles the dtype
             # itself (bnb casts activations to the compute dtype internally).
-            _warn_once(
+            fallback = incompatibility
+            message = (
                 "FastDiffusionModel: skipping ALL fast-path patching "
                 f"(reason={incompatibility}): the model's hidden-state dtype "
                 "does not match its quantization compute dtype, so neither the "
                 "fused LoRA kernels nor the fast attention forwards can "
                 "execute (#177). The standard PEFT path is retained."
             )
+            warnings_seen.append(message)
+            _warn_once(message)
         else:
             counts = patcher(model, lora_dropout, bias)
             if integration.peft_report is not None:
-                _warn_once(integration.peft_report(model, counts))
+                message = integration.peft_report(model, counts)
+                warnings_seen.append(message)
+                _warn_once(message)
 
         # Propagate max_seq_length through the wrapped model hierarchy
         if hasattr(model, "max_seq_length"):
             _propagate_max_seq_length(model, model.max_seq_length)
+
+        first_param = next(iter(model.parameters()), None)
+        on_cuda = first_param is not None and first_param.device.type == "cuda"
+        observed = _observe_fast_paths(model)
+        if requested is None:
+            peft_config = getattr(model, "peft_config", {}) or {}
+            target_modules: set[str] = set()
+            for config in peft_config.values():
+                targets = getattr(config, "target_modules", None) or ()
+                target_modules |= (
+                    set(targets) if not isinstance(targets, str) else set()
+                )
+            requested = _requested_kinds(target_modules, on_cuda)
+        return PatchReport(
+            family=integration.name,
+            model_type=str(model_type),
+            support=support,
+            requested=tuple(requested),
+            applied=observed["applied"],
+            skipped=observed["skipped"] if fallback is None else {},
+            fallback=fallback,
+            applicability={
+                "on_cuda": on_cuda,
+                "lora_dropout": lora_dropout,
+                "bias": bias,
+                "gate": support.to_dict(),
+            },
+            liveness=None,
+            warnings=tuple(warnings_seen),
+        )
+
+    #: Liveness probe re-exported on the facade (see module-level function).
+    probe_liveness = staticmethod(probe_liveness)
 
     @staticmethod
     def for_inference(model: Any) -> Any:
