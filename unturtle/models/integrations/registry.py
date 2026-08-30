@@ -94,24 +94,11 @@ def _diffusion_gemma_wrapper() -> Any:
     return UnturtleDiffusionGemmaForBlockDiffusion
 
 
-# --- PEFT patchers ---------------------------------------------------------
+# --- Fast-path providers (#185) ---------------------------------------------
 #
-# The patch functions still live in ``fast_diffusion_model`` because they are
-# loader concerns that reach into kernel modules.  Resolving them lazily is
-# what keeps the dependency one-directional: this module never imports the
-# loader at import time, only when a lookup actually needs the function.
-
-
-def _loader_attr(name: str) -> Any:
-    """Read a patcher off the loader module *at call time*.
-
-    ``getattr`` rather than ``from ... import``: several tests monkeypatch
-    ``fast_diffusion_model._patch_*_peft`` by attribute name, and a
-    value-binding import would capture the original and silently ignore them.
-    """
-    import unturtle.fast_diffusion_model as loader
-
-    return getattr(loader, name)
+# Every family's PEFT patching lives in its own provider module. The resolvers
+# are zero-arg and import lazily, keeping this module free of backbone and
+# kernel imports; the registry holds NO per-family patch or report helpers.
 
 
 def _a2d_fast_paths() -> Any:
@@ -128,8 +115,11 @@ def _dream_fast_paths() -> Any:
     return fast_paths
 
 
-def _llada_patcher() -> Any:
-    return _loader_attr("_patch_llada_peft")
+def _llada_fast_paths() -> Any:
+    """The LLaDA provider module (#185) — imported only when a lookup needs it."""
+    from unturtle.models.backbones.llada import fast_paths
+
+    return fast_paths
 
 
 def _modernbert_fast_paths() -> Any:
@@ -137,27 +127,6 @@ def _modernbert_fast_paths() -> Any:
     from unturtle.models.backbones.modernbert import fast_paths
 
     return fast_paths
-
-
-def _n_layers(model: Any) -> int:
-    return len(model.base_model.model.model.layers)
-
-
-def _llada_report(model: Any, counts: tuple[int, int, int]) -> str:
-    n_qkv, n_o, _n_mlp = counts
-    # LLaDA nests differently from the Llama-shaped families: blocks live under
-    # transformer, at a depth that varies with how the model was wrapped.
-    inner = model.base_model.model
-    transformer = (
-        inner.model.transformer
-        if hasattr(inner, "model") and hasattr(inner.model, "transformer")
-        else getattr(inner, "transformer", None)
-    )
-    n_blocks = len(transformer.blocks) if transformer is not None else 0
-    return (
-        f"FastDiffusionModel (LLaDA) patched {n_blocks} blocks with "
-        f"{n_qkv} QKV blocks and {n_o} O (attn_out) blocks."
-    )
 
 
 def _builtin_integrations() -> list[BackboneIntegration]:
@@ -168,8 +137,7 @@ def _builtin_integrations() -> list[BackboneIntegration]:
             model_types=("llada",),
             _native_resolver=_llada,
             peft_model_types=("llada",),
-            _peft_patcher=_llada_patcher,
-            peft_report=_llada_report,
+            _fast_paths_resolver=_llada_fast_paths,
             capabilities=frozenset({"masked_generation", "block_decode"}),
         ),
         BackboneIntegration(

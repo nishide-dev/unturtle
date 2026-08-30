@@ -423,14 +423,11 @@ def _tiny_llada():
     return LLaDAModelLM(config).eval()
 
 
-def test_rope_targets_are_counted_and_llada_qkv_o_are_install_only():
-    """LLaDA installs a bound fast rope forward: the probe must count it (otherwise
-    every LLaDA report is forced to live=False for the wrong reason).
-
-    It also records a real defect the report exists to expose: the LLaDA patcher
-    installs ``block.apply_qkv`` / ``block.apply_o`` but ``LLaDALlamaBlock.forward``
-    never calls them, so they are installed-not-live. PR 0 reports that faithfully;
-    making them live is family-extraction work, not a PR 0 change."""
+def test_rope_targets_are_counted_and_llada_qkv_o_are_now_live():
+    """LLaDA installs a bound fast rope forward: the probe counts it. Since the
+    #185 LLaDA wiring, ``apply_qkv`` / ``apply_o`` are dispatched by the real
+    forward as well — the report's applied hooks must ALL prove live (this test
+    froze the installed-not-live defect until the wiring PR fixed it)."""
     if not torch.cuda.is_available():
         pytest.skip("fast paths need CUDA")
     from unturtle.fast_diffusion_model import FastDiffusionModel, probe_liveness
@@ -451,10 +448,10 @@ def test_rope_targets_are_counted_and_llada_qkv_o_are_install_only():
     by_kind = {}
     for key, count in liveness.forward.items():
         by_kind.setdefault(key.rsplit(":", 1)[1], []).append(count)
-    assert all(v >= 1 for v in by_kind["rope"]), by_kind  # rope executes and is counted
-    assert all(v == 0 for v in by_kind["qkv"]), by_kind  # installed, never called
-    assert all(v == 0 for v in by_kind["o"]), by_kind
-    assert report.is_fast is True and liveness.live is False  # installed != live
+    assert all(v >= 1 for v in by_kind["rope"]), by_kind
+    assert all(v >= 1 for v in by_kind["qkv"]), by_kind  # wired live (#185)
+    assert all(v >= 1 for v in by_kind["o"]), by_kind
+    assert report.is_fast is True and liveness.live is True
 
 
 def test_probe_restores_originals_when_one_attr_is_installed_twice(cuda_dream_report):

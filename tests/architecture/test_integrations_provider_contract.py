@@ -18,6 +18,7 @@ ARTIFACT = (
 A2D_PROVIDER = "unturtle.models.conversion.a2d.tiny_a2d.fast_paths"
 MODERNBERT_PROVIDER = "unturtle.models.backbones.modernbert.fast_paths"
 DREAM_PROVIDER = "unturtle.models.backbones.dream.fast_paths"
+LLADA_PROVIDER = "unturtle.models.backbones.llada.fast_paths"
 A2D_FAMILIES = ("tiny-a2d-llama", "tiny-a2d-qwen2", "tiny-a2d-qwen3")
 
 
@@ -40,13 +41,19 @@ def test_tiny_a2d_declares_its_patcher_through_the_provider(integrations, family
     assert row["fast_paths"]["target"] == A2D_PROVIDER, row
 
 
-@pytest.mark.parametrize(
-    "family,provider",
-    [("modernbert-diffusion", MODERNBERT_PROVIDER), ("dream", DREAM_PROVIDER)],
-)
-def test_backbone_families_declare_their_patcher_through_the_provider(
+ALL_FAMILY_PROVIDERS = [(f, A2D_PROVIDER) for f in A2D_FAMILIES] + [
+    ("modernbert-diffusion", MODERNBERT_PROVIDER),
+    ("dream", DREAM_PROVIDER),
+    ("llada", LLADA_PROVIDER),
+]
+
+
+@pytest.mark.parametrize("family,provider", ALL_FAMILY_PROVIDERS)
+def test_every_fast_path_family_resolves_via_its_provider(
     integrations, family, provider
 ):
+    """Series-end contract (#185): every fast-path family declares its patcher
+    through a provider — none patches through the façade any more."""
     row = integrations[family]
     assert row["peft_patcher"]["declared"] is True, row
     assert row["peft_patcher"]["resolved"] is True, row
@@ -56,25 +63,57 @@ def test_backbone_families_declare_their_patcher_through_the_provider(
     assert row["fast_paths"]["target"] == provider, row
 
 
-@pytest.mark.parametrize("family", ("llada",))
-def test_unextracted_families_still_patch_through_the_facade(integrations, family):
-    row = integrations[family]
-    assert row["peft_patcher"]["declared"] is True, row
-    assert row["peft_patcher"]["via"] == "_peft_patcher", row
-    assert row["peft_patcher"]["target"].startswith("unturtle.fast_diffusion_model."), (
-        row
-    )
-    assert row["fast_paths"] == {"declared": False}, row
+def test_no_family_row_patches_through_the_facade(integrations):
+    """No integration row may report a raw-field (`_peft_patcher`) patcher."""
+    for family, row in integrations.items():
+        patcher = row["peft_patcher"]
+        if patcher.get("declared"):
+            assert patcher.get("via") == "fast_paths", (family, patcher)
+
+
+def test_facade_and_registry_hold_no_family_helpers():
+    """Series-end shrink gate: zero family patchers in the façade, zero
+    family patch/report helpers in the registry, zero provider→façade imports."""
+    import ast
+    import importlib
+    import inspect
+
+    from unturtle import fast_diffusion_model as fdm
+    from unturtle.models.integrations import registry as registry_mod
+
+    remaining = [n for n in dir(fdm) if n.startswith("_patch_") and n.endswith("_peft")]
+    assert remaining == [], remaining
+    helpers = [
+        n
+        for n in dir(registry_mod)
+        if n.endswith("_patcher") or n.endswith("_report") or n == "_loader_attr"
+    ]
+    assert helpers == [], helpers
+    for _, provider in ALL_FAMILY_PROVIDERS:
+        module = importlib.import_module(provider)
+        for name, value in vars(module).items():
+            assert getattr(value, "__module__", "") != fdm.__name__, (provider, name)
+        tree = ast.parse(inspect.getsource(module))
+        imported = {
+            node.module
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module
+        } | {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        }
+        assert not any(
+            m.startswith("unturtle.fast_diffusion_model") for m in imported
+        ), (provider, imported)
 
 
 def test_artifact_matches_the_live_registry():
     """The frozen rows agree with what the registry resolves in this process."""
     from unturtle.models.integrations import find_peft_integration
 
-    for family, provider in [(f, A2D_PROVIDER) for f in A2D_FAMILIES] + [
-        ("modernbert-diffusion", MODERNBERT_PROVIDER),
-        ("dream", DREAM_PROVIDER),
-    ]:
+    for family, provider in ALL_FAMILY_PROVIDERS:
         integration = find_peft_integration(family)
         patcher = integration.peft_patcher
         assert (

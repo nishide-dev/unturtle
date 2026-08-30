@@ -607,7 +607,7 @@ def test_central_no_longer_owns_the_family():
 
     assert not hasattr(fdm, "_patch_dream_peft")
     remaining = [n for n in dir(fdm) if n.startswith("_patch_") and n.endswith("_peft")]
-    assert sorted(remaining) == ["_patch_llada_peft"]
+    assert sorted(remaining) == []  # series complete: zero family patchers
     for model_type in ("dream", "Dream"):
         integration = find_peft_integration(model_type)
         assert integration.fast_paths is fast_paths, model_type
