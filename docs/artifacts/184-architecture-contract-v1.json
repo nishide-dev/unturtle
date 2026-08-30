@@ -385,7 +385,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "7d72bdc936ac943a"
+        "torch_cpu_rng_digest": "42b622c3e92f867a"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -539,7 +539,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "6147431b809f7084"
+        "torch_cpu_rng_digest": "6f3a511a7c35be9c"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -693,7 +693,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "102a5c3be98e3c03"
+        "torch_cpu_rng_digest": "7623f2dd344c586c"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -847,7 +847,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "868f9f5d4381b9a3"
+        "torch_cpu_rng_digest": "67d744a8cec3ffd8"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1001,7 +1001,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "9cfbfb8002bbab41"
+        "torch_cpu_rng_digest": "029bae6e09e69f8c"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1155,7 +1155,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "65b41f30bc2cd680"
+        "torch_cpu_rng_digest": "3303c4f706db6a37"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -2547,7 +2547,7 @@
     }
   },
   "producer": {
-    "commit": "869d1b2c9ef8f086c2f69a9d4fac04d9323ff6c7",
+    "commit": "a1152a148451c8061aebe019357b4abe48fc8c11",
     "dirty_paths": [],
     "import_root": "<repo>",
     "peft": "0.19.1",
@@ -4191,7 +4191,7 @@
         "classification": "EXTRACT -> #185",
         "idempotent": "yes",
         "linked_issue": null,
-        "liveness_evidence": "LLaDA fast-path tests",
+        "liveness_evidence": "NOT LIVE \u2014 installed but LLaDALlamaBlock.forward never calls it; probe_liveness counters stay 0 (tests/test_patch_report_contract.py::test_rope_targets_are_counted_and_llada_qkv_o_are_install_only)",
         "mutation_id": "llada_qkv_fast_hook",
         "owner": "_patch_llada_peft",
         "reversible": "reassign",
@@ -4226,7 +4226,7 @@
         "classification": "EXTRACT -> #185",
         "idempotent": "yes",
         "linked_issue": null,
-        "liveness_evidence": "LLaDA fast-path tests",
+        "liveness_evidence": "NOT LIVE \u2014 installed but LLaDALlamaBlock.forward never calls it; probe_liveness counters stay 0 (tests/test_patch_report_contract.py::test_rope_targets_are_counted_and_llada_qkv_o_are_install_only)",
         "mutation_id": "llada_o_fast_hook",
         "owner": "_patch_llada_peft",
         "reversible": "reassign",
@@ -5006,7 +5006,7 @@
     "unclaimed_hits": []
   },
   "schema_version": 1,
-  "semantic_digest": "c6280c53eca2340e6ed21f94e5c959320cde98c2ca7304f3221538e1092dcc61",
+  "semantic_digest": "08afd898b86582aa648e77994cfc7232a2907023c86e753edf438ccfe3554a30",
   "verdicts": {
     "diffusion_gemma_class_swap": {
       "area": "DiffusionGemma runtime class swap",
