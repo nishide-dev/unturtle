@@ -361,7 +361,7 @@
           "unsloth_zoo",
           "unturtle"
         ],
-        "tracked_count": 2889
+        "tracked_count": 2890
       },
       "modules_before": {
         "top_level": [],
@@ -385,7 +385,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "5d9e8b734cebf619"
+        "torch_cpu_rng_digest": "42b622c3e92f867a"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -515,7 +515,7 @@
           "unsloth_zoo",
           "unturtle"
         ],
-        "tracked_count": 2889
+        "tracked_count": 2890
       },
       "modules_before": {
         "top_level": [],
@@ -539,7 +539,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "dd094f83d3f121c2"
+        "torch_cpu_rng_digest": "6f3a511a7c35be9c"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -669,7 +669,7 @@
           "unsloth_zoo",
           "unturtle"
         ],
-        "tracked_count": 2889
+        "tracked_count": 2890
       },
       "modules_before": {
         "top_level": [],
@@ -693,7 +693,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "e71849cb4e72351e"
+        "torch_cpu_rng_digest": "7623f2dd344c586c"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -823,7 +823,7 @@
           "unsloth_zoo",
           "unturtle"
         ],
-        "tracked_count": 2889
+        "tracked_count": 2890
       },
       "modules_before": {
         "top_level": [],
@@ -847,7 +847,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "04c24269b86c586b"
+        "torch_cpu_rng_digest": "67d744a8cec3ffd8"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -977,7 +977,7 @@
           "unsloth_zoo",
           "unturtle"
         ],
-        "tracked_count": 2890
+        "tracked_count": 2891
       },
       "modules_before": {
         "top_level": [],
@@ -1001,7 +1001,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "3bef4a69b67a8f61"
+        "torch_cpu_rng_digest": "029bae6e09e69f8c"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -1131,7 +1131,7 @@
           "unsloth_zoo",
           "unturtle"
         ],
-        "tracked_count": 2889
+        "tracked_count": 2890
       },
       "modules_before": {
         "top_level": [],
@@ -1155,7 +1155,7 @@
         "UNSLOTH_ZOO_IS_PRESENT": "1"
       },
       "volatile": {
-        "torch_cpu_rng_digest": "3ec854c73323c1fc"
+        "torch_cpu_rng_digest": "3303c4f706db6a37"
       },
       "warnings": [
         "DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`."
@@ -2547,7 +2547,7 @@
     }
   },
   "producer": {
-    "commit": "12385e7bbc4ec0d8e514763c1e1290b12d430570",
+    "commit": "a1152a148451c8061aebe019357b4abe48fc8c11",
     "dirty_paths": [],
     "import_root": "<repo>",
     "peft": "0.19.1",
@@ -4191,7 +4191,7 @@
         "classification": "EXTRACT -> #185",
         "idempotent": "yes",
         "linked_issue": null,
-        "liveness_evidence": "LLaDA fast-path tests",
+        "liveness_evidence": "NOT LIVE \u2014 installed but LLaDALlamaBlock.forward never calls it; probe_liveness counters stay 0 (tests/test_patch_report_contract.py::test_rope_targets_are_counted_and_llada_qkv_o_are_install_only)",
         "mutation_id": "llada_qkv_fast_hook",
         "owner": "_patch_llada_peft",
         "reversible": "reassign",
@@ -4226,7 +4226,7 @@
         "classification": "EXTRACT -> #185",
         "idempotent": "yes",
         "linked_issue": null,
-        "liveness_evidence": "LLaDA fast-path tests",
+        "liveness_evidence": "NOT LIVE \u2014 installed but LLaDALlamaBlock.forward never calls it; probe_liveness counters stay 0 (tests/test_patch_report_contract.py::test_rope_targets_are_counted_and_llada_qkv_o_are_install_only)",
         "mutation_id": "llada_o_fast_hook",
         "owner": "_patch_llada_peft",
         "reversible": "reassign",
@@ -4658,6 +4658,41 @@
         "target": "rotary_emb / rotary_embedding modules exposing extend_rope_embedding"
       },
       {
+        "after_identity": "a counting wrapper (functools.wraps; MethodType for bound forwards) \u2014 restored in a finally block",
+        "applicability": "only inside probe_liveness, on modules the PatchReport lists as applied",
+        "before_identity": "the installed fast callable",
+        "claims": [
+          {
+            "contains": "module.__dict__[attr] = types.MethodType(counting, module)",
+            "file": "unturtle/fast_diffusion_model.py"
+          }
+        ],
+        "classification": "KEEP (descriptive; #185 PR 0 contract: installed != live)",
+        "idempotent": "yes (installs then restores every call)",
+        "linked_issue": 185,
+        "liveness_evidence": "tests/test_patch_report_contract.py (liveness only after forward; originals restored)",
+        "mutation_id": "liveness_probe_counters",
+        "owner": "probe_liveness (#185 PR 0, observation)",
+        "reversible": "yes \u2014 restored before returning; identity re-verified by tests",
+        "row": {
+          "evidence": {
+            "matched_claims": [
+              {
+                "contains": "module.__dict__[attr] = types.MethodType(counting, module)",
+                "file": "unturtle/fast_diffusion_model.py"
+              }
+            ]
+          },
+          "owner": "probe_liveness (#185 PR 0, observation)",
+          "reason": null,
+          "source": "static scan + curated ledger",
+          "status": "observed"
+        },
+        "scope": "object-local",
+        "success_signal": "LivenessReport counters (per module:kind), never a warning",
+        "target": "instance attributes of APPLIED fast targets (apply_qkv / apply_o / apply_wo / apply_mlp / forward)"
+      },
+      {
         "after_identity": "int attribute on every module",
         "applicability": "every load and PEFT wrap",
         "before_identity": "absent",
@@ -4967,11 +5002,11 @@
         "target": "unturtle.registry._default_hub"
       }
     ],
-    "scanned_hits": 41,
+    "scanned_hits": 42,
     "unclaimed_hits": []
   },
   "schema_version": 1,
-  "semantic_digest": "1ddff908f9bd59052049315d32af861d34ab275c5e2101b16b33e21969551eb7",
+  "semantic_digest": "08afd898b86582aa648e77994cfc7232a2907023c86e753edf438ccfe3554a30",
   "verdicts": {
     "diffusion_gemma_class_swap": {
       "area": "DiffusionGemma runtime class swap",
