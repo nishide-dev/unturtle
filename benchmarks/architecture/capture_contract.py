@@ -116,6 +116,7 @@ PROCESS_GLOBAL_CASES = ("rng_contract", "sdpa")
 # ---------------------------------------------------------------------------
 
 FDM = "unturtle/fast_diffusion_model.py"
+PREP = "unturtle/models/integrations/peft_preparation.py"  # #185 PR 2 PEFT preparation
 LLADA_PROVIDER = "unturtle/models/backbones/llada/fast_paths.py"  # #185 LLaDA provider
 DREAM_PROVIDER = "unturtle/models/backbones/dream/fast_paths.py"  # #185 Dream provider
 MODERNBERT_PROVIDER = (
@@ -455,7 +456,7 @@ MUTATION_LEDGER: list[dict] = [
     ),
     _mutation(
         "apply_stubs_install",
-        owner="_install_apply_stubs",
+        owner="peft_preparation.install_apply_stubs (#185 PR 2)",
         target="module.apply_qkv / module.apply_o on every q_proj+o_proj module",
         applicability="always (from_pretrained and get_peft_model)",
         before="absent",
@@ -467,8 +468,8 @@ MUTATION_LEDGER: list[dict] = [
         liveness_evidence="all fast-forward tests dispatch through the stubs",
         classification="EXTRACT -> #185",
         claims=[
-            (FDM, "module.apply_qkv = _original_apply_qkv"),
-            (FDM, "module.apply_o = _original_apply_o"),
+            (PREP, "module.apply_qkv = _original_apply_qkv"),
+            (PREP, "module.apply_o = _original_apply_o"),
         ],
     ),
     _mutation(
@@ -682,7 +683,7 @@ MUTATION_LEDGER: list[dict] = [
     ),
     _mutation(
         "gc_mode_application",
-        owner="_apply_gradient_checkpointing_mode",
+        owner="peft_preparation.apply_gradient_checkpointing_mode (#185 PR 2)",
         target="module.gradient_checkpointing + model._unturtle_gradient_checkpointing_mode",
         applicability="get_peft_model / for_inference / for_training",
         before="per-module flags",
@@ -693,7 +694,7 @@ MUTATION_LEDGER: list[dict] = [
         success_signal="silent",
         liveness_evidence="inference_context round-trip tests",
         classification="KEEP",
-        claims=[(FDM, "module.gradient_checkpointing = bool(mode)")],
+        claims=[(PREP, "module.gradient_checkpointing = bool(mode)")],
     ),
     _mutation(
         "kbit_preparation_env",
@@ -713,7 +714,7 @@ MUTATION_LEDGER: list[dict] = [
         ),
         classification="EXTRACT -> #185",
         linked_issue=177,
-        claims=[(FDM, "model = prepare_model_for_kbit_training(")],
+        claims=[(PREP, "model = prepare_model_for_kbit_training(")],
     ),
     _mutation(
         "autoclass_registration",

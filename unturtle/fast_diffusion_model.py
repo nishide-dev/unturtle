@@ -96,10 +96,29 @@ from unturtle.models.integrations.fast_path_support import (
     require_fast_lora as _require_fast_lora,
 )
 from unturtle.models.integrations.fast_path_support import warn_once as _warn_once
+from unturtle.models.integrations.peft_preparation import (
+    _original_apply_o,
+    _original_apply_qkv,
+    build_lora_config,
+    prepare_peft_model,
+)
+from unturtle.models.integrations.peft_preparation import (
+    apply_gradient_checkpointing_mode as _apply_gradient_checkpointing_mode,
+)
+from unturtle.models.integrations.peft_preparation import (
+    get_gradient_checkpointing_mode as _get_gradient_checkpointing_mode,
+)
+from unturtle.models.integrations.peft_preparation import (
+    install_apply_stubs as _install_apply_stubs,
+)
+from unturtle.models.integrations.peft_preparation import (
+    wrap_with_peft_seeded as _wrap_with_peft_seeded,
+)
 from unturtle.models.integrations.reports import (
     LivenessReport,
     LoadedModel,
     PatchReport,
+    PreparedPeftModel,
     SupportResult,
 )
 from unturtle.save import patch_saving_functions, prepare_model_for_kbit_training
@@ -1298,19 +1317,7 @@ class FastDiffusionModel:
         Returns:
             PEFT model with Triton LoRA kernels patched in.
         """
-        if target_modules is None:
-            target_modules = [
-                "q_proj",
-                "k_proj",
-                "v_proj",
-                "o_proj",
-                "gate_proj",
-                "up_proj",
-                "down_proj",
-            ]
-
-        lora_config = LoraConfig(
-            task_type=TaskType.FEATURE_EXTRACTION,
+        lora_config = build_lora_config(
             r=r,
             target_modules=target_modules,
             lora_alpha=lora_alpha,
@@ -1318,44 +1325,21 @@ class FastDiffusionModel:
             bias=bias,
             **kwargs,
         )
-
-        # Install apply_qkv / apply_o stubs before PEFT wrapping so that
-        # fast-forward functions can dispatch even when the model was not
-        # loaded via from_pretrained (e.g. tests using random-weight models).
-        _install_apply_stubs(model)
-
-        quantization_method = getattr(model, "quantization_method", None)
-        is_quantized_model = any(
-            getattr(model, attr, False)
-            for attr in ("is_loaded_in_4bit", "is_loaded_in_8bit", "hqq_quantized")
-        ) or quantization_method in {"gptq", "aqlm", "eetq", "torchao", "hqq"}
-
-        if is_quantized_model:
-            model = prepare_model_for_kbit_training(
-                model,
-                use_gradient_checkpointing=use_gradient_checkpointing,
-                use_reentrant=True,
-            )
-        elif bool(use_gradient_checkpointing):
-            if hasattr(model, "enable_input_require_grads"):
-                model.enable_input_require_grads()
-            elif hasattr(model, "get_input_embeddings"):
-                input_embeddings = model.get_input_embeddings()
-                if input_embeddings is not None:
-                    input_embeddings.register_forward_hook(
-                        lambda module, inputs, output: output.requires_grad_(True)
-                    )
-            _apply_gradient_checkpointing_mode(model, use_gradient_checkpointing)
-
-        model = _wrap_with_peft_seeded(model, lora_config, random_state)
-        model._unturtle_gradient_checkpointing_mode = use_gradient_checkpointing
-
-        report = FastDiffusionModel.patch_peft_model_with_report(
-            model, lora_dropout=lora_dropout, bias=bias
+        prepared = prepare_peft_model(
+            model,
+            lora_config,
+            use_gradient_checkpointing=use_gradient_checkpointing,
+            random_state=random_state,
         )
-        patch_saving_functions(model)
+        # Optimization is a SEPARATE, optional step on the prepared model: the
+        # family provider may decline with a typed fallback without affecting
+        # preparation (#185 PR 2 boundary).
+        report = FastDiffusionModel.patch_peft_model_with_report(
+            prepared.model, lora_dropout=lora_dropout, bias=bias
+        )
+        patch_saving_functions(prepared.model)
 
-        return model, report
+        return prepared.model, report
 
     @staticmethod
     def get_peft_model(
@@ -1529,6 +1513,10 @@ class FastDiffusionModel:
 
     #: Liveness probe re-exported on the facade (see module-level function).
     probe_liveness = staticmethod(probe_liveness)
+
+    #: PEFT-preparation boundary re-exported on the facade (#185 PR 2): returns
+    #: a PreparedPeftModel whose model carries NO fast-path optimization yet.
+    prepare_peft_model = staticmethod(prepare_peft_model)
 
     @staticmethod
     def for_inference(model: Any) -> Any:
@@ -1793,89 +1781,3 @@ class FastDiffusionModel:
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
-
-
-def _wrap_with_peft_seeded(
-    model: Any, lora_config: LoraConfig, random_state: int | None
-) -> Any:
-    """``peft.get_peft_model`` with adapter initialization owned by ``random_state``.
-
-    PEFT initializes ``lora_A`` (kaiming) from torch's global generator, so the
-    adapters depend on whatever consumed the RNG earlier in the process (#188:
-    measured as two bit-stable adapter sets flipping with test ordering).
-    Seeding happens inside ``torch.random.fork_rng`` covering the CPU generator
-    and every CUDA device, so:
-
-    - the same ``random_state`` yields the same adapters regardless of prior
-      RNG consumption (the documented contract of the parameter);
-    - the caller's global RNG state is restored on exit — unlike unsloth's
-      ``set_seed(random_state)``, this does not reseed the caller's process.
-
-    ``random_state=None`` keeps the legacy unseeded behavior.
-    """
-    if random_state is None:
-        return get_peft_model(model, lora_config)
-    devices = (
-        list(range(torch.cuda.device_count()))
-        if torch.cuda.is_available() and torch.cuda.is_initialized()
-        else []
-    )
-    with torch.random.fork_rng(devices=devices):
-        torch.manual_seed(random_state)
-        return get_peft_model(model, lora_config)
-
-
-def _original_apply_qkv(self: Any, X: torch.Tensor) -> tuple[torch.Tensor, ...]:
-    return self.q_proj(X), self.k_proj(X), self.v_proj(X)
-
-
-def _original_apply_o(self: Any, X: torch.Tensor) -> torch.Tensor:
-    return self.o_proj(X)
-
-
-def _install_apply_stubs(model: Any) -> None:
-    """Set apply_qkv / apply_o stubs on all self_attn layers that lack them.
-
-    unsloth's fast-forward dispatch protocol requires these attributes to exist
-    even before PEFT is applied, so the fast-forward function can call
-    ``self.apply_qkv(self, hidden_states)`` unconditionally.
-    """
-    for module in model.modules():
-        if hasattr(module, "q_proj") and hasattr(module, "o_proj"):
-            if not hasattr(module, "apply_qkv"):
-                module.apply_qkv = _original_apply_qkv
-            if not hasattr(module, "apply_o"):
-                module.apply_o = _original_apply_o
-
-
-def _get_gradient_checkpointing_mode(model: Any) -> bool | str:
-    """Return the current gradient-checkpointing mode tracked by unturtle.
-
-    We explicitly track the requested mode because a temporary inference pass
-    should be reversible: `True`, `False`, and `"unsloth"` need to round-trip.
-    Falling back to module flags loses the distinction between `True` and
-    `"unsloth"`.
-    """
-    if hasattr(model, "_unturtle_gradient_checkpointing_mode"):
-        return model._unturtle_gradient_checkpointing_mode
-
-    for module in model.modules():
-        if hasattr(module, "gradient_checkpointing"):
-            return bool(module.gradient_checkpointing)
-    return False
-
-
-def _apply_gradient_checkpointing_mode(model: Any, mode: bool | str) -> None:
-    """Apply and persist a gradient-checkpointing mode to all reachable modules."""
-    model._unturtle_gradient_checkpointing_mode = mode
-
-    for module in model.modules():
-        if hasattr(module, "gradient_checkpointing"):
-            module.gradient_checkpointing = bool(mode)
-
-    if bool(mode):
-        if hasattr(model, "gradient_checkpointing_enable"):
-            model.gradient_checkpointing_enable()
-    else:
-        if hasattr(model, "gradient_checkpointing_disable"):
-            model.gradient_checkpointing_disable()
