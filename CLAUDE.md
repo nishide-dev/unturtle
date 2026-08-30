@@ -159,7 +159,10 @@ uv run ruff format .
 - Triton / Flash changes must be checked on both CPU fallback and CUDA paths.
 - Triton kernel correctness must be compared against `F.cross_entropy` or the appropriate
   reference behavior, not just shape checks.
-- Real-checkpoint tests should remain `@pytest.mark.slow` and `@pytest.mark.gpu`.
+- Real-checkpoint tests should remain `@pytest.mark.slow`. Add `@pytest.mark.gpu` only when
+  CUDA is an actual execution/semantic requirement of the test; CPU-capable checkpoint
+  audits must not be mislabeled as GPU-only. Markers describe execution requirements,
+  not checkpoint realism.
 - For generation / cache work, run the targeted model regressions instead of only broad
   smoke tests.
 
