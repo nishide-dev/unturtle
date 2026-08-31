@@ -1,9 +1,7 @@
 # Examples
 
-Honest current state (#205 PR 1). Dispositions for every file are frozen in
-[docs/maintenance/examples-inventory.md](../docs/maintenance/examples-inventory.md);
-PR 2 moves the benchmark/validation tools out, PR 3 settles the rest. Until
-then, this README describes what actually exists here today.
+Current state (#205 complete). The disposition history for every file is in
+[docs/maintenance/examples-inventory.md](../docs/maintenance/examples-inventory.md). Everything here is short, uses the current public API, and states its dependencies and resource requirements.
 
 ## Supported examples
 
@@ -34,15 +32,12 @@ Public recipes for `unturtle train --config …`, all load-validated by
 
 Running the recipes needs CUDA and the listed checkpoint downloads.
 
-## Present but NOT user examples (PR 3 dispositions pending)
+## Everything else
 
-- `training/run_training.py` — headless LLaDA SFT launcher; not
-  README-supported; overlaps the `unturtle train` CLI path. **REWRITE-or-
-  archive decision in #205 PR 3.**
-- `demos/llada_sft_demo.py` — marimo notebook, currently alive mainly via a
-  lint carve-out. **Re-validation / delete-or-archive in #205 PR 3.**
-
-Moved out in #205 PR 2: the cross-backend benchmark now lives at
-`benchmarks/a2d/benchmark_a2d_aligned.py` and the release-validation tool at
-`tools/validation/validate_a2d_real_inference.py` (see their READMEs for
-resource requirements).
+The former maintainer tools and drafts are gone from this directory (#205):
+the cross-backend benchmark lives at `benchmarks/a2d/benchmark_a2d_aligned.py`,
+the release-validation tool at `tools/validation/validate_a2d_real_inference.py`
+(PR 2), the headless SFT launcher is archived under `experiments/` (superseded
+by the `unturtle train` recipe above), and the marimo demo was deleted with
+its lint carve-out (PR 3). `tests/test_examples_surface.py` keeps this README
+and the directory bidirectionally consistent.
