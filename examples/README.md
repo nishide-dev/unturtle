@@ -34,16 +34,15 @@ Public recipes for `unturtle train --config …`, all load-validated by
 
 Running the recipes needs CUDA and the listed checkpoint downloads.
 
-## Present but NOT user examples (dispositions frozen, moves pending)
+## Present but NOT user examples (PR 3 dispositions pending)
 
-- `benchmark_a2d_aligned.py` — maintainer benchmark comparing unturtle vs the
-  external `dllm` backend; needs TWO venvs (`.venv`, `.venvDllm`), CUDA and a
-  pinned `dllm-hub` checkpoint. **Moving to `benchmarks/` in #205 PR 2.**
-- `validate_a2d_real_inference.py` — maintainer release-validation tool
-  (pinned real checkpoints, dual venv, CUDA). **Moving to `tools/validation/`
-  in #205 PR 2.**
 - `training/run_training.py` — headless LLaDA SFT launcher; not
   README-supported; overlaps the `unturtle train` CLI path. **REWRITE-or-
   archive decision in #205 PR 3.**
 - `demos/llada_sft_demo.py` — marimo notebook, currently alive mainly via a
   lint carve-out. **Re-validation / delete-or-archive in #205 PR 3.**
+
+Moved out in #205 PR 2: the cross-backend benchmark now lives at
+`benchmarks/a2d/benchmark_a2d_aligned.py` and the release-validation tool at
+`tools/validation/validate_a2d_real_inference.py` (see their READMEs for
+resource requirements).

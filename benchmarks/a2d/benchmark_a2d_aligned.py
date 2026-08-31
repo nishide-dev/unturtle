@@ -478,7 +478,7 @@ def _worker_python(backend: str) -> Path:
 def _run_in_backend_env(run: RunSpec) -> ExecutionResult:
     worker_python = _worker_python(run.backend)
     script_path = Path(__file__).resolve()
-    source_root = script_path.parent.parent
+    source_root = script_path.parents[2]  # repo root (this file lives two levels deep)
     payload = json.dumps(
         {
             "mode": run.mode,
@@ -508,7 +508,7 @@ def _run_warm_batch_in_backend_env(
 ) -> list[ExecutionResult | Exception]:
     worker_python = _worker_python(run.backend)
     script_path = Path(__file__).resolve()
-    source_root = script_path.parent.parent
+    source_root = script_path.parents[2]  # repo root (this file lives two levels deep)
     payload = json.dumps(
         {
             "run": {
