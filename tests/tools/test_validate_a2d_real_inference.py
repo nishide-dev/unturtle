@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-from examples.validate_a2d_real_inference import (
+from tools.validation.validate_a2d_real_inference import (
     append_result_record,
     build_dllm_sampler_config,
     build_unturtle_generation_kwargs,

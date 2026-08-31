@@ -3,8 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import examples.benchmark_a2d_aligned as benchmark_a2d_aligned
-from examples.benchmark_a2d_aligned import (
+import benchmarks.a2d.benchmark_a2d_aligned as benchmark_a2d_aligned
+from benchmarks.a2d.benchmark_a2d_aligned import (
     BACKENDS,
     BENCHMARK_MODES,
     CHECKPOINT,
@@ -581,7 +581,7 @@ def test_run_in_backend_env_uses_configured_worker_python(monkeypatch):
 
 def test_missing_grpo_dependency_placeholder_raises_module_not_found():
     module_path = (
-        Path(benchmark_a2d_aligned.__file__).resolve().parent.parent
+        Path(benchmark_a2d_aligned.__file__).resolve().parents[2]
         / "unturtle"
         / "diffusion"
         / "__init__.py"
